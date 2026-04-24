@@ -1,6 +1,22 @@
 # COMMONOS — MASTER PLAN
-> Version 1.3 — April 2026 | One-week hackathon build. Builds on Agent Commons infrastructure.
+> Version 1.4 — April 2026 | One-week hackathon build. Builds on Agent Commons infrastructure.
 > A deployment and management framework for persistent AI agent fleets — each agent gets its own computer.
+
+---
+
+## BUILD STATUS — 2026-04-25
+
+| Phase | What | Status |
+|---|---|---|
+| 1 — Scaffold & CI/CD | Monorepo, packages building, CI passing | ✅ Complete |
+| 2 — Data Layer & Cloud | `@commonos/events` (full Zod schema), `@commonos/cloud` (AWS + GCP providers) | ✅ Complete · MongoDB/Redis wiring pending |
+| 3 — Fleet Control Plane API | Hono API, auth, routes, provisioner, WebSocket | ⬜ Not started (health endpoint only) |
+| 4 — Fleet Daemon | Config loader done, heartbeat loop done; task/file/AXL loops pending | 🔄 Partial |
+| 5 — SDK & CLI | SDK fully implemented; CLI structure + commands done, logic stubs | 🔄 Partial |
+| 6 — World UI | Phaser isometric world, agent sprites, HUD, mock simulation, all routes | ✅ Complete |
+| 7 — Bounty Integrations | AXL, Uniswap | ⬜ Not started |
+
+**Critical path:** Phase 3 (Fleet Control Plane API) unlocks Phases 4, 5, and 7.
 
 ---
 
@@ -894,32 +910,32 @@ systemctl start commonos-daemon
 ## 11. BUILD PHASES
 
 ### 11.1 Phase 1 — Scaffold & CI/CD
-*Goal: repo is alive, CI passes, packages build*
+*Goal: repo is alive, CI passes, packages build* · **✅ COMPLETE**
 
-- [ ] Init monorepo — pnpm workspaces, Node 22, pnpm 9.15.3
-- [ ] Adapt `ci.yml` from agent-commons — update package name refs
-- [ ] Adapt `release.yml` from agent-commons — update auto-patch checks to `@commonos/sdk` + `@commonos/cli`, update post-publish bump to `apps/web`
-- [ ] Set up Changesets config
-- [ ] Set up Husky
-- [ ] Create package stubs with correct `package.json` (tsup, publishConfig, engines node>=22)
-- [ ] Root `package.json` scripts: `build`, `release`, `version-ci`, `changeset`
-- [ ] First push to `main` — confirm CI passes
+- [x] Init monorepo — pnpm workspaces, Node 22, pnpm 9.15.3
+- [x] Adapt `ci.yml` from agent-commons — update package name refs
+- [x] Adapt `release.yml` from agent-commons — update auto-patch checks to `@commonos/sdk` + `@commonos/cli`, update post-publish bump to `apps/web`
+- [x] Set up Changesets config
+- [x] Set up Husky
+- [x] Create package stubs with correct `package.json` (tsup, publishConfig, engines node>=22)
+- [x] Root `package.json` scripts: `build`, `release`, `version-ci`, `changeset`
+- [x] First push to `main` — confirm CI passes
 
 **Secrets:** `GH_PAT`, `NPM_TOKEN`
 
 ---
 
 ### 11.2 Phase 2 — Data Layer & Cloud Package
-*Goal: MongoDB connected, AWS VM provisioned end-to-end*
+*Goal: MongoDB connected, AWS VM provisioned end-to-end* · **✅ Cloud packages complete · ⬜ MongoDB/Redis wiring pending (moved to Phase 3)**
 
-**MongoDB setup**
+**MongoDB setup** ⬜ — to be wired inside `apps/api/src/db/mongo.ts` during Phase 3
 - MongoDB Atlas free tier for development
 - Native driver (`mongodb` npm package), no ORM
 - Zod validation at API boundary
 - Implement all collections from Section 8.2
 - Create all indexes from Section 8.4
 
-**`packages/event-schema` → `@commonos/events`**
+**`packages/event-schema` → `@commonos/events`** ✅ Complete
 - Full Zod discriminated union for all event types
 - Shared by daemon, API, and world UI
 
@@ -1027,7 +1043,9 @@ JWT_SECRET
 ---
 
 ### 11.3 Phase 3 — Fleet Control Plane API
-*Goal: deploy agent fleet via API; VMs provision and report back*
+*Goal: deploy agent fleet via API; VMs provision and report back* · **⬜ NOT STARTED — CRITICAL PATH**
+
+> **Next up.** `apps/api/src/index.ts` currently has only a health endpoint. Everything below needs to be built here.
 
 **Auth middleware** — three flows as documented in Section 6
 
@@ -1082,25 +1100,38 @@ POST   /events                              # agent daemon POSTs events (agent t
 ---
 
 ### 11.4 Phase 4 — Fleet Daemon
-*Goal: persistent process in every VM; platform always informed*
+*Goal: persistent process in every VM; platform always informed* · **🔄 PARTIAL**
+
+**What's done:**
+- [x] `DaemonConfig` type + `loadConfig()` reading `/etc/commonos/config.json`
+- [x] `CommonOSAgentClient` instantiation from config
+- [x] Startup: emits `state_change: online`
+- [x] Heartbeat loop every 30s
+
+**What's left:**
+- [ ] Connect to AXL node and register peer multiaddr
+- [ ] Task inbox loop (BLPOP from Redis, forward to agent runtime)
+- [ ] File watcher (chokidar on `/workspace`, emit `file_changed`)
+- [ ] Health monitor (check agc / Docker alive, emit `error` on crash)
+- [ ] Spawn agc (native path) or Docker container (guest path)
 
 **`packages/daemon` → `@commonos/daemon`**
 
 Published to npm. Installed globally via cloud-init. Runs as a systemd service. Tenants cannot replace or bypass it.
 
 **Startup sequence**
-1. Read `/etc/commonos/config.json`
+1. Read `/etc/commonos/config.json` ✅
 2. Connect to AXL — `axl connect --port 4001`
 3. Register AXL peer address with fleet control plane: `PATCH /fleets/:id/agents/:agentId` with `axl.multiaddr`
 4. Push AXL multiaddr to Redis peer directory: `HSET tenant:{id}:fleet:{id}:peers {agentId} {multiaddr}`
 5. Start agent runtime (native: spawn `agc`; guest: start Docker container)
-6. Emit `state_change: online`
+6. Emit `state_change: online` ✅
 7. Begin main loops
 
 **Main loops (concurrent)**
 
 ```
-Heartbeat loop   — every 30s: emit heartbeat, refresh Redis presence key
+Heartbeat loop   — every 30s: emit heartbeat, refresh Redis presence key   ✅ Done
 Task inbox loop  — every 5s: BLPOP from Redis task queue, forward to agent runtime
 File watcher     — chokidar on /workspace: emit file_changed on create/modify/delete
 Health monitor   — every 10s: check agc process / Docker container alive; emit error on crash
@@ -1114,14 +1145,28 @@ AXL inbox        — listen for inbound AXL messages: deliver to agent runtime a
 ---
 
 ### 11.5 Phase 5 — SDK & CLI
-*Goal: developers can manage fleets from code and terminal*
+*Goal: developers can manage fleets from code and terminal* · **🔄 PARTIAL**
 
-**`packages/sdk` → `@commonos/sdk`**
+**What's done:**
+- [x] `CommonOSClient` — `fleets.create/list/get`, `agents.deploy/list/get/terminate/logs`, `tasks.send/list`
+- [x] `CommonOSAgentClient` — `emit(event)`, `nextTask()`, `completeTask(taskId, output)`
+- [x] CLI binary structure — all commands defined: `auth`, `fleet`, `agent`, `task`
+- [x] All command flags and arguments wired up
+
+**What's left (unblocked once Phase 3 API routes exist):**
+- [ ] `commonos auth login` — open browser → Privy flow → write `~/.commonos/config.json`
+- [ ] `commonos auth whoami` — read config, call `GET /auth/me`
+- [ ] All fleet/agent/task commands — replace stub `console.log` with real API calls via SDK
+- [ ] `commonos agent exec` — SSM session into VM shell
+- [ ] Add Chalk + Ora for output formatting
+- [ ] Zod-typed response parsing in SDK
+
+**`packages/sdk` → `@commonos/sdk`** ✅ Client classes implemented
 - tsup, dual ESM/CJS, Zod-typed responses
 - Exports `CommonOSClient` (tenant scope) and `CommonOSAgentClient` (agent scope)
 - See Section 6 for full usage examples
 
-**`packages/cli` → `@commonos/cli`**
+**`packages/cli` → `@commonos/cli`** 🔄 Structure done, actions are stubs
 - Binary: `commonos`
 - Stack: Commander + Chalk + Ora (same pattern as `agc-cli`)
 - Config: `~/.commonos/config.json`
@@ -1154,7 +1199,28 @@ commonos room move <agent-id> <room>
 ---
 
 ### 11.6 Phase 6 — World UI
-*Goal: agents visible as sprites in a live isometric simulation*
+*Goal: agents visible as sprites in a live isometric simulation* · **✅ COMPLETE**
+
+**What's built (`apps/web/`):**
+- [x] Zustand stores: `agentStore`, `worldStore`, `socketStore` (exact shapes from master plan)
+- [x] Mock simulation: 33s looping cycle — 3 agents assign/work/complete tasks, speech bubbles, moves
+- [x] Phaser isometric tile grid — rooms color-coded, programmatic rendering (no external assets)
+- [x] `AgentSprite` — Container with body, head, status dot, name, action label, speech bubble; bob animations
+- [x] `WorldScene` — spawns sprites from store, syncs each frame, camera pan/zoom, agent selection
+- [x] `BootScene` — preload stub ready for Kenney tileset swap
+- [x] `UIScene` — reserved for fixed Phaser HUD elements
+- [x] `PhaserGame.tsx` — canvas component, dynamic import with ssr:false
+- [x] `HUD.tsx` — React overlay, pointer-events managed per panel
+- [x] `FleetPanel` — live agent list with status dots and current actions
+- [x] `Inspector` — selected agent detail: status, task, action history
+- [x] `CommandBar` — task assignment input, assigns to selected agent
+- [x] Routes: `/` (landing), `/world` (full client), `/auth` (Privy-gated), `/settings` (stub)
+- [x] Privy auth — conditional on `NEXT_PUBLIC_PRIVY_APP_ID`; bypassed in demo mode
+- [x] `WorldClient` — mounts Phaser + HUD, starts mock simulation
+
+**Remaining / next connections:**
+- [ ] Replace `startMockSimulation()` with real `GET /fleets/:id/world` + WebSocket once API is live
+- [ ] Swap programmatic sprites for Kenney isometric tileset assets (post-hackathon)
 
 **Stack:** Next.js 15 (App Router) + Phaser 3 + Zustand
 
@@ -1222,6 +1288,7 @@ Privy handles wallet connect + social login. On first Privy login, the API creat
 ---
 
 ### 11.7 Phase 7 — Bounty Integrations
+*Blocked on Phase 3 (API) and Phase 4 (daemon) being live* · **⬜ NOT STARTED**
 
 #### Gensyn AXL (primary — $5,000)
 
@@ -1352,7 +1419,8 @@ Carried over from Agent Commons with two adaptations.
 - [ ] Public GitHub repo with complete README (setup instructions, architecture)
 - [ ] Architecture diagram (Section 5 ASCII diagram + rendered version)
 - [ ] Demo video — under 3 minutes, follows script above
-- [ ] Live demo link (deployed API + web UI)
+- [x] Live demo — World UI running (`apps/web` builds and serves)
+- [ ] Live demo link (deployed API + web UI — needs Phase 3 complete)
 - [ ] Team member names, Telegram, and X handles
 
 **Gensyn AXL requirements:**
@@ -1371,37 +1439,41 @@ Carried over from Agent Commons with two adaptations.
 
 **Hard deadline: 7 days from start.**
 
+> **Current position: 2026-04-25.** Phases 1, 2 (cloud), 5 (SDK), 6 (World UI) are done ahead of schedule. Phase 3 (API) is the immediate priority — it unlocks everything else.
+
 ```
-Day 1 (Monday)
+Day 1 (Monday)   ✅ DONE
 ├── Repo scaffolded, CI/CD passing, packages building
-├── MongoDB Atlas connected, all collections created with indexes
-└── Event schema Zod types complete
+├── Event schema Zod types complete
+└── Package stubs building
 
-Day 2 (Tuesday)
-├── AWS cloud package — provision + terminate EC2 working end-to-end
-├── GCP cloud package — provision + terminate Compute Engine working end-to-end
-├── Fleet API core routes — create fleet, deploy agent, list agents
-└── Provisioner service — cloud-init builds correctly, VM boots on both providers
+Day 2 (Tuesday)  ✅ DONE
+├── AWS cloud package — AWSProvider: provision, terminate, stop, start, getStatus
+├── GCP cloud package — GCPProvider: provision, terminate, stop, start, getStatus
+├── SDK — CommonOSClient + CommonOSAgentClient fully implemented
+└── CLI — all command structure + flags defined (actions still stubs)
 
-Day 3 (Wednesday)
-├── Fleet daemon — heartbeat, task inbox, file watcher
-├── POST /events working — daemon reports to control plane
-└── Agent status lifecycle working (provisioning → starting → running)
+Day 3 (Wednesday) ✅ DONE (ahead of schedule — World UI built early)
+├── Daemon — config loader, startup sequence, heartbeat loop
+├── World UI — Phaser isometric world, agent sprites, HUD, mock simulation
+└── All routes: /, /world, /auth, /settings
 
-Day 4 (Thursday)
-├── AXL integration — daemon starts AXL node, registers peer, routes messages P2P
-├── WebSocket event stream — world UI can connect and receive events
-└── SDK — CommonOSClient + CommonOSAgentClient working against live API
+── ◀ WE ARE HERE (2026-04-25) ──────────────────────────
+
+Day 4 (Thursday) ← CURRENT PRIORITY
+├── Fleet Control Plane API — MongoDB connection, auth middleware
+├── API routes: /fleets, /fleets/:id/agents, /events, WebSocket stream
+└── Provisioner service — cloud-init script builder, VM deploy sequence
 
 Day 5 (Friday)
-├── CLI — commonos auth login, fleet create, agent deploy, task send, logs
-├── World UI scaffold — Next.js app, Privy auth, Phaser canvas, static tilemap
-└── Agent sprites placed at positions from world_states snapshot
+├── Daemon — task inbox loop, file watcher, health monitor
+├── AXL integration — daemon registers peer, routes messages P2P
+└── CLI — wire all commands to live API (auth login → config, fleet/agent/task commands)
 
 Day 6 (Saturday)
-├── World UI events — WebSocket connected, event → animation mapping working
+├── World UI — replace mock simulation with real WebSocket + world_states snapshot
 ├── Manager/worker permission model enforced in API
-└── End-to-end demo working: deploy fleet → world animates → tasks complete
+└── End-to-end demo: deploy fleet via CLI → agents appear in world → tasks animate
 
 Day 7 (Sunday)
 ├── Polish, fix blocking bugs
@@ -1412,12 +1484,12 @@ Day 7 (Sunday)
 └── Submission submitted before deadline
 ```
 
-**Cut line — if behind on Day 5:**
-Drop Uniswap entirely. Drop the HUD panels (Fleet Panel, Inspector). Ship the Phaser world with agent sprites and animations only. The core demo is: deploy agents via CLI → watch them appear and work in the world → see them communicate via AXL.
+**Cut line — if behind on Day 6:**
+Drop Uniswap. Drop CLI auth flow (use API key directly from env). The core demo: `curl` to deploy fleet → world animates live → two agents communicate via AXL.
 
 **Non-negotiable for submission:**
-- Working VM provisioning
-- Fleet daemon reporting events
-- World UI showing live agent animations
-- AXL inter-agent messaging working across two VMs
+- Working VM provisioning (Phase 3 provisioner)
+- Fleet daemon reporting events (Phase 4 main loops)
+- World UI showing live agent animations (Phase 6 ✅ — already done)
+- AXL inter-agent messaging working across two VMs (Phase 7)
 - Public GitHub repo with README and demo video
