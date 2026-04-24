@@ -1,0 +1,135 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Get pnpm store directory
+        id: pnpm-cache
+        run: echo "store=$(pnpm store path)" >> $GITHUB_OUTPUT
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache.outputs.store }}
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build packages
+        run: pnpm --filter './packages/*' run build
+
+      - name: Auto-generate patch changeset when packages changed without one
+        shell: bash
+        run: |
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          if echo "$COMMIT_MSG" | grep -q "chore: version packages"; then
+            echo "Version commit — skipping auto-patch to allow publish"
+            exit 0
+          fi
+
+          EXISTING=$(find .changeset -maxdepth 1 -name '*.md' ! -name 'README.md' | wc -l)
+          if [ "$EXISTING" -gt "0" ]; then
+            echo "Changesets already present — skipping auto-patch"
+            exit 0
+          fi
+
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || git rev-list --max-parents=0 HEAD)
+          CHANGED_FILES=$(git diff --name-only "$LAST_TAG" HEAD -- packages/ | grep -v 'node_modules' || true)
+
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "No package source changes since last tag — skipping auto-patch"
+            exit 0
+          fi
+
+          echo "Package changes detected since $LAST_TAG — generating auto patch changeset"
+
+          FRONTMATTER=""
+          if echo "$CHANGED_FILES" | grep -q "^packages/sdk/"; then
+            FRONTMATTER="${FRONTMATTER}'@commonos/sdk': patch"$'\n'
+          fi
+          if echo "$CHANGED_FILES" | grep -q "^packages/cli/"; then
+            FRONTMATTER="${FRONTMATTER}'@commonos/cli': patch"$'\n'
+          fi
+          if echo "$CHANGED_FILES" | grep -q "^packages/cloud/"; then
+            FRONTMATTER="${FRONTMATTER}'@commonos/cloud': patch"$'\n'
+          fi
+          if echo "$CHANGED_FILES" | grep -q "^packages/event-schema/"; then
+            FRONTMATTER="${FRONTMATTER}'@commonos/events': patch"$'\n'
+          fi
+          if echo "$CHANGED_FILES" | grep -q "^packages/daemon/"; then
+            FRONTMATTER="${FRONTMATTER}'@commonos/daemon': patch"$'\n'
+          fi
+
+          if [ -z "$FRONTMATTER" ]; then
+            echo "No matching packages — skipping changeset"
+            exit 0
+          fi
+
+          ID=$(openssl rand -hex 4)
+          printf -- "---\n%s---\n\nAuto patch release\n" "$FRONTMATTER" > ".changeset/auto-${ID}.md"
+          echo "Created .changeset/auto-${ID}.md"
+
+      - name: Create Release PR or Publish
+        id: changesets
+        uses: changesets/action@v1
+        with:
+          publish: pnpm release
+          version: pnpm version-ci
+          title: "chore: version packages"
+          commit: "chore: version packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          HUSKY: 0
+
+      - name: Bump web SDK dependency after publish
+        if: steps.changesets.outputs.published == 'true'
+        run: |
+          SDK_VERSION=$(node -p "require('./packages/sdk/package.json').version")
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('apps/web/package.json', 'utf8'));
+            pkg.dependencies['@commonos/sdk'] = '^${SDK_VERSION}';
+            fs.writeFileSync('apps/web/package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+          git diff --quiet apps/web/package.json || {
+            pnpm install --no-frozen-lockfile
+            git add apps/web/package.json pnpm-lock.yaml
+            HUSKY=0 git commit -m "chore: bump web to @commonos/sdk@${SDK_VERSION}"
+            git push origin HEAD:main
+          }
