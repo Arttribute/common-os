@@ -56,33 +56,65 @@ function drawObject(
 }
 
 function drawDesk(gfx: Phaser.GameObjects.Graphics, x: number, y: number): void {
-  // Surface shadow
+  // Shadow
   gfx.fillStyle(0x000000, 0.25)
-  gfx.fillEllipse(x + 2, y + 4, 44, 12)
+  gfx.fillEllipse(x + 2, y + 4, 46, 12)
+
   // Desk legs
   gfx.fillStyle(0x4a3010, 1)
   gfx.fillRect(x - 17, y + 4, 4, 6)
   gfx.fillRect(x + 13, y + 4, 4, 6)
+
   // Desk surface
   gfx.fillStyle(0x8b6535, 1)
   gfx.fillRoundedRect(x - 20, y - 8, 40, 18, 3)
-  // Surface highlight
   gfx.fillStyle(0xa07840, 0.4)
   gfx.fillRoundedRect(x - 18, y - 7, 36, 6, 2)
-  // Edge
   gfx.fillStyle(0x5c3d1a, 1)
   gfx.fillRoundedRect(x - 20, y + 7, 40, 4, 2)
-  // Monitor
-  gfx.fillStyle(0x111118, 1)
-  gfx.fillRoundedRect(x - 7, y - 22, 14, 14, 2)
-  // Screen glow
-  gfx.fillStyle(0x2050e0, 0.7)
-  gfx.fillRect(x - 5, y - 20, 10, 9)
-  gfx.fillStyle(0x6090ff, 0.3)
-  gfx.fillRect(x - 5, y - 20, 4, 3)
-  // Stand
-  gfx.fillStyle(0x444, 1)
-  gfx.fillRect(x - 1, y - 8, 2, 5)
+
+  // Keyboard — top face
+  gfx.fillStyle(0xdedad2, 1)
+  gfx.fillRoundedRect(x - 9, y - 10, 18, 5, 1)
+  // Keyboard — front edge
+  gfx.fillStyle(0xb8b5ac, 1)
+  gfx.fillRect(x - 9, y - 6, 18, 2)
+  // Keys (two rows of small dots)
+  gfx.fillStyle(0xc4c1b8, 1)
+  for (let col = 0; col < 5; col++) {
+    gfx.fillRect(x - 7 + col * 3, y - 9, 2, 1)
+    gfx.fillRect(x - 6 + col * 3, y - 7, 2, 1)
+  }
+
+  // Monitor stand
+  gfx.fillStyle(0x333338, 1)
+  gfx.fillRect(x - 2, y - 8, 4, 7)
+  gfx.fillRect(x - 5, y - 4, 10, 2)
+
+  // Monitor bezel (larger)
+  gfx.fillStyle(0x18181f, 1)
+  gfx.fillRoundedRect(x - 13, y - 36, 26, 26, 3)
+
+  // Screen background
+  gfx.fillStyle(0x0d1b3e, 1)
+  gfx.fillRect(x - 11, y - 34, 22, 21)
+
+  // Code lines on screen
+  gfx.fillStyle(0x00e676, 0.8)
+  gfx.fillRect(x - 9, y - 32, 14, 1)
+  gfx.fillRect(x - 9, y - 30, 9,  1)
+  gfx.fillStyle(0x4fc3f7, 0.7)
+  gfx.fillRect(x - 9, y - 28, 16, 1)
+  gfx.fillRect(x - 9, y - 26, 11, 1)
+  gfx.fillStyle(0xffd54f, 0.6)
+  gfx.fillRect(x - 9, y - 24, 7,  1)
+  gfx.fillRect(x - 9, y - 22, 13, 1)
+  gfx.fillStyle(0xef9a9a, 0.6)
+  gfx.fillRect(x - 9, y - 20, 10, 1)
+
+  // Screen glare
+  gfx.fillStyle(0xffffff, 0.06)
+  gfx.fillRect(x - 11, y - 34, 7, 6)
 }
 
 function drawServerRack(gfx: Phaser.GameObjects.Graphics, x: number, y: number): void {

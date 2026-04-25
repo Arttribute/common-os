@@ -103,10 +103,10 @@ export class AgentSprite {
         fontSize: "9px",
         color: "#f1f5f9",
         fontFamily: "monospace",
-        wordWrap: { width: 110 },
+        wordWrap: { width: 120 },
         align: "center",
       })
-      .setOrigin(0.5, 1);
+      .setOrigin(0.5, 0);
 
     this.bubbleContainer = scene.add.container(0, 0, [
       this.bubbleBg,
@@ -243,19 +243,16 @@ export class AgentSprite {
     g.fillStyle(skinColor, 1);
     g.fillRect(-2, -27, 5, 3);
 
-    // Head (skin base — full circle drawn first)
-    g.fillStyle(skinColor, 1);
-    g.fillCircle(0, -34, 8);
-
-    // Hair cap (top half of head)
+    // Head — squircle, one solid hair color
     g.fillStyle(hairCol, 1);
-    g.beginPath();
-    g.arc(0, -34, 8, Math.PI, 0, true);
-    g.closePath();
-    g.fillPath();
+    g.fillRoundedRect(-8, -44, 16, 17, 5);
+
+    // Face area (skin oval inside the squircle)
+    g.fillStyle(skinColor, 1);
+    g.fillEllipse(0, -35, 12, 11);
 
     // Eyes
-    const eyeY = -34;
+    const eyeY = -35;
     if (this.lastStatus === "error") {
       g.lineStyle(1.5, 0x000000, 1);
       g.lineBetween(-4, eyeY - 2, -1, eyeY + 2);
