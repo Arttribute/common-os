@@ -96,7 +96,8 @@ function AgentRow({ agent, selected, onSelect }: {
 }
 
 export function FleetPanel() {
-  const agents = useAgentStore((s) => Object.values(s.agents))
+  const agentsMap = useAgentStore((s) => s.agents)
+  const agents = Object.values(agentsMap)
   const selectedId = useAgentStore((s) => s.selectedAgentId)
   const selectAgent = useAgentStore((s) => s.selectAgent)
   const fleetName = useWorldStore((s) => s.fleetName)
