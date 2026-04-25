@@ -34,8 +34,9 @@ export default function PhaserGame({ className }: PhaserGameProps) {
           height: '100%',
         },
         render: {
-          antialias: true,
-          roundPixels: false,
+          antialias: false,
+          pixelArt: true,
+          roundPixels: true,
         },
         input: {
           mouse: { preventDefaultWheel: false },
