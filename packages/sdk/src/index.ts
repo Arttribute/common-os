@@ -17,11 +17,11 @@ export class CommonOSClient {
 
   constructor(options: CommonOSClientOptions) {
     this.apiKey = options.apiKey;
-    this.apiUrl = options.apiUrl ?? "https://api.commonos.dev";
+    this.apiUrl = (options.apiUrl ?? "https://api.commonos.dev").replace(/\/$/, "");
   }
 
   readonly fleets = {
-    create: (body: { name: string; provider: "aws" | "gcp"; region: string }) =>
+    create: (body: { name: string; provider?: "aws" | "gcp"; region?: string }) =>
       this.post("/fleets", body),
     list: () => this.get("/fleets"),
     get: (fleetId: string) => this.get(`/fleets/${fleetId}`),
@@ -35,8 +35,8 @@ export class CommonOSClient {
       this.get(`/fleets/${fleetId}/agents/${agentId}`),
     terminate: (fleetId: string, agentId: string) =>
       this.delete(`/fleets/${fleetId}/agents/${agentId}`),
-    logs: (fleetId: string, agentId: string) =>
-      this.get(`/fleets/${fleetId}/agents/${agentId}/tasks`),
+    update: (fleetId: string, agentId: string, body: Record<string, unknown>) =>
+      this.patch(`/fleets/${fleetId}/agents/${agentId}`, body),
   };
 
   readonly tasks = {
@@ -44,6 +44,19 @@ export class CommonOSClient {
       this.post(`/fleets/${fleetId}/agents/${agentId}/task`, body),
     list: (fleetId: string, agentId: string) =>
       this.get(`/fleets/${fleetId}/agents/${agentId}/tasks`),
+  };
+
+  readonly world = {
+    snapshot: (fleetId: string) =>
+      this.get(`/fleets/${fleetId}/world`),
+    // Returns the WebSocket URL for real-time world updates.
+    // Connect with: new WebSocket(streamUrl(fleetId))
+    streamUrl: (fleetId: string): string =>
+      `${this.apiUrl.replace(/^http/, "ws")}/fleets/${fleetId}/stream?token=${this.apiKey}`,
+  };
+
+  readonly auth = {
+    me: () => this.get("/auth/me"),
   };
 
   private async get(path: string) {
@@ -56,6 +69,18 @@ export class CommonOSClient {
   private async post(path: string, body: unknown) {
     const res = await fetch(`${this.apiUrl}${path}`, {
       method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    return res.json();
+  }
+
+  private async patch(path: string, body: unknown) {
+    const res = await fetch(`${this.apiUrl}${path}`, {
+      method: "PATCH",
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
         "Content-Type": "application/json",
@@ -82,7 +107,7 @@ export class CommonOSAgentClient {
   constructor(options: CommonOSAgentClientOptions) {
     this.agentToken = options.agentToken;
     this.agentId = options.agentId;
-    this.apiUrl = options.apiUrl ?? "https://api.commonos.dev";
+    this.apiUrl = (options.apiUrl ?? "https://api.commonos.dev").replace(/\/$/, "");
   }
 
   async emit(event: AgentEvent): Promise<void> {

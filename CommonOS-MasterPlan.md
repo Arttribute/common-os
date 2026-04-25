@@ -1,5 +1,5 @@
 # COMMONOS — MASTER PLAN
-> Version 1.4 — April 2026 | One-week hackathon build. Builds on Agent Commons infrastructure.
+> Version 1.6 — April 2026 | One-week hackathon build. Builds on Agent Commons infrastructure.
 > A deployment and management framework for persistent AI agent fleets — each agent gets its own computer.
 
 ---
@@ -9,14 +9,14 @@
 | Phase | What | Status |
 |---|---|---|
 | 1 — Scaffold & CI/CD | Monorepo, packages building, CI passing | ✅ Complete |
-| 2 — Data Layer & Cloud | `@commonos/events` (full Zod schema), `@commonos/cloud` (AWS + GCP providers) | ✅ Complete · MongoDB/Redis wiring pending |
-| 3 — Fleet Control Plane API | Hono API, auth, routes, provisioner, WebSocket | ⬜ Not started (health endpoint only) |
+| 2 — Data Layer & Cloud | `@commonos/events` (full Zod schema), `@commonos/cloud` (AWS + GCP providers) | ✅ Complete · MongoDB wired · Redis replaced by in-memory for hackathon |
+| 3 — Fleet Control Plane API | All routes, auth, provisioner, WebSocket stream, Agent Commons registration | ✅ Complete · awaiting MONGODB_URI + cloud credentials for live infra |
 | 4 — Fleet Daemon | Config loader done, heartbeat loop done; task/file/AXL loops pending | 🔄 Partial |
-| 5 — SDK & CLI | SDK fully implemented; CLI structure + commands done, logic stubs | 🔄 Partial |
-| 6 — World UI | Phaser isometric world, agent sprites, HUD, mock simulation, all routes | ✅ Complete |
+| 5 — SDK & CLI | SDK complete (fleets, agents, tasks, world snapshot, streamUrl); CLI stubs | 🔄 Partial |
+| 6 — World UI | Phaser isometric world, agent sprites, HUD, mock simulation + real API hook | ✅ Complete |
 | 7 — Bounty Integrations | AXL, Uniswap | ⬜ Not started |
 
-**Critical path:** Phase 3 (Fleet Control Plane API) unlocks Phases 4, 5, and 7.
+**Critical path:** Phase 3 ✅ — Phases 4, 5, and 7 now unblocked. Next: wire MONGODB_URI + AGENTCOMMONS_API_KEY, then test end-to-end.
 
 ---
 

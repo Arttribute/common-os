@@ -1,6 +1,8 @@
 'use client'
 import { useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { useAgentStore } from '@/store/agentStore'
+import { useWorldStore } from '@/store/worldStore'
 
 export function CommandBar() {
   const [input, setInput] = useState('')
@@ -10,23 +12,53 @@ export function CommandBar() {
   const setCurrentTask = useAgentStore((s) => s.setCurrentTask)
   const updateStatus = useAgentStore((s) => s.updateStatus)
   const setCurrentAction = useAgentStore((s) => s.setCurrentAction)
+  const fleetId = useWorldStore((s) => s.fleetId)
+  const searchParams = useSearchParams()
 
   const selected = selectedId ? agents[selectedId] : null
   const shortRole = selected?.role.replace(/-/g, ' ') ?? 'an agent'
 
-  function handleSend() {
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL
+  const apiKey = process.env.NEXT_PUBLIC_API_KEY
+  const urlFleet = searchParams.get('fleet')
+  const activeFleetId = fleetId ?? urlFleet
+
+  const isLive = Boolean(apiUrl && apiKey && activeFleetId)
+
+  async function handleSend() {
     if (!input.trim() || !selectedId) return
     setSending(true)
-
-    // In demo mode, simulate task assignment directly into the store.
-    // In production, this calls POST /fleets/:id/agents/:agentId/task
-    const taskId = `tsk_${Date.now()}`
-    setCurrentTask(selectedId, { taskId, description: input.trim() })
-    updateStatus(selectedId, 'working')
-    setCurrentAction(selectedId, input.trim().slice(0, 40))
-
+    const description = input.trim()
     setInput('')
-    setTimeout(() => setSending(false), 400)
+
+    if (isLive && activeFleetId) {
+      try {
+        await fetch(`${apiUrl}/fleets/${activeFleetId}/agents/${selectedId}/task`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ description }),
+        })
+        // Store update will come via WebSocket broadcast from the server
+      } catch {
+        // Fallback to optimistic local update on network error
+        fallbackLocalUpdate(selectedId, description)
+      }
+    } else {
+      // Demo mode — write directly to store
+      fallbackLocalUpdate(selectedId, description)
+    }
+
+    setSending(false)
+  }
+
+  function fallbackLocalUpdate(agentId: string, description: string) {
+    const taskId = `tsk_${Date.now()}`
+    setCurrentTask(agentId, { taskId, description })
+    updateStatus(agentId, 'working')
+    setCurrentAction(agentId, description.slice(0, 40))
   }
 
   return (
@@ -56,7 +88,7 @@ export function CommandBar() {
       <input
         value={input}
         onChange={(e) => setInput(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+        onKeyDown={(e) => e.key === 'Enter' && void handleSend()}
         placeholder={selected ? `Assign task to ${shortRole}...` : 'Click an agent to select'}
         disabled={!selectedId}
         style={{
@@ -72,7 +104,7 @@ export function CommandBar() {
       />
 
       <button
-        onClick={handleSend}
+        onClick={() => void handleSend()}
         disabled={!selectedId || !input.trim() || sending}
         style={{
           background: selectedId && input.trim() ? 'rgba(245, 158, 11, 0.15)' : 'transparent',
@@ -86,7 +118,7 @@ export function CommandBar() {
           transition: 'all 0.15s',
         }}
       >
-        send
+        {sending ? '…' : 'send'}
       </button>
     </div>
   )
