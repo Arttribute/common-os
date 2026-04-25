@@ -10,13 +10,13 @@
 |---|---|---|
 | 1 — Scaffold & CI/CD | Monorepo, packages building, CI passing | ✅ Complete |
 | 2 — Data Layer & Cloud | `@commonos/events` (full Zod schema), `@commonos/cloud` (AWS + GCP providers) | ✅ Complete · MongoDB wired · Redis replaced by in-memory for hackathon |
-| 3 — Fleet Control Plane API | All routes, auth, provisioner, WebSocket stream, Agent Commons registration | ✅ Complete · awaiting MONGODB_URI + cloud credentials for live infra |
+| 3 — Fleet Control Plane API | All routes, auth, provisioner, WebSocket stream wired; Agent Commons call is a placeholder (endpoint shape unverified) | 🔄 Partial · awaiting MONGODB_URI + cloud credentials + real Agent Commons integration |
 | 4 — Fleet Daemon | Config loader done, heartbeat loop done; task/file/AXL loops pending | 🔄 Partial |
 | 5 — SDK & CLI | SDK complete (fleets, agents, tasks, world snapshot, streamUrl); CLI stubs | 🔄 Partial |
 | 6 — World UI | Phaser isometric world, agent sprites, HUD, mock simulation + real API hook | ✅ Complete |
 | 7 — Bounty Integrations | AXL, Uniswap | ⬜ Not started |
 
-**Critical path:** Phase 3 ✅ — Phases 4, 5, and 7 now unblocked. Next: wire MONGODB_URI + AGENTCOMMONS_API_KEY, then test end-to-end.
+**Critical path:** Phase 3 routes are wired but not live — needs MONGODB_URI (infra) + real Agent Commons integration (read actual API docs, install `@agent-commons/sdk`, verify endpoint shapes).
 
 ---
 
