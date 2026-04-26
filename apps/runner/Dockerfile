@@ -16,8 +16,7 @@ FROM base AS runner
 
 WORKDIR /workspace
 
-RUN --mount=type=cache,target=/root/.bun/install/cache \
-    bun install -g @agent-commons/cli
+RUN bun install -g @agent-commons/cli
 
 COPY --from=builder /workspace/dist /workspace/dist
 
