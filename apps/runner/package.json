@@ -1,0 +1,22 @@
+{
+	"name": "@common-os/runner",
+	"version": "0.1.0",
+	"private": true,
+	"description": "CommonOS fleet runner — agent runner",
+	"scripts": {
+		"build": "tsc",
+		"dev": "tsx watch src/index.ts",
+		"start": "node dist/index.mjs",
+		"test": "jest --passWithNoTests"
+	},
+	"engines": {
+		"node": ">=22"
+	},
+	"dependencies": {
+		"hono": "^4.12.14"
+	},
+	"devDependencies": {
+		"@types/bun": "^1.3.13",
+		"typescript": "^5.7.3"
+	}
+}

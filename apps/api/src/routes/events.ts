@@ -1,96 +1,125 @@
-import { Hono } from 'hono'
-import { randomBytes } from 'crypto'
-import { agents, events, tasks, worldStates } from '../db/mongo.js'
-import { broadcastToFleet } from '../db/memory.js'
-import { AgentEventSchema } from '@commonos/events'
-import type { Env } from '../types.js'
+import { AgentEventSchema } from "@common-os/events";
+import { randomBytes } from "crypto";
+import { Hono } from "hono";
+import { broadcastToFleet } from "../db/memory.js";
+import { agents, events, tasks, worldStates } from "../db/mongo.js";
+import type { Env } from "../types.js";
 
-const router = new Hono<Env>()
+const router = new Hono<Env>();
 
 // POST /events — agent emits an event
-router.post('/', async (c) => {
-  const raw = await c.req.json<Record<string, unknown>>()
+router.post("/", async (c) => {
+	const raw = await c.req.json<Record<string, unknown>>();
 
-  const parsed = AgentEventSchema.safeParse(raw)
-  if (!parsed.success) {
-    return c.json({ error: 'invalid event', details: parsed.error.issues }, 400)
-  }
+	const parsed = AgentEventSchema.safeParse(raw);
+	if (!parsed.success) {
+		return c.json(
+			{ error: "invalid event", details: parsed.error.issues },
+			400,
+		);
+	}
 
-  const event = parsed.data
-  const agentId = (c.get('agentId') ?? raw['agentId']) as string | undefined
-  if (!agentId) return c.json({ error: 'agentId required' }, 400)
+	const event = parsed.data;
+	const agentId = (c.get("agentId") ?? raw["agentId"]) as string | undefined;
+	if (!agentId) return c.json({ error: "agentId required" }, 400);
 
-  try {
-    const agentDoc = await (await agents()).findOne({ _id: agentId, tenantId: c.get('tenantId') })
-    if (!agentDoc) return c.json({ error: 'agent not found' }, 404)
+	try {
+		const agentDoc = await (await agents()).findOne({
+			_id: agentId,
+			tenantId: c.get("tenantId"),
+		});
+		if (!agentDoc) return c.json({ error: "agent not found" }, 404);
 
-    const now = new Date()
-    const eventId = `evt_${Date.now().toString(36)}${randomBytes(4).toString('hex')}`
+		const now = new Date();
+		const eventId = `evt_${Date.now().toString(36)}${randomBytes(4).toString("hex")}`;
 
-    await (await events()).insertOne({
-      _id: eventId,
-      agentId,
-      fleetId: agentDoc.fleetId,
-      tenantId: agentDoc.tenantId,
-      type: event.type,
-      payload: (event as { payload?: Record<string, unknown> }).payload ?? {},
-      createdAt: now,
-    } as never)
+		await (await events()).insertOne({
+			_id: eventId,
+			agentId,
+			fleetId: agentDoc.fleetId,
+			tenantId: agentDoc.tenantId,
+			type: event.type,
+			payload: (event as { payload?: Record<string, unknown> }).payload ?? {},
+			createdAt: now,
+		} as never);
 
-    // Side effects
-    const agentCol = await agents()
+		// Side effects
+		const agentCol = await agents();
 
-    if (event.type === 'world_move') {
-      const { room, x, y } = event.payload
-      await agentCol.updateOne(
-        { _id: agentId },
-        { $set: { 'world.room': room, 'world.x': x, 'world.y': y, updatedAt: now } },
-      )
-      await (await worldStates()).updateOne(
-        { fleetId: agentDoc.fleetId, 'agents.agentId': agentId },
-        { $set: { 'agents.$.world': { room, x, y, facing: 'south' }, updatedAt: now } },
-      )
-    } else if (event.type === 'state_change') {
-      const statusMap: Record<string, string> = {
-        online: 'running', idle: 'idle', working: 'running', error: 'error', offline: 'stopped',
-      }
-      const agentStatus = (statusMap[event.payload.status] ?? event.payload.status) as import('../types.js').AgentStatus
-      await agentCol.updateOne(
-        { _id: agentId },
-        { $set: { status: agentStatus, updatedAt: now } },
-      )
-      await (await worldStates()).updateOne(
-        { fleetId: agentDoc.fleetId, 'agents.agentId': agentId },
-        { $set: { 'agents.$.status': agentStatus, updatedAt: now } },
-      )
-    } else if (event.type === 'heartbeat') {
-      await agentCol.updateOne(
-        { _id: agentId },
-        { $set: { lastHeartbeatAt: now, updatedAt: now } },
-      )
-    } else if (event.type === 'task_start') {
-      await (await tasks()).updateOne(
-        { _id: event.payload.taskId, agentId },
-        { $set: { status: 'running', startedAt: now } },
-      )
-    } else if (event.type === 'task_complete') {
-      await (await tasks()).updateOne(
-        { _id: event.payload.taskId, agentId },
-        { $set: { status: 'completed', output: event.payload.output ?? null, completedAt: now } },
-      )
-    }
+		if (event.type === "world_move") {
+			const { room, x, y } = event.payload;
+			await agentCol.updateOne(
+				{ _id: agentId },
+				{
+					$set: {
+						"world.room": room,
+						"world.x": x,
+						"world.y": y,
+						updatedAt: now,
+					},
+				},
+			);
+			await (await worldStates()).updateOne(
+				{ fleetId: agentDoc.fleetId, "agents.agentId": agentId },
+				{
+					$set: {
+						"agents.$.world": { room, x, y, facing: "south" },
+						updatedAt: now,
+					},
+				},
+			);
+		} else if (event.type === "state_change") {
+			const statusMap: Record<string, string> = {
+				online: "running",
+				idle: "idle",
+				working: "running",
+				error: "error",
+				offline: "stopped",
+			};
+			const agentStatus = (statusMap[event.payload.status] ??
+				event.payload.status) as import("../types.js").AgentStatus;
+			await agentCol.updateOne(
+				{ _id: agentId },
+				{ $set: { status: agentStatus, updatedAt: now } },
+			);
+			await (await worldStates()).updateOne(
+				{ fleetId: agentDoc.fleetId, "agents.agentId": agentId },
+				{ $set: { "agents.$.status": agentStatus, updatedAt: now } },
+			);
+		} else if (event.type === "heartbeat") {
+			await agentCol.updateOne(
+				{ _id: agentId },
+				{ $set: { lastHeartbeatAt: now, updatedAt: now } },
+			);
+		} else if (event.type === "task_start") {
+			await (await tasks()).updateOne(
+				{ _id: event.payload.taskId, agentId },
+				{ $set: { status: "running", startedAt: now } },
+			);
+		} else if (event.type === "task_complete") {
+			await (await tasks()).updateOne(
+				{ _id: event.payload.taskId, agentId },
+				{
+					$set: {
+						status: "completed",
+						output: event.payload.output ?? null,
+						completedAt: now,
+					},
+				},
+			);
+		}
 
-    broadcastToFleet(agentDoc.fleetId, {
-      type: 'agent_event',
-      agentId,
-      event,
-      ts: now.toISOString(),
-    })
+		broadcastToFleet(agentDoc.fleetId, {
+			type: "agent_event",
+			agentId,
+			event,
+			ts: now.toISOString(),
+		});
 
-    return c.json({ ok: true, eventId })
-  } catch {
-    return c.json({ error: 'database error' }, 503)
-  }
-})
+		return c.json({ ok: true, eventId });
+	} catch {
+		return c.json({ error: "database error" }, 503);
+	}
+});
 
-export { router as eventsRouter }
+export { router as eventsRouter };

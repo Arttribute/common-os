@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  transpilePackages: ["@commonos/sdk", "@commonos/events"],
+	transpilePackages: ["@common-os/sdk", "@common-os/events"],
 };
 
 export default nextConfig;
