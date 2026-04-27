@@ -2,6 +2,7 @@
 import { FleetPanel } from './FleetPanel'
 import { Inspector } from './Inspector'
 import { CommandBar } from './CommandBar'
+import { WorldCustomizer } from './WorldCustomizer'
 import { useSocketStore } from '@/store/socketStore'
 
 export function HUD() {
@@ -57,6 +58,9 @@ export function HUD() {
       {/* Right: fleet panel + inspector */}
       <FleetPanel />
       <Inspector />
+
+      {/* Bottom-left: world customizer */}
+      <WorldCustomizer />
 
       {/* Bottom: command bar */}
       <CommandBar />
