@@ -1,5 +1,8 @@
+import { ClusterManagerClient } from "@google-cloud/container";
 import { ServicesClient } from "@google-cloud/run";
 import { Storage } from "@google-cloud/storage";
+import { GoogleAuth } from "google-auth-library";
+import * as k8s from "@kubernetes/client-node";
 import { v4 as uuidv4 } from "uuid";
 
 interface StartupScriptOptions {
@@ -134,6 +137,239 @@ export async function launch() {
 	} catch (error) {
 		console.error("Error deploying service:", error);
 	}
+}
+
+interface DeployRunnerOptions {
+	projectId: string;
+	region: string;
+	clusterName?: string;
+	runnerImage: string;
+	agentId: string;
+	agentToken: string;
+	apiUrl: string;
+	port?: number;
+	replicas?: number;
+}
+
+interface DeployedRunner {
+	clusterName: string;
+	namespace: string;
+	deploymentName: string;
+	serviceName: string;
+	externalIp: string;
+	port: number;
+	url: string;
+}
+
+const GKE_POLL_INTERVAL_MS = 5_000;
+const GKE_MAX_POLL_ATTEMPTS = 120;
+const LB_POLL_INTERVAL_MS = 5_000;
+const LB_MAX_POLL_ATTEMPTS = 40;
+
+async function waitForGkeOperation(
+	gkeClient: ClusterManagerClient,
+	operationName: string,
+): Promise<void> {
+	for (let i = 0; i < GKE_MAX_POLL_ATTEMPTS; i++) {
+		const [op] = await gkeClient.getOperation({ name: operationName });
+		if (op.status === 3) {
+			if (op.error?.message) {
+				throw new Error(`GKE operation failed: ${op.error.message}`);
+			}
+			return;
+		}
+		await new Promise((r) => setTimeout(r, GKE_POLL_INTERVAL_MS));
+	}
+	throw new Error(`Timed out waiting for GKE operation ${operationName}`);
+}
+
+async function pollForExternalIp(
+	coreV1Api: k8s.CoreV1Api,
+	serviceName: string,
+	namespace: string,
+): Promise<string> {
+	for (let i = 0; i < LB_MAX_POLL_ATTEMPTS; i++) {
+		await new Promise((r) => setTimeout(r, LB_POLL_INTERVAL_MS));
+		const svc = await coreV1Api.readNamespacedService({
+			name: serviceName,
+			namespace,
+		});
+		const ingress = svc.status?.loadBalancer?.ingress?.[0];
+		if (ingress) {
+			const ip = ingress.ip ?? ingress.hostname ?? "";
+			if (ip) return ip;
+		}
+	}
+	throw new Error(`Timed out waiting for LoadBalancer external IP on service ${serviceName}`);
+}
+
+export async function deployRunner(opts: DeployRunnerOptions): Promise<DeployedRunner> {
+	const {
+		projectId,
+		region,
+		clusterName = "common-os-runners",
+		runnerImage,
+		agentId,
+		agentToken,
+		apiUrl,
+		port = 3002,
+		replicas = 1,
+	} = opts;
+
+	const gkeClient = new ClusterManagerClient();
+	const parent = `projects/${projectId}/locations/${region}`;
+	const namespace = `runner-${agentId}`;
+	const deploymentName = `runner-${agentId}`;
+	const serviceName = `runner-${agentId}`;
+
+	let gkeCluster: { endpoint: string; masterAuth: { clusterCaCertificate?: string | null } };
+
+	try {
+		const [cluster] = await gkeClient.getCluster({
+			name: `${parent}/clusters/${clusterName}`,
+		});
+		gkeCluster = {
+			endpoint: cluster.endpoint ?? "",
+			masterAuth: {
+				clusterCaCertificate: cluster.masterAuth?.clusterCaCertificate ?? undefined,
+			},
+		};
+		console.log(`GKE cluster "${clusterName}" found.`);
+	} catch {
+		console.log(`Creating GKE cluster "${clusterName}" in ${region}...`);
+		const [operation] = await gkeClient.createCluster({
+			parent,
+			cluster: {
+				name: clusterName,
+				initialNodeCount: 1,
+				nodeConfig: {
+					machineType: "e2-medium",
+					oauthScopes: [
+						"https://www.googleapis.com/auth/devstorage.read_only",
+						"https://www.googleapis.com/auth/logging.write",
+						"https://www.googleapis.com/auth/monitoring",
+					],
+				},
+			},
+		});
+		if (operation.name) {
+			await waitForGkeOperation(gkeClient, operation.name);
+		}
+		const [cluster] = await gkeClient.getCluster({
+			name: `${parent}/clusters/${clusterName}`,
+		});
+		gkeCluster = {
+			endpoint: cluster.endpoint ?? "",
+			masterAuth: {
+				clusterCaCertificate: cluster.masterAuth?.clusterCaCertificate ?? undefined,
+			},
+		};
+		console.log(`GKE cluster "${clusterName}" created.`);
+	}
+
+	const auth = new GoogleAuth({
+		scopes: ["https://www.googleapis.com/auth/cloud-platform"],
+	});
+	const accessToken = await auth.getAccessToken();
+
+	const kc = new k8s.KubeConfig();
+	kc.loadFromOptions({
+		clusters: [
+			{
+				name: clusterName,
+				server: `https://${gkeCluster.endpoint}`,
+				caData: gkeCluster.masterAuth.clusterCaCertificate ?? undefined,
+				skipTLSVerify: false,
+			},
+		],
+		users: [
+			{
+				name: "gke-user",
+				token: accessToken ?? undefined,
+			},
+		],
+		contexts: [
+			{
+				cluster: clusterName,
+				user: "gke-user",
+				name: "gke-context",
+			},
+		],
+		currentContext: "gke-context",
+	});
+
+	const k8sAppsApi = kc.makeApiClient(k8s.AppsV1Api);
+	const k8sCoreApi = kc.makeApiClient(k8s.CoreV1Api);
+
+	await k8sCoreApi.createNamespace({
+		body: {
+			metadata: { name: namespace, labels: { "managed-by": "common-os" } },
+		},
+	});
+
+	await k8sAppsApi.createNamespacedDeployment({
+		namespace,
+		body: {
+			metadata: {
+				name: deploymentName,
+				labels: { app: deploymentName, "managed-by": "common-os" },
+			},
+			spec: {
+				replicas,
+				selector: { matchLabels: { app: deploymentName } },
+				template: {
+					metadata: { labels: { app: deploymentName } },
+					spec: {
+						containers: [
+							{
+								name: "runner",
+								image: runnerImage,
+								imagePullPolicy: "Always",
+								ports: [{ containerPort: port }],
+								env: [
+									{ name: "AGENT_ID", value: agentId },
+									{ name: "AGENT_TOKEN", value: agentToken },
+									{ name: "API_URL", value: apiUrl },
+									{ name: "PORT", value: String(port) },
+								],
+								resources: {
+									limits: { cpu: "1", memory: "512Mi" },
+									requests: { cpu: "250m", memory: "256Mi" },
+								},
+							},
+						],
+					},
+				},
+			},
+		},
+	});
+
+	await k8sCoreApi.createNamespacedService({
+		namespace,
+		body: {
+			metadata: {
+				name: serviceName,
+				labels: { app: deploymentName, "managed-by": "common-os" },
+			},
+			spec: {
+				type: "LoadBalancer",
+				selector: { app: deploymentName },
+				ports: [{ port, targetPort: port, protocol: "TCP" }],
+			},
+		},
+	});
+
+	const externalIp = await pollForExternalIp(k8sCoreApi, serviceName, namespace);
+
+	return {
+		clusterName,
+		namespace,
+		deploymentName,
+		serviceName,
+		externalIp,
+		port,
+		url: `http://${externalIp}:${port}`,
+	};
 }
 
 export function buildStartupScript(opts: StartupScriptOptions): string {
