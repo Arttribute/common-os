@@ -124,12 +124,12 @@ jobs:
           node -e "
             const fs = require('fs');
             const pkg = JSON.parse(fs.readFileSync('apps/web/package.json', 'utf8'));
-            pkg.dependencies['@commonos/sdk'] = '^${SDK_VERSION}';
+            pkg.dependencies['@common-os/sdk'] = '^${SDK_VERSION}';
             fs.writeFileSync('apps/web/package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
           git diff --quiet apps/web/package.json || {
             pnpm install --no-frozen-lockfile
             git add apps/web/package.json pnpm-lock.yaml
-            HUSKY=0 git commit -m "chore: bump web to @commonos/sdk@${SDK_VERSION}"
+            HUSKY=0 git commit -m "chore: bump web to @common-os/sdk@${SDK_VERSION}"
             git push origin HEAD:main
           }
