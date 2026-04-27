@@ -1,6 +1,6 @@
 # COMMONOS — MASTER PLAN
-> Version 1.7 — April 2026 | One-week hackathon build. Builds on Agent Commons infrastructure.
-> A deployment and management framework for persistent AI agent fleets — each agent gets its own computer.
+> Version 1.8 — April 2026 | One-week hackathon build. Builds on Agent Commons infrastructure.
+> A deployment and management framework for persistent AI agent fleets — each agent gets its own compute space.
 
 ---
 
@@ -9,73 +9,81 @@
 | Phase | What | Status |
 |---|---|---|
 | 1 — Scaffold & CI/CD | Monorepo, packages building, CI passing | ✅ Complete |
-| 2 — Data Layer & Cloud | `@common-os/events` (full Zod schema), `@common-os/cloud` (AWS + GCP providers) | ✅ Complete · MongoDB wired · Redis replaced by in-memory for hackathon |
-| 3 — Fleet Control Plane API | All routes, auth, provisioner, WebSocket stream wired; Agent Commons registration call present but endpoint shape unverified | 🔄 Partial · awaiting MONGODB_URI + cloud credentials + real Agent Commons integration |
-| 3b — GCP Compute Model | Cloud Run per-agent + GCS FUSE storage added; runner microservice + GKE runner deploy added | ⚠️ Prototype — `launch()` has hardcoded values and is NOT wired to provisioner; two compute models are now in conflict |
-| 4 — Fleet Daemon | Task loop done, file watcher done, heartbeat done; native-path Agent Commons exec stubbed | 🔄 Partial · daemon containerized (`apps/api/agent/`) but `common-os-daemon` package name mismatch from `@commonos/daemon` |
+| 2 — Data Layer & Cloud | `@common-os/events` (Zod schema), `@common-os/cloud` (AWS + GCP providers) | ✅ Complete · MongoDB wired · Redis replaced by in-memory for hackathon |
+| 3 — Fleet Control Plane API | All routes, auth, provisioner, WebSocket stream wired; Agent Commons registration call present | 🔄 Partial · needs MONGODB_URI + GCP credentials + real Agent Commons endpoint verification |
+| 3b — Compute Wiring | `launch()` in `cloud-init.ts` exists but has hardcoded values; not yet called from provisioner | ⚠️ Needs: parameterize `launch()`, wire into `provisioner.ts`, drop `deployRunner()` / GKE |
+| 4 — Fleet Daemon | Task loop, file watcher, heartbeat done; containerized in `apps/api/agent/`; native exec stubbed | 🔄 Partial · `entrypoint.sh` runs `bunx common-os-daemon` — verify package name matches published npm |
 | 5 — SDK & CLI | SDK complete; CLI structure done, actions still stubs | 🔄 Partial |
 | 6 — World UI | Phaser isometric world, agent sprites, HUD, mock simulation + real API hook | ✅ Complete |
 | 7 — Bounty Integrations | AXL, Uniswap | ⬜ Not started |
 
 **Critical path (as of 2026-04-27):**
-1. **Resolve compute model split** — decide GCE VMs vs Cloud Run per agent; right now both exist and neither is fully wired
-2. **Wire compute into provisioner** — `launch()` (Cloud Run) or `cloud.provision()` (GCE) must be called from `provisioner.ts` based on the chosen model
-3. **MONGODB_URI + cloud credentials** — nothing runs without these
-4. **Agent Commons API** — still speculative endpoint shapes; needs verification
+1. **Parameterize and wire `launch()`** — remove hardcoded values, call it from `provisioner.ts` instead of `buildStartupScript()` + GCE
+2. **Drop `deployRunner()` / GKE** — use the shared Cloud Run runner (`common-os-runner-prod`) instead
+3. **MONGODB_URI + GCP credentials** — nothing runs without these
+4. **Agent Commons API** — endpoints are speculative; needs verification before demo
 
 ---
 
-## COMPUTE MODEL — NEW GCP APPROACH (post-merge 2026-04-27)
+## COMPUTE MODEL — CLOUD RUN + GCS FUSE
 
-The feature/gcp merge introduced a significant shift in how agent compute is orchestrated. There are now **two compute models** in the codebase that need to be reconciled.
+Each agent gets its own **Cloud Run service** backed by a **GCS FUSE-mounted storage bucket**. This is the single compute model for CommonOS on GCP.
 
-### Model A — GCE VM per agent (original plan, still in `provisioner.ts`)
-- `provisionAgent()` → `buildStartupScript()` → `GCPProvider.provision()` → GCE instance
-- VM runs cloud-init: installs Node.js, AXL, `@agent-commons/cli`, daemon via systemd
-- Agent identity fully owned by Agent Commons; daemon polls task queue and calls `agc`
+```
+POST /fleets/:id/agents
+        │
+        ▼
+  provisioner.ts
+  ├── registerWithAgentCommons()    → get commons agentId + apiKey
+  ├── insert agent doc (MongoDB)
+  └── launch()  ──────────────────────────────────────────────────┐
+                                                                   ▼
+                                              Cloud Run service per agent
+                                              ┌─────────────────────────────┐
+                                              │  agent-{id}-session-{sid}   │
+                                              │  image: common-os-agent     │
+                                              │  entrypoint.sh              │
+                                              │    → generates config.json  │
+                                              │    → bunx common-os-daemon  │
+                                              ├─────────────────────────────┤
+                                              │  /mnt/shared  (GCS FUSE)    │
+                                              │  bucket: agent-session-     │
+                                              │  state-bucket               │
+                                              │  path: agents/{id}/         │
+                                              │        sessions/{sid}       │
+                                              └─────────────────────────────┘
+```
 
-### Model B — Cloud Run container per agent session (new, `cloud-init.ts:launch()`)
-- Each agent session → one Cloud Run service (`agent-{agentId}-service-session-{sessionId}`)
-- Container image: `apps/api/agent/Dockerfile` (Bun + `@agent-commons/cli` + daemon via `entrypoint.sh`)
-- Persistent storage: GCS bucket (`agent-session-state-bucket`) mounted at `/mnt/shared` via GCS FUSE (Gen2 execution environment required)
-- Storage path: `agents/{agentId}/sessions/{sessionId}`
+### Agent container (`apps/api/agent/`)
+- **Image**: `europe-west1-docker.pkg.dev/{project}/arttribute/common-os-agent:latest`
+- **Runtime**: Bun + `@agent-commons/cli` pre-installed
+- **Entrypoint**: `entrypoint.sh` — reads env vars, writes `/etc/common-os/config.json`, runs `bunx common-os-daemon`
+- **Storage**: GCS bucket mounted at `/mnt/shared` via GCS FUSE (Cloud Run Gen2 required)
+- **Config via env vars**: `AGENT_ID`, `AGENT_TOKEN`, `API_URL`, `FLEET_ID`, `TENANT_ID`, `COMMONS_API_KEY`, `COMMONS_AGENT_ID`, `INTEGRATION_PATH`, `ROLE`
 
-### Model B vs Model A — tradeoffs
-| | GCE VM (A) | Cloud Run (B) |
+### Runner service (`apps/runner/`)
+A **shared** Cloud Run service that wraps `agent-commons run` CLI calls. One instance serves the whole platform.
+- `GET /health` — liveness check
+- `POST /run` — `{ agentId, sessionId?, prompt }` → executes `agent-commons run ...` via Bun shell → returns output
+- Deployed via `apps/runner/cloudbuild.yaml` → `common-os-runner-prod` on Cloud Run (europe-west1)
+- Daemon's `executeTask()` should call this endpoint (currently posts directly to Agent Commons API — needs update)
+
+### Storage model
+- One GCS bucket per platform (`agent-session-state-bucket`)
+- Each agent session gets a path prefix: `agents/{agentId}/sessions/{sessionId}`
+- Mounted into the container at `/mnt/shared` — this is the agent's persistent workspace
+- File watcher (chokidar) watches `/mnt/shared` and emits `file_changed` events
+
+### What still needs to be done
+
+| Item | File | Work |
 |---|---|---|
-| Startup time | ~2-3 min | ~10-30s |
-| Cost when idle | Ongoing (always billed) | Zero (scales to 0) |
-| Persistent filesystem | Full disk | GCS FUSE mount only |
-| AXL / systemd support | Yes | No (containers, no systemd) |
-| Long-running agent | Natural | Needs min-instances or keep-alive |
-| Per-agent isolation | Full VM | Container isolation |
-
-### The runner (new, `apps/runner/`)
-A separate Hono microservice deployed on Cloud Run that wraps `agent-commons run` commands:
-- `POST /run` → executes `agent-commons run --agent-id X --prompt Y` via Bun shell
-- Deployed as a **shared** Cloud Run service (`common-os-runner-prod`) via `apps/runner/cloudbuild.yaml`
-- `deployRunner()` in `cloud-init.ts` also deploys a **per-agent runner** on GKE — this conflicts with the shared deployment above
-
-### Issues requiring resolution
-
-1. **`launch()` is not wired to `provisioner.ts`** — it's a standalone prototype. `agentId` is hardcoded as `""`, `projectId` is hardcoded as `"arttribute-424420"`, image URL is hardcoded. Not parameterized yet.
-2. **Runner deployment conflict** — `cloudbuild.yaml` deploys one shared `common-os-runner-prod`. `deployRunner()` deploys a per-agent runner on GKE. Pick one.
-3. **Package name**: `entrypoint.sh` runs `bunx common-os-daemon` but the daemon package is `@commonos/daemon` / `@common-os/daemon` — if it's not published to npm, this fails.
-4. **Daemon → runner integration gap**: The daemon's `executeTask()` POSTs directly to `https://api.agentcommons.io/v1/runs`. The runner's `POST /run` wraps the same call but as an HTTP service. Neither calls the other — integration point is missing.
-5. **GCS FUSE + Cloud Run Gen2**: Storage model works but means `/workspace` is a GCS FUSE mount, not a real disk. File watcher (chokidar) may behave differently on FUSE.
-
-### Recommended resolution (pick one path before deadline)
-
-**Option 1 — Stay on GCE VMs for the demo** (least risk, matches masterplan design)
-- Comment out `launch()` and `deployRunner()` (they're unused anyway)
-- The runner becomes a Cloud Run sidecar or is dropped
-- GCE VMs give you real systemd, real disk, AXL support — matches the full masterplan
-
-**Option 2 — Go Cloud Run for GCP demo** (faster spin-up, better for hackathon demo)
-- Parameterize `launch()` and call it from `provisioner.ts` when `provider === 'gcp'`
-- Use the shared runner (`common-os-runner-prod`) and call it from daemon's `executeTask()`
-- Drop `deployRunner()` / GKE (too heavy for hackathon)
-- Accept: no systemd, GCS FUSE for state, Cloud Run cold starts
+| Parameterize `launch()` | `apps/api/src/services/cloud-init.ts` | Remove hardcoded `agentId`, `projectId`, `imageUrl`; accept them as params |
+| Wire `launch()` into provisioner | `apps/api/src/services/provisioner.ts` | Replace `buildStartupScript()` + `cloud.provision()` with `launch()` |
+| Drop `deployRunner()` | `apps/api/src/services/cloud-init.ts` | Remove GKE deploy function — use shared runner instead |
+| Daemon calls runner | `packages/daemon/src/daemon.ts` | `executeTask()` → `POST {RUNNER_URL}/run` instead of direct Agent Commons fetch |
+| Package name | `apps/api/agent/entrypoint.sh` | Confirm `bunx common-os-daemon` resolves to the published `@common-os/daemon` package |
+| Env var injection | `apps/api/src/services/cloud-init.ts:launch()` | Pass all agent config as Cloud Run container env vars |
 
 ---
 
@@ -113,36 +121,54 @@ A separate Hono microservice deployed on Cloud Run that wraps `agent-commons run
 
 ## 1. VISION
 
-CommonOS is the infrastructure layer above Agent Commons. Where Agent Commons gives agents identity, wallets, memory, tools, and a runtime — CommonOS gives them a **computer of their own**.
+CommonOS is the **Vercel/Railway for AI agents** — a deployment and management platform that gives every agent a dedicated, isolated runtime it can be managed as a durable worker.
 
-The core primitive: **a persistent agent with its own computer, visible as a character in a world.**
+Where Vercel solved deployment for web apps, CommonOS solves deployment for AI agents. Where Railway made services feel like persistent workers, CommonOS makes agents feel like persistent workers. The core primitive is not a VM — it's **clear runtime separation at any scale**.
 
-A developer sees: an isolated VM, a running LLM runtime, a filesystem, an API. A non-technical user sees: an agent character sitting at a desk in an office, building their product. Same thing, two lenses.
+The core primitive: **an agent with its own isolated runtime and persistent state, manageable as a durable worker, visible as a character in a world.**
+
+A developer sees: a dedicated isolated runtime (GKE pod with gVisor sandbox), a persistent workspace (GCS-backed), a fleet control plane, an API. A non-technical user sees: an agent character sitting at a desk in an office, actively working. Same thing, two lenses.
 
 There are two propositions at play, and both matter:
 
-- **Proposition A — Infrastructure:** Give every AI agent its own computer. Persistent, isolated, stateful. Deploy a fleet with one command, manage it with a CLI or SDK, observe it in real time.
+- **Proposition A — Infrastructure:** Give every AI agent clear runtime separation. Persistent, isolated, stateful. Deploy a fleet with one command, manage it with a CLI or SDK, scale from one agent to millions without changing how you interact with the platform.
 - **Proposition B — Experience:** Make agent work visible. A live spatial simulation where agents are embodied characters in a world — an office, a market, a city — and the world is a live map of real compute doing real work.
 
 The infrastructure is the foundation. The experience is the moat. Nobody has built the combination.
 
-The long-term vision: deploying a fleet of AI agents is as natural as deploying a team of workers. You describe the roles, pick a cloud, and your agents spin up as persistent workers — each with its own VM and filesystem — visible in a simulation that shows exactly what they're doing and producing in real time.
+**Why GKE + gVisor is the right primitive:**
+- Each agent gets a sandboxed kernel (gVisor) — true runtime separation, not just process isolation
+- Scales to millions of agents through bin-packing on shared nodes — economics that VMs can never match
+- Each agent's state persists on GCS regardless of pod restarts — durable by design
+- AXL runs as a sidecar in every pod — P2P inter-agent communication without a central broker
+- Tiered isolation as tenants grow: shared cluster → dedicated node pool → dedicated cluster
+
+The long-term vision: deploying a fleet of AI agents is as natural as deploying a team of workers on Railway. You describe the roles, point to a runtime, and your agents spin up as durable workers — each with its own isolated environment and persistent workspace — visible in a simulation that shows exactly what they're doing in real time.
 
 ---
 
 ## 2. PROBLEM STATEMENT
 
-AI agents are becoming more capable, but most are still run as short-lived processes instead of persistent workers with their own computer, files, and runtime.
+AI agents are becoming more capable, but most are still run as short-lived processes instead of persistent workers with dedicated, isolated runtimes of their own.
 
-Current agent frameworks are getting better at reasoning and orchestration, but deployment and operations remain weak. In many setups, agents do not run inside dedicated, isolated, stateful environments of their own. In multi-agent systems, that matters even more. Without clear runtime separation, agents are harder to manage as durable workers: working state is harder to preserve, failures are harder to isolate, credentials and local data are harder to contain, and responsibility across agents is harder to track.
+Current agent frameworks are getting better at reasoning and orchestration, but deployment and operations remain weak. In most setups, agents don't run inside dedicated, isolated, stateful environments — they share processes, share memory, and leave no clear boundary between one agent's execution context and another's. In multi-agent systems, that matters even more. Without clear runtime separation, agents are harder to manage as durable workers: working state is harder to preserve, failures are harder to isolate, credentials and local data are harder to contain, and responsibility across agents is harder to track.
 
-As a result, running many agents together in production is still brittle, opaque, and operationally messy. And there is no standard platform for it — developers stitch together fragile infrastructure by hand with no visibility into what agents are actually doing.
+There is also no standard platform for this. Developers who want to run agent fleets today stitch fragile infrastructure together by hand — no isolation, no persistence guarantees, no fleet-level visibility, no way to manage agents as workers the way you manage services.
+
+The gap isn't reasoning capability. It's the operational layer: **a platform that treats AI agents as first-class persistent workers with their own isolated runtime, the same way Vercel treats web deployments or Railway treats services.**
 
 ---
 
 ## 3. SOLUTION
 
-CommonOS is a deployment and management framework for persistent AI agent fleets. It gives every agent its own isolated cloud sandbox — its own computer, runtime, and persistent filesystem. On top of these dedicated environments, CommonOS provides a shared control plane for provisioning, task routing, permissions, monitoring, and coordination across the fleet.
+CommonOS is a deployment and management platform for AI agent fleets. It gives every agent a **dedicated, isolated runtime with persistent state** — the operational guarantees that make agents manageable as durable workers. On top of these isolated environments, CommonOS provides a shared control plane for provisioning, task routing, permissions, monitoring, and coordination across the fleet.
+
+**The compute primitive:** each agent runs in a GKE pod with a gVisor-sandboxed kernel — true runtime separation at container economics. State persists on GCS regardless of restarts. AXL runs as a sidecar for direct P2P inter-agent communication. Scales from 1 agent to millions without changing how you interact with the platform.
+
+**The tiered isolation model** mirrors how Vercel/Railway work — small deployments share infrastructure efficiently, large deployments get dedicated environments:
+- Small tenants → shared GKE cluster, namespace isolation + gVisor
+- Growing tenants → dedicated node pool (their pods, their nodes)
+- Enterprise → dedicated cluster
 
 Fleets are governed by a layered permission model: human masters authorize agent capabilities, manager agents supervise and coordinate across the fleet, worker agents act only within their assigned scope.
 
@@ -150,11 +176,11 @@ CommonOS also provides a live spatial interface where agents appear as active pr
 
 **Three layers:**
 
-1. **Fleet Infrastructure** — one-command deployment of isolated agent VMs on AWS or GCP; each agent owns a real computer with its own filesystem and persistent runtime
+1. **Fleet Infrastructure** — one-command deployment of isolated agent runtimes on GKE (gVisor sandbox + GCS-backed persistent state + AXL sidecar); scales to millions of agents through bin-packing
 2. **Control Plane** — provisioning, task routing, permission enforcement, event streaming, monitoring across the fleet
 3. **World UI** — agents as embodied characters in a 2.5D isometric simulation; the world is a live map of real compute doing real work
 
-**Framework agnostic by design.** CommonOS does not require Agent Commons agents. Any agent — LangGraph, CrewAI, AutoGen, raw API calls — can join a fleet by installing the `@commonos/sdk` and emitting events. Agent Commons agents are the native, first-class path and get the full feature set. Guest agents get task routing, event emission, and world UI visibility.
+**Framework agnostic by design.** CommonOS does not require Agent Commons agents. Any agent — LangGraph, CrewAI, AutoGen, raw API calls — can join a fleet by installing the `@common-os/sdk` and emitting events. Agent Commons agents are the native, first-class path and get the full feature set. Guest agents get task routing, event emission, and world UI visibility.
 
 ---
 
@@ -181,25 +207,27 @@ CommonOS is a **separate project** that uses Agent Commons as its identity and c
 
 | Layer | What it owns |
 |---|---|
-| VM instances | Instance ID, provider, region, status, uptime, agent token |
+| Agent runtime | GKE pod (gVisor sandbox), AXL sidecar, pod lifecycle |
+| Persistent state | GCS bucket scoped per agent, mounted at `/mnt/shared` |
 | Fleet topology | Fleet membership, agent roles, world positions, room assignments |
-| Task routing | Which task goes to which VM, queue management |
+| Task routing | Which task goes to which runtime, queue management |
 | Event stream | Real-time structured events from all agents across the fleet |
 | World state | Sprite positions, room occupancy, animation state |
 | Permission model | Human master, manager agent, worker agent roles and scopes |
+| Isolation tier | Namespace / node pool / cluster assignment per tenant |
 
 ### The clean boundary
 
 ```
 Agent Commons              CommonOS
 ─────────────              ────────
-Agent identity       ←→    VM instance
-Wallet                     Fleet membership
-Sessions                   Task routing
-Memory                     World position
+Agent identity       ←→    Isolated runtime (GKE pod + gVisor)
+Wallet                     Persistent workspace (GCS)
+Sessions                   Fleet membership + topology
+Memory                     Task routing
 MCP tools                  Event stream
 agc runtime                Fleet daemon
-                           Cloud provider (AWS)
+                           AXL sidecar (P2P comms)
                            Permission model
                            World UI
 ```
@@ -211,27 +239,33 @@ CommonOS calls Agent Commons via REST API at deploy time and for native agent se
 ## 5. ARCHITECTURE OVERVIEW
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│                      World UI                            │
-│           Next.js + Phaser 3 (isometric 2.5D)            │
-│     React HUD (fleet panel, inspector, command bar)      │
-├──────────────────────────────────────────────────────────┤
-│               Fleet Control Plane (Hono API)             │
-│   auth · provisioning · task routing · event streaming   │
-│   permission enforcement · world state management        │
-├──────────────────────────────────────────────────────────┤
-│               Agent Commons API                          │
-│     identity · wallets · sessions · memory · tools       │
-├──────────────────────────────────────────────────────────┤
-│      Cloud Provider Layer (AWS EC2 · GCP Compute)        │
-├──────────────┬────────────────┬─────────────────────────┤
-│  Agent VM    │   Agent VM     │   Agent VM              │
-│  daemon      │   daemon       │   daemon                │
-│  agc runtime │   agc runtime  │   Docker image          │
-│  /workspace  │   /workspace   │   /workspace            │
-│  AXL node    │   AXL node     │   AXL node              │
-└──────────────┴────────────────┴─────────────────────────┘
-    Native agents (Agent Commons)     Guest agents (any framework)
+┌──────────────────────────────────────────────────────────────┐
+│                        World UI                              │
+│             Next.js + Phaser 3 (isometric 2.5D)              │
+│       React HUD (fleet panel, inspector, command bar)        │
+├──────────────────────────────────────────────────────────────┤
+│                 Fleet Control Plane (Hono API)               │
+│     auth · provisioning · task routing · event streaming     │
+│     permission enforcement · world state · tenant isolation  │
+├──────────────────────────────────────────────────────────────┤
+│                   Agent Commons API                          │
+│       identity · wallets · sessions · memory · tools         │
+├──────────────────────────────────────────────────────────────┤
+│          GKE Cluster  (gVisor sandboxed node pool)           │
+├─────────────────────┬────────────────────┬───────────────────┤
+│   Agent Pod         │   Agent Pod        │   Agent Pod       │
+│  ┌───────────────┐  │  ┌──────────────┐  │  ┌─────────────┐ │
+│  │ agent         │  │  │ agent        │  │  │ agent       │ │
+│  │ (daemon+agc)  │  │  │ (daemon+agc) │  │  │ (daemon+    │ │
+│  │               │  │  │              │  │  │  guest img) │ │
+│  ├───────────────┤  │  ├──────────────┤  │  ├─────────────┤ │
+│  │ AXL sidecar   │  │  │ AXL sidecar  │  │  │ AXL sidecar │ │
+│  └───────────────┘  │  └──────────────┘  │  └─────────────┘ │
+│  /mnt/shared→GCS    │  /mnt/shared→GCS   │  /mnt/shared→GCS │
+└─────────────────────┴────────────────────┴───────────────────┘
+      Native agents (Agent Commons)       Guest agents (any)
+
+Tenant isolation: namespace → dedicated node pool → dedicated cluster
 ```
 
 ### World UI — React + Phaser architecture
@@ -246,16 +280,16 @@ WebSocket events → Zustand store → Phaser reads each frame
 ### Two agent integration paths
 
 **Native path (Agent Commons agents)**
-- VM boots with `agc` pre-installed and authenticated via injected Commons credentials
+- Pod boots with `agc` pre-installed and authenticated via injected Commons credentials
 - Full Agent Commons feature set: sessions, memory, wallets, MCP tools, skills
-- Fleet daemon manages `agc` as a child process
-- Events emitted by daemon on behalf of the agc runtime
+- Fleet daemon manages task polling and event emission
+- AXL sidecar handles encrypted P2P inter-agent messaging
 
 **Guest path (any agent framework)**
-- VM runs tenant's Docker image (tenant provides image URI at deploy time)
-- Tenant installs `@commonos/sdk` in their image — calls `agent.emit()` and `agent.nextTask()`
-- Fleet daemon manages the Docker container lifecycle
-- Same world UI visibility as native agents
+- Pod runs tenant's custom image alongside the daemon container
+- Tenant installs `@common-os/sdk` — calls `agent.emit()` and `agent.nextTask()`
+- Same world UI visibility, same event stream, same permission model as native agents
+- gVisor sandbox provides stronger kernel isolation for untrusted guest images
 
 ---
 
