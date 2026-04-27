@@ -1,22 +1,81 @@
 # COMMONOS — MASTER PLAN
-> Version 1.6 — April 2026 | One-week hackathon build. Builds on Agent Commons infrastructure.
+> Version 1.7 — April 2026 | One-week hackathon build. Builds on Agent Commons infrastructure.
 > A deployment and management framework for persistent AI agent fleets — each agent gets its own computer.
 
 ---
 
-## BUILD STATUS — 2026-04-25
+## BUILD STATUS — 2026-04-27
 
 | Phase | What | Status |
 |---|---|---|
 | 1 — Scaffold & CI/CD | Monorepo, packages building, CI passing | ✅ Complete |
-| 2 — Data Layer & Cloud | `@commonos/events` (full Zod schema), `@commonos/cloud` (AWS + GCP providers) | ✅ Complete · MongoDB wired · Redis replaced by in-memory for hackathon |
-| 3 — Fleet Control Plane API | All routes, auth, provisioner, WebSocket stream wired; Agent Commons call is a placeholder (endpoint shape unverified) | 🔄 Partial · awaiting MONGODB_URI + cloud credentials + real Agent Commons integration |
-| 4 — Fleet Daemon | Config loader done, heartbeat loop done; task/file/AXL loops pending | 🔄 Partial |
-| 5 — SDK & CLI | SDK complete (fleets, agents, tasks, world snapshot, streamUrl); CLI stubs | 🔄 Partial |
+| 2 — Data Layer & Cloud | `@common-os/events` (full Zod schema), `@common-os/cloud` (AWS + GCP providers) | ✅ Complete · MongoDB wired · Redis replaced by in-memory for hackathon |
+| 3 — Fleet Control Plane API | All routes, auth, provisioner, WebSocket stream wired; Agent Commons registration call present but endpoint shape unverified | 🔄 Partial · awaiting MONGODB_URI + cloud credentials + real Agent Commons integration |
+| 3b — GCP Compute Model | Cloud Run per-agent + GCS FUSE storage added; runner microservice + GKE runner deploy added | ⚠️ Prototype — `launch()` has hardcoded values and is NOT wired to provisioner; two compute models are now in conflict |
+| 4 — Fleet Daemon | Task loop done, file watcher done, heartbeat done; native-path Agent Commons exec stubbed | 🔄 Partial · daemon containerized (`apps/api/agent/`) but `common-os-daemon` package name mismatch from `@commonos/daemon` |
+| 5 — SDK & CLI | SDK complete; CLI structure done, actions still stubs | 🔄 Partial |
 | 6 — World UI | Phaser isometric world, agent sprites, HUD, mock simulation + real API hook | ✅ Complete |
 | 7 — Bounty Integrations | AXL, Uniswap | ⬜ Not started |
 
-**Critical path:** Phase 3 routes are wired but not live — needs MONGODB_URI (infra) + real Agent Commons integration (read actual API docs, install `@agent-commons/sdk`, verify endpoint shapes).
+**Critical path (as of 2026-04-27):**
+1. **Resolve compute model split** — decide GCE VMs vs Cloud Run per agent; right now both exist and neither is fully wired
+2. **Wire compute into provisioner** — `launch()` (Cloud Run) or `cloud.provision()` (GCE) must be called from `provisioner.ts` based on the chosen model
+3. **MONGODB_URI + cloud credentials** — nothing runs without these
+4. **Agent Commons API** — still speculative endpoint shapes; needs verification
+
+---
+
+## COMPUTE MODEL — NEW GCP APPROACH (post-merge 2026-04-27)
+
+The feature/gcp merge introduced a significant shift in how agent compute is orchestrated. There are now **two compute models** in the codebase that need to be reconciled.
+
+### Model A — GCE VM per agent (original plan, still in `provisioner.ts`)
+- `provisionAgent()` → `buildStartupScript()` → `GCPProvider.provision()` → GCE instance
+- VM runs cloud-init: installs Node.js, AXL, `@agent-commons/cli`, daemon via systemd
+- Agent identity fully owned by Agent Commons; daemon polls task queue and calls `agc`
+
+### Model B — Cloud Run container per agent session (new, `cloud-init.ts:launch()`)
+- Each agent session → one Cloud Run service (`agent-{agentId}-service-session-{sessionId}`)
+- Container image: `apps/api/agent/Dockerfile` (Bun + `@agent-commons/cli` + daemon via `entrypoint.sh`)
+- Persistent storage: GCS bucket (`agent-session-state-bucket`) mounted at `/mnt/shared` via GCS FUSE (Gen2 execution environment required)
+- Storage path: `agents/{agentId}/sessions/{sessionId}`
+
+### Model B vs Model A — tradeoffs
+| | GCE VM (A) | Cloud Run (B) |
+|---|---|---|
+| Startup time | ~2-3 min | ~10-30s |
+| Cost when idle | Ongoing (always billed) | Zero (scales to 0) |
+| Persistent filesystem | Full disk | GCS FUSE mount only |
+| AXL / systemd support | Yes | No (containers, no systemd) |
+| Long-running agent | Natural | Needs min-instances or keep-alive |
+| Per-agent isolation | Full VM | Container isolation |
+
+### The runner (new, `apps/runner/`)
+A separate Hono microservice deployed on Cloud Run that wraps `agent-commons run` commands:
+- `POST /run` → executes `agent-commons run --agent-id X --prompt Y` via Bun shell
+- Deployed as a **shared** Cloud Run service (`common-os-runner-prod`) via `apps/runner/cloudbuild.yaml`
+- `deployRunner()` in `cloud-init.ts` also deploys a **per-agent runner** on GKE — this conflicts with the shared deployment above
+
+### Issues requiring resolution
+
+1. **`launch()` is not wired to `provisioner.ts`** — it's a standalone prototype. `agentId` is hardcoded as `""`, `projectId` is hardcoded as `"arttribute-424420"`, image URL is hardcoded. Not parameterized yet.
+2. **Runner deployment conflict** — `cloudbuild.yaml` deploys one shared `common-os-runner-prod`. `deployRunner()` deploys a per-agent runner on GKE. Pick one.
+3. **Package name**: `entrypoint.sh` runs `bunx common-os-daemon` but the daemon package is `@commonos/daemon` / `@common-os/daemon` — if it's not published to npm, this fails.
+4. **Daemon → runner integration gap**: The daemon's `executeTask()` POSTs directly to `https://api.agentcommons.io/v1/runs`. The runner's `POST /run` wraps the same call but as an HTTP service. Neither calls the other — integration point is missing.
+5. **GCS FUSE + Cloud Run Gen2**: Storage model works but means `/workspace` is a GCS FUSE mount, not a real disk. File watcher (chokidar) may behave differently on FUSE.
+
+### Recommended resolution (pick one path before deadline)
+
+**Option 1 — Stay on GCE VMs for the demo** (least risk, matches masterplan design)
+- Comment out `launch()` and `deployRunner()` (they're unused anyway)
+- The runner becomes a Cloud Run sidecar or is dropped
+- GCE VMs give you real systemd, real disk, AXL support — matches the full masterplan
+
+**Option 2 — Go Cloud Run for GCP demo** (faster spin-up, better for hackathon demo)
+- Parameterize `launch()` and call it from `provisioner.ts` when `provider === 'gcp'`
+- Use the shared runner (`common-os-runner-prod`) and call it from daemon's `executeTask()`
+- Drop `deployRunner()` / GKE (too heavy for hackathon)
+- Accept: no systemd, GCS FUSE for state, Cloud Run cold starts
 
 ---
 
