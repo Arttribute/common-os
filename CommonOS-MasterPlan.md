@@ -180,7 +180,15 @@ CommonOS also provides a live spatial interface where agents appear as active pr
 2. **Control Plane** — provisioning, task routing, permission enforcement, event streaming, monitoring across the fleet
 3. **World UI** — agents as embodied characters in a 2.5D isometric simulation; the world is a live map of real compute doing real work
 
-**Framework agnostic by design.** CommonOS does not require Agent Commons agents. Any agent — LangGraph, CrewAI, AutoGen, raw API calls — can join a fleet by installing the `@common-os/sdk` and emitting events. Agent Commons agents are the native, first-class path and get the full feature set. Guest agents get task routing, event emission, and world UI visibility.
+**Three supported runtimes:**
+
+| Runtime | What it is | Best for |
+|---|---|---|
+| **Agent Commons** *(recommended)* | `agc` CLI + Agent Commons identity, wallets, memory, MCP tools | Agents that need full AI capabilities — reasoning, memory, tool use, wallets |
+| **OpenClaw** | Containerized [OpenClaw](https://openclaw.ai/) — 50+ integrations (WhatsApp, Telegram, Gmail, GitHub, Spotify, browser automation) | Agents that need to interact with real-world services and messaging apps |
+| **Guest** | Tenant's own Docker image + `@common-os/sdk` | Any other agent framework — LangGraph, CrewAI, AutoGen, custom |
+
+Fleet of Agent Commons agents, fleet of OpenClaw agents, or a mixed fleet — all manageable through the same control plane, all visible in the same World UI.
 
 ---
 
@@ -252,18 +260,19 @@ CommonOS calls Agent Commons via REST API at deploy time and for native agent se
 │       identity · wallets · sessions · memory · tools         │
 ├──────────────────────────────────────────────────────────────┤
 │          GKE Cluster  (gVisor sandboxed node pool)           │
-├─────────────────────┬────────────────────┬───────────────────┤
-│   Agent Pod         │   Agent Pod        │   Agent Pod       │
-│  ┌───────────────┐  │  ┌──────────────┐  │  ┌─────────────┐ │
-│  │ agent         │  │  │ agent        │  │  │ agent       │ │
-│  │ (daemon+agc)  │  │  │ (daemon+agc) │  │  │ (daemon+    │ │
-│  │               │  │  │              │  │  │  guest img) │ │
-│  ├───────────────┤  │  ├──────────────┤  │  ├─────────────┤ │
-│  │ AXL sidecar   │  │  │ AXL sidecar  │  │  │ AXL sidecar │ │
-│  └───────────────┘  │  └──────────────┘  │  └─────────────┘ │
-│  /mnt/shared→GCS    │  /mnt/shared→GCS   │  /mnt/shared→GCS │
-└─────────────────────┴────────────────────┴───────────────────┘
-      Native agents (Agent Commons)       Guest agents (any)
+├──────────────────────┬───────────────────────┬──────────────────────┤
+│   Agent Pod          │   Agent Pod           │   Agent Pod          │
+│  ┌────────────────┐  │  ┌─────────────────┐  │  ┌────────────────┐  │
+│  │ daemon         │  │  │ daemon          │  │  │ daemon         │  │
+│  ├────────────────┤  │  ├─────────────────┤  │  ├────────────────┤  │
+│  │ agc runtime    │  │  │ openclaw        │  │  │ guest image    │  │
+│  │ (Agent Commons)│  │  │ (50+ integs)    │  │  │ (any framework)│  │
+│  ├────────────────┤  │  ├─────────────────┤  │  ├────────────────┤  │
+│  │ AXL sidecar    │  │  │ AXL sidecar     │  │  │ AXL sidecar    │  │
+│  └────────────────┘  │  └─────────────────┘  │  └────────────────┘  │
+│  /mnt/shared → GCS   │  /mnt/shared → GCS    │  /mnt/shared → GCS   │
+└──────────────────────┴───────────────────────┴──────────────────────┘
+   Native (recommended)      OpenClaw                  Guest
 
 Tenant isolation: namespace → dedicated node pool → dedicated cluster
 ```
@@ -277,19 +286,81 @@ WebSocket events → Zustand store → Phaser reads each frame
                                → React HUD reads reactively
 ```
 
-### Two agent integration paths
+### Three agent integration paths
 
-**Native path (Agent Commons agents)**
+**Native path — Agent Commons (recommended)**
 - Pod boots with `agc` pre-installed and authenticated via injected Commons credentials
 - Full Agent Commons feature set: sessions, memory, wallets, MCP tools, skills
 - Fleet daemon manages task polling and event emission
 - AXL sidecar handles encrypted P2P inter-agent messaging
+- `integrationPath: "native"`
 
-**Guest path (any agent framework)**
-- Pod runs tenant's custom image alongside the daemon container
+**OpenClaw path**
+- Pod runs the official `ghcr.io/openclaw/openclaw:latest` image — no custom build needed
+- Gateway binds to port **18789** (not 8080 — requires GKE, Cloud Run cannot support this)
+- CommonOS generates `openclaw.json` config from `openclawConfig` fields and injects it as a mounted ConfigMap
+- OpenClaw memory (`~/.openclaw/workspace`, `~/.openclaw/agents/`) maps to `/mnt/shared` on GCS FUSE — persistent across pod restarts
+- 27+ channels supported: Telegram, Discord, Slack, WhatsApp, Signal, Matrix, IRC, Twitch and more
+- CommonOS daemon sends tasks into OpenClaw via `openclaw message` CLI (within the pod) or ACP (Agent Call Protocol) for cross-agent coordination
+- Fleet of OpenClaw agents = each pod is one isolated OpenClaw gateway with its own credentials, memory, and channel bindings
+- Agent Commons registration is **skipped** for OpenClaw path — OpenClaw manages its own model/identity
+- `integrationPath: "openclaw"`
+
+**OpenClaw config fields:**
+```json
+{
+  "modelProvider": "anthropic",
+  "modelApiKey": "sk-ant-...",
+  "channels": {
+    "telegram": { "botToken": "..." },
+    "discord":  { "botToken": "...", "clientId": "..." },
+    "slack":    { "appToken": "xapp-...", "botToken": "xoxb-..." },
+    "whatsapp": { "dmPolicy": "allowlist", "allowFrom": ["+1234567890"] }
+  },
+  "plugins": ["@openclaw/browser", "@openclaw/voice-call"],
+  "dmPolicy": "pairing"
+}
+```
+All secrets injected as env vars at pod launch — never stored in plaintext in MongoDB.
+
+**Guest path — any framework**
+- Pod runs tenant's own Docker image alongside the daemon container
 - Tenant installs `@common-os/sdk` — calls `agent.emit()` and `agent.nextTask()`
-- Same world UI visibility, same event stream, same permission model as native agents
-- gVisor sandbox provides stronger kernel isolation for untrusted guest images
+- Same world UI visibility, same event stream, same permission model
+- gVisor sandbox provides kernel isolation for untrusted images
+- `integrationPath: "guest"`
+
+---
+
+### Runtime contract — how the daemon and each runtime coexist without friction
+
+The daemon is the single point of contact between CommonOS and any runtime. It owns everything CommonOS-facing; the runtime owns everything execution-facing. Neither crosses the boundary.
+
+```
+CommonOS-facing (daemon owns)        Runtime-facing (runtime owns)
+─────────────────────────────        ─────────────────────────────
+Heartbeat to control plane           Agent Commons: model, memory, tools
+Task polling from control plane      OpenClaw: channels, model, memory
+Event emission (state, file, etc.)   Guest: custom logic, custom tools
+AXL peer registration                
+World position updates               
+```
+
+| Concern | Native (Agent Commons) | OpenClaw | Guest |
+|---|---|---|---|
+| Agent identity | Agent Commons (`commons.agentId`) | Self-managed by OpenClaw | Tenant-managed |
+| Commons registration | ✅ Yes | ❌ Skipped | Optional |
+| Task execution | `POST agentcommons.io/v1/runs` | `POST localhost:18789/api/message` | Guest container handles it |
+| Persistent state | `/mnt/shared` (GCS FUSE) | `~/.openclaw/` (GCS FUSE) | `/mnt/shared` (GCS FUSE) |
+| File watcher path | `/mnt/shared` | `/root/.openclaw` | `/mnt/shared` |
+| Pod port | — | **18789** (GKE only) | Tenant-defined |
+| Container image | `common-os-agent` (daemon+agc) | `ghcr.io/openclaw/openclaw` | Tenant image |
+
+The daemon config always includes `openclawGatewayUrl` (defaults to `http://localhost:18789`). For native and guest paths it's ignored. For the OpenClaw path it's the only dispatch target.
+
+**No path can see another path's secrets:**
+- OpenClaw tokens (`OPENCLAW_CHANNELS_*`) are injected only into the OpenClaw container — the daemon container never receives them
+- Commons API keys are injected only into the native daemon — OpenClaw agents never receive them
 
 ---
 
@@ -596,6 +667,7 @@ One document per deployed agent VM. Central record linking Commons identity, VM 
     "systemPrompt":    "You are a senior backend engineer...",
     "integrationPath": "native",
     "dockerImage":     null,
+    "openclawConfig":  null,
     "tools":           ["write_file", "run_command", "browse", "send_message"]
   },
 
@@ -622,7 +694,36 @@ One document per deployed agent VM. Central record linking Commons identity, VM 
 
 **`permissionTier` enum:** `manager` | `worker`
 
-**`integrationPath` enum:** `native` | `guest`
+**`integrationPath` enum:** `native` | `openclaw` | `guest`
+
+**`openclawConfig` shape** (present when `integrationPath === "openclaw"`, null otherwise):
+```json
+{
+  "modelProvider": "anthropic",
+  "modelApiKey":   "sk-ant-...",
+  "channels": {
+    "telegram": { "botToken": "bot123:ABC..." },
+    "discord":  { "botToken": "MTk...", "clientId": "123..." },
+    "slack":    { "appToken": "xapp-...", "botToken": "xoxb-..." },
+    "whatsapp": { "dmPolicy": "allowlist", "allowFrom": "+1234567890" }
+  },
+  "plugins":   ["@openclaw/browser"],
+  "dmPolicy":  "pairing"
+}
+```
+- `modelProvider`: any of 35+ supported providers (`anthropic`, `openai`, `google`, `openrouter`, `ollama`, etc.)
+- `channels`: key is the channel id (`telegram`, `discord`, `slack`, `whatsapp`, `signal`, `matrix`, `irc`, `twitch`, etc.) — value is channel-specific auth fields
+- `plugins`: optional list of OpenClaw plugin packages to install at pod boot
+- `dmPolicy`: global default DM access policy (`pairing` = approval required, `allowlist`, `open`, `disabled`)
+- All secrets injected as env vars at pod launch — never stored in plaintext in MongoDB
+- Agent Commons registration **skipped** for OpenClaw path — OpenClaw manages its own model identity
+
+**OpenClaw pod specifics:**
+- Image: `ghcr.io/openclaw/openclaw:latest`
+- Port: **18789** (OpenClaw gateway port — requires GKE, not compatible with Cloud Run)
+- Memory mount: GCS FUSE at `~/.openclaw/` — workspace and agent state persist across restarts
+- Task injection: daemon uses `openclaw message` CLI within the pod to push tasks in; responses come back via the configured channels
+- Inter-agent coordination: OpenClaw ACP (Agent Call Protocol) for cross-agent calls within a fleet
 
 ---
 
@@ -1275,10 +1376,10 @@ commonos fleet ls
 commonos fleet status <fleet-id>
 
 commonos agent deploy --fleet <id> --role <role> --prompt <file|string>
-commonos agent deploy --fleet <id> --image <docker-uri>   # guest path
+commonos agent deploy --fleet <id> --runtime openclaw --config <file|json>  # openclaw path
+commonos agent deploy --fleet <id> --image <docker-uri>                     # guest path
 commonos agent ls --fleet <id>
 commonos agent logs <agent-id>
-commonos agent exec <agent-id>          # SSM session into VM shell
 commonos agent stop <agent-id>
 commonos agent terminate <agent-id>
 

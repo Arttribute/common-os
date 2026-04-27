@@ -6,17 +6,23 @@ export interface DaemonConfig {
   agentToken: string;
   fleetId: string;
   apiUrl: string;
+  // native path
   commonsApiKey: string;
   commonsAgentId: string;
-  integrationPath: "native" | "guest";
+  // openclaw path
+  openclawGatewayUrl: string;  // defaults to http://localhost:18789
+  // guest path
   dockerImage: string | null;
+  integrationPath: "native" | "openclaw" | "guest";
   role: string;
   worldRoom: string;
   worldX: number;
   worldY: number;
 }
 
-export function loadConfig(path = "/etc/commonos/config.json"): DaemonConfig {
+export function loadConfig(path = "/etc/common-os/config.json"): DaemonConfig {
   const raw = readFileSync(path, "utf-8");
-  return JSON.parse(raw) as DaemonConfig;
+  const cfg = JSON.parse(raw) as DaemonConfig;
+  cfg.openclawGatewayUrl ??= "http://localhost:18789";
+  return cfg;
 }

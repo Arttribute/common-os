@@ -12,8 +12,9 @@ interface ProvisionAgentOptions {
 	systemPrompt: string;
 	permissionTier: "manager" | "worker";
 	room: string;
-	integrationPath: "native" | "guest";
+	integrationPath: "native" | "openclaw" | "guest";
 	dockerImage: string | null;
+	openclawConfig: AgentDoc["config"]["openclawConfig"];
 	instanceType: string;
 }
 
@@ -32,13 +33,13 @@ export async function provisionAgent(
 	const provider = (process.env.CLOUD_PROVIDER as "aws" | "gcp") ?? "aws";
 	const region = process.env.CLOUD_REGION ?? "us-east-1";
 
-	// Register agent with Agent Commons if platform key is configured.
-	// This is the default integration path (native). Agent identity is managed by Commons.
-	const commons = await registerWithAgentCommons(
-		agentId,
-		opts.role,
-		opts.systemPrompt,
-	);
+	// Agent Commons registration: native path only.
+	// OpenClaw manages its own model identity — registration skipped.
+	// Guest agents may optionally register if they want Commons identity.
+	const commons =
+		opts.integrationPath === "openclaw"
+			? { agentId: null, apiKey: null, walletAddress: null }
+			: await registerWithAgentCommons(agentId, opts.role, opts.systemPrompt);
 
 	const agentDoc: AgentDoc = {
 		_id: agentId,
@@ -62,6 +63,7 @@ export async function provisionAgent(
 			systemPrompt: opts.systemPrompt,
 			integrationPath: opts.integrationPath,
 			dockerImage: opts.dockerImage,
+			openclawConfig: opts.openclawConfig ?? null,
 			tools: [],
 		},
 		world: { room: opts.room, x: startX, y: startY, facing: "south" },

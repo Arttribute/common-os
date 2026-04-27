@@ -1,6 +1,6 @@
 import { watch } from "chokidar";
 import { loadConfig } from "./config.js";
-import { CommonOSAgentClient } from "@commonos/sdk";
+import { CommonOSAgentClient } from "@common-os/sdk";
 
 const config = loadConfig();
 
@@ -10,9 +10,14 @@ const agent = new CommonOSAgentClient({
   apiUrl: config.apiUrl,
 });
 
-const HEARTBEAT_MS   = 30_000;
-const POLL_MS        = 5_000;
-const WORKSPACE_DIR  = process.env.COMMONOS_WORKSPACE ?? "/var/commonos/workspace";
+const HEARTBEAT_MS  = 30_000;
+const POLL_MS       = 5_000;
+
+// Each path stores state in a different location — all backed by GCS FUSE at /mnt/shared
+const WORKSPACE_DIR =
+  config.integrationPath === "openclaw"
+    ? process.env.COMMONOS_WORKSPACE ?? "/root/.openclaw"
+    : process.env.COMMONOS_WORKSPACE ?? "/mnt/shared";
 
 // ─── Main ──────────────────────────────────────────────────────────────────
 
@@ -116,16 +121,18 @@ async function executeTask(description: string): Promise<string> {
   if (config.integrationPath === "native" && config.commonsApiKey && config.commonsAgentId) {
     return await runViaNative(description);
   }
-  // Guest path: the Docker container running alongside handles execution.
-  // We just signal readiness and wait — actual output arrives via file_changed events.
-  console.log(`[daemon] executing (${config.integrationPath}): ${description}`);
+  if (config.integrationPath === "openclaw") {
+    return await runViaOpenClaw(description);
+  }
+  // Guest path: the container running alongside handles execution.
+  // Daemon signals readiness — actual output arrives via file_changed events.
+  console.log(`[daemon] executing (guest): ${description}`);
   await sleep(2_000);
   return `completed: ${description}`;
 }
 
 async function runViaNative(description: string): Promise<string> {
-  // Agent Commons native run — agent identity is already registered at provision time.
-  // POST /v1/runs with the description; poll for completion.
+  // Agent Commons native run — agent identity registered at provision time.
   // TODO: replace with @agent-commons/sdk once endpoint shape is confirmed.
   const res = await fetch("https://api.agentcommons.io/v1/runs", {
     method: "POST",
@@ -137,12 +144,26 @@ async function runViaNative(description: string): Promise<string> {
     body: JSON.stringify({ input: description }),
   });
 
-  if (!res.ok) {
-    throw new Error(`Agent Commons run failed: ${res.status}`);
-  }
+  if (!res.ok) throw new Error(`Agent Commons run failed: ${res.status}`);
 
   const data = await res.json() as { output?: string; result?: string };
   return data.output ?? data.result ?? "done";
+}
+
+async function runViaOpenClaw(description: string): Promise<string> {
+  // OpenClaw gateway runs as a sidecar at localhost:18789.
+  // Inject the task as a message into the gateway's WebSocket API.
+  // The gateway processes it via the configured channels and model.
+  const res = await fetch(`${config.openclawGatewayUrl}/api/message`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message: description, agentId: config.agentId }),
+  });
+
+  if (!res.ok) throw new Error(`OpenClaw gateway error: ${res.status}`);
+
+  const data = await res.json() as { output?: string; response?: string };
+  return data.output ?? data.response ?? "done";
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────

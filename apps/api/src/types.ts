@@ -72,8 +72,15 @@ export interface AgentDoc {
   config: {
     role: string
     systemPrompt: string
-    integrationPath: 'native' | 'guest'
+    integrationPath: 'native' | 'openclaw' | 'guest'
     dockerImage: string | null
+    openclawConfig: {
+      modelProvider: string | null        // 'anthropic' | 'openai' | 'google' | 'openrouter' | etc.
+      modelApiKey: string | null
+      channels: Record<string, Record<string, string>> | null  // channel id → channel config tokens
+      plugins: string[] | null            // e.g. ['@openclaw/browser', '@openclaw/voice-call']
+      dmPolicy: 'pairing' | 'allowlist' | 'open' | 'disabled' | null
+    } | null
     tools: string[]
   }
   world: {

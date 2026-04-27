@@ -19,8 +19,15 @@ router.post("/:id/agents", async (c) => {
 		systemPrompt?: string;
 		permissionTier?: "manager" | "worker";
 		room?: string;
-		integrationPath?: "native" | "guest";
+		integrationPath?: "native" | "openclaw" | "guest";
 		dockerImage?: string;
+		openclawConfig?: {
+			modelProvider?: string;
+			modelApiKey?: string;
+			channels?: Record<string, Record<string, string>>;
+			plugins?: string[];
+			dmPolicy?: "pairing" | "allowlist" | "open" | "disabled";
+		};
 		instanceType?: string;
 	}>();
 	if (!body.role) return c.json({ error: "role is required" }, 400);
@@ -42,6 +49,15 @@ router.post("/:id/agents", async (c) => {
 			room: body.room ?? fleet.worldConfig.rooms[0]?.id ?? "dev-room",
 			integrationPath: body.integrationPath ?? "native",
 			dockerImage: body.dockerImage ?? null,
+			openclawConfig: body.openclawConfig
+				? {
+						modelProvider: body.openclawConfig.modelProvider ?? null,
+						modelApiKey: body.openclawConfig.modelApiKey ?? null,
+						channels: body.openclawConfig.channels ?? null,
+						plugins: body.openclawConfig.plugins ?? null,
+						dmPolicy: body.openclawConfig.dmPolicy ?? "pairing",
+					}
+				: null,
 			instanceType: body.instanceType ?? "t3.medium",
 		});
 		return c.json(agent, 201);
