@@ -12,7 +12,7 @@
 | 2 — Data Layer & Cloud | `@common-os/events` (Zod schema), `@common-os/cloud` (AWS + GCP providers) | ✅ Complete · MongoDB wired · Redis replaced by in-memory for hackathon |
 | 3 — Fleet Control Plane API | All routes, auth, provisioner, WebSocket stream wired; Agent Commons registration call present | 🔄 Partial · needs MONGODB_URI + GCP credentials + real Agent Commons endpoint verification |
 | 3b — Compute Wiring | `launch()` in `cloud-init.ts` exists but has hardcoded values; not yet called from provisioner | ⚠️ Needs: parameterize `launch()`, wire into `provisioner.ts`, drop `deployRunner()` / GKE |
-| 4 — Fleet Daemon | Task loop, file watcher, heartbeat done; containerized in `apps/api/agent/`; native exec stubbed | 🔄 Partial · `entrypoint.sh` runs `bunx common-os-daemon` — verify package name matches published npm |
+| 4 — Fleet Daemon | Task loop, file watcher, heartbeat done; all three runtime dispatch branches wired (native, openclaw, guest); `workspaceDir` generalises watch path | 🔄 Partial · AXL registration + health monitor not started · verify `@common-os/daemon` npm publish name |
 | 5 — SDK & CLI | SDK complete; CLI structure done, actions still stubs | 🔄 Partial |
 | 6 — World UI | Phaser isometric world, agent sprites, HUD, mock simulation + real API hook | ✅ Complete |
 | 7 — Bounty Integrations | AXL, Uniswap | ⬜ Not started |
@@ -301,7 +301,7 @@ WebSocket events → Zustand store → Phaser reads each frame
 - CommonOS generates `openclaw.json` config from `openclawConfig` fields and injects it as a mounted ConfigMap
 - OpenClaw memory (`~/.openclaw/workspace`, `~/.openclaw/agents/`) maps to `/mnt/shared` on GCS FUSE — persistent across pod restarts
 - 27+ channels supported: Telegram, Discord, Slack, WhatsApp, Signal, Matrix, IRC, Twitch and more
-- CommonOS daemon sends tasks into OpenClaw via `openclaw message` CLI (within the pod) or ACP (Agent Call Protocol) for cross-agent coordination
+- CommonOS daemon sends tasks into OpenClaw via `POST localhost:18789/api/message` (gateway HTTP API — sidecar in same pod network namespace)
 - Fleet of OpenClaw agents = each pod is one isolated OpenClaw gateway with its own credentials, memory, and channel bindings
 - Agent Commons registration is **skipped** for OpenClaw path — OpenClaw manages its own model/identity
 - `integrationPath: "openclaw"`
@@ -1294,47 +1294,63 @@ POST   /events                              # agent daemon POSTs events (agent t
 ---
 
 ### 11.4 Phase 4 — Fleet Daemon
-*Goal: persistent process in every VM; platform always informed* · **🔄 PARTIAL**
+*Goal: persistent process in every agent pod; platform always informed* · **🔄 PARTIAL**
 
 **What's done:**
-- [x] `DaemonConfig` type + `loadConfig()` reading `/etc/commonos/config.json`
-- [x] `CommonOSAgentClient` instantiation from config
+- [x] `DaemonConfig` type + `loadConfig()` reading `/etc/common-os/config.json`
+- [x] `CommonOSAgentClient` instantiation from config (`@common-os/sdk`)
 - [x] Startup: emits `state_change: online`
 - [x] Heartbeat loop every 30s
+- [x] Task polling loop every 5s (`agent.nextTask()` → `handleTask()`)
+- [x] File watcher (chokidar on `config.workspaceDir`, emits `file_changed`)
+- [x] `executeTask()` dispatch — three runtime branches:
+  - native → `POST agentcommons.io/v1/runs` (stub, endpoint unverified)
+  - openclaw → `POST localhost:18789/api/message` (OpenClaw gateway sidecar)
+  - guest → signals readiness, output arrives via `file_changed`
+- [x] `workspaceDir` in config — provisioner sets per runtime; daemon is runtime-agnostic
+- [x] `openclawGatewayUrl` in config — defaults to `http://localhost:18789`
+- [x] Containerised in `apps/api/agent/` — `entrypoint.sh` writes config from env vars, runs `bunx common-os-daemon`
 
 **What's left:**
-- [ ] Connect to AXL node and register peer multiaddr
-- [ ] Task inbox loop (BLPOP from Redis, forward to agent runtime)
-- [ ] File watcher (chokidar on `/workspace`, emit `file_changed`)
-- [ ] Health monitor (check agc / Docker alive, emit `error` on crash)
-- [ ] Spawn agc (native path) or Docker container (guest path)
+- [ ] Connect to AXL sidecar and register peer multiaddr with control plane
+- [ ] AXL inbox — receive inbound P2P messages, deliver to runtime
+- [ ] Health monitor — detect runtime crash, emit `error` event
+- [ ] Verify `bunx common-os-daemon` resolves once `@common-os/daemon` is published to npm
 
-**`packages/daemon` → `@commonos/daemon`**
+**`packages/daemon` → `@common-os/daemon`**
 
-Published to npm. Installed globally via cloud-init. Runs as a systemd service. Tenants cannot replace or bypass it.
+Runs as a container (not systemd) inside each GKE pod. Same image for all three integration paths — runtime-specific behaviour is driven entirely by config, not by image variants.
+
+**Config fields written by `entrypoint.sh`**
+
+| Field | Native | OpenClaw | Guest |
+|---|---|---|---|
+| `integrationPath` | `native` | `openclaw` | `guest` |
+| `workspaceDir` | `/mnt/shared` | `/root/.openclaw` | `/mnt/shared` |
+| `commonsApiKey` | set | — | — |
+| `commonsAgentId` | set | — | — |
+| `openclawGatewayUrl` | ignored | `http://localhost:18789` | ignored |
+| `dockerImage` | null | null | tenant image URI |
 
 **Startup sequence**
-1. Read `/etc/commonos/config.json` ✅
-2. Connect to AXL — `axl connect --port 4001`
-3. Register AXL peer address with fleet control plane: `PATCH /fleets/:id/agents/:agentId` with `axl.multiaddr`
-4. Push AXL multiaddr to Redis peer directory: `HSET tenant:{id}:fleet:{id}:peers {agentId} {multiaddr}`
-5. Start agent runtime (native: spawn `agc`; guest: start Docker container)
-6. Emit `state_change: online` ✅
-7. Begin main loops
+1. Read `/etc/common-os/config.json` ✅
+2. Emit `state_change: online` ✅
+3. Connect to AXL sidecar, register peer multiaddr with control plane ⬜
+4. Begin main loops ✅
 
 **Main loops (concurrent)**
 
 ```
-Heartbeat loop   — every 30s: emit heartbeat, refresh Redis presence key   ✅ Done
-Task inbox loop  — every 5s: BLPOP from Redis task queue, forward to agent runtime
-File watcher     — chokidar on /workspace: emit file_changed on create/modify/delete
-Health monitor   — every 10s: check agc process / Docker container alive; emit error on crash
-AXL inbox        — listen for inbound AXL messages: deliver to agent runtime as incoming task/message
+Heartbeat loop   — every 30s: emit heartbeat                              ✅ Done
+Task inbox loop  — every 5s: poll nextTask() → executeTask() dispatch     ✅ Done
+File watcher     — chokidar on workspaceDir: emit file_changed            ✅ Done
+Health monitor   — every 10s: check runtime alive; emit error on crash    ⬜ Not started
+AXL inbox        — receive inbound P2P messages, deliver to runtime       ⬜ Not started
 ```
 
-**AXL inter-agent messaging**
-- Outbound: agent runtime calls `agent.emit({ type: 'message_sent', toAgentId, preview })` → daemon looks up `toAgentId` multiaddr from Redis peer directory → sends via AXL
-- Inbound: daemon receives AXL message → delivers to agent runtime → emits `message_recv` event to control plane
+**AXL inter-agent messaging** (Phase 7)
+- Outbound: daemon looks up `toAgentId` multiaddr from control plane → sends via AXL sidecar
+- Inbound: AXL sidecar delivers to daemon → daemon forwards to runtime → emits `message_recv`
 
 ---
 

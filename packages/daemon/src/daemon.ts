@@ -12,12 +12,7 @@ const agent = new CommonOSAgentClient({
 
 const HEARTBEAT_MS  = 30_000;
 const POLL_MS       = 5_000;
-
-// Each path stores state in a different location — all backed by GCS FUSE at /mnt/shared
-const WORKSPACE_DIR =
-  config.integrationPath === "openclaw"
-    ? process.env.COMMONOS_WORKSPACE ?? "/root/.openclaw"
-    : process.env.COMMONOS_WORKSPACE ?? "/mnt/shared";
+const WORKSPACE_DIR = process.env.COMMONOS_WORKSPACE ?? config.workspaceDir;
 
 // ─── Main ──────────────────────────────────────────────────────────────────
 

@@ -12,6 +12,7 @@ cat > /etc/common-os/config.json << CONFIGEOF
   "commonsApiKey":      "${COMMONS_API_KEY:-}",
   "commonsAgentId":     "${COMMONS_AGENT_ID:-}",
   "openclawGatewayUrl": "${OPENCLAW_GATEWAY_URL:-http://localhost:18789}",
+  "workspaceDir":       "${WORKSPACE_DIR:-/mnt/shared}",
   "integrationPath":    "${INTEGRATION_PATH:-native}",
   "dockerImage":        ${DOCKER_IMAGE:-null},
   "role":               "${ROLE:-worker}",

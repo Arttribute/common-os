@@ -14,6 +14,7 @@ export interface DaemonConfig {
   // guest path
   dockerImage: string | null;
   integrationPath: "native" | "openclaw" | "guest";
+  workspaceDir: string;        // where this runtime writes files — watched by file watcher
   role: string;
   worldRoom: string;
   worldX: number;
@@ -24,5 +25,6 @@ export function loadConfig(path = "/etc/common-os/config.json"): DaemonConfig {
   const raw = readFileSync(path, "utf-8");
   const cfg = JSON.parse(raw) as DaemonConfig;
   cfg.openclawGatewayUrl ??= "http://localhost:18789";
+  cfg.workspaceDir ??= "/mnt/shared";
   return cfg;
 }
