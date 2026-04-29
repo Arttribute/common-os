@@ -6,7 +6,6 @@ import { useSocketStore } from '@/store/socketStore'
 import { startMockSimulation } from '@/lib/mockSimulation'
 import type { AgentStatus } from '@/store/agentStore'
 
-// Status values sent by the API side vs the UI side differ slightly
 const API_STATUS_MAP: Record<string, AgentStatus> = {
   provisioning: 'provisioning',
   starting: 'idle',
@@ -16,7 +15,6 @@ const API_STATUS_MAP: Record<string, AgentStatus> = {
   stopped: 'offline',
   terminated: 'offline',
   error: 'error',
-  // event-schema states
   online: 'online',
   working: 'working',
   offline: 'offline',
@@ -26,7 +24,9 @@ function toUiStatus(s: string): AgentStatus {
   return API_STATUS_MAP[s] ?? 'idle'
 }
 
-export function useWorldConnection(fleetId?: string) {
+// getToken: optional async function that returns a bearer token (Privy JWT or static key).
+// If neither getToken nor a NEXT_PUBLIC_API_KEY env var is present, the world runs in mock mode.
+export function useWorldConnection(fleetId?: string, getToken?: () => Promise<string | null>) {
   const upsertAgent = useAgentStore((s) => s.upsertAgent)
   const updateStatus = useAgentStore((s) => s.updateStatus)
   const updatePosition = useAgentStore((s) => s.updatePosition)
@@ -42,22 +42,28 @@ export function useWorldConnection(fleetId?: string) {
   const speechTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
   const apiUrl = process.env.NEXT_PUBLIC_API_URL
-  const apiKey = process.env.NEXT_PUBLIC_API_KEY
+  // Static API key as fallback (CLI/demo access without Privy)
+  const staticApiKey = process.env.NEXT_PUBLIC_API_KEY
 
-  const isLive = Boolean(apiUrl && apiKey && fleetId)
+  const isLive = Boolean(apiUrl && (getToken ?? staticApiKey) && fleetId)
 
   useEffect(() => {
     if (!isLive) {
-      // No real API configured — run mock simulation
       stopSimRef.current = startMockSimulation()
       return () => stopSimRef.current?.()
     }
 
-    // Fetch fleet metadata and connect to real WebSocket stream
     void (async () => {
       try {
+        // Resolve auth token
+        const token = getToken ? await getToken() : staticApiKey
+        if (!token) {
+          stopSimRef.current = startMockSimulation()
+          return
+        }
+
         const res = await fetch(`${apiUrl}/fleets/${fleetId}`, {
-          headers: { Authorization: `Bearer ${apiKey}` },
+          headers: { Authorization: `Bearer ${token}` },
         })
         if (res.ok) {
           const fleet = await res.json() as {
@@ -68,92 +74,91 @@ export function useWorldConnection(fleetId?: string) {
           }
           setFleet(fleet._id, fleet.name, fleet.worldConfig.rooms, fleet.worldType)
         }
-      } catch { /* ignore — fleet metadata is optional, world still renders */ }
 
-      // WebSocket stream URL — token in query param (browser WS API has no custom headers)
-      const wsBase = apiUrl!.replace(/^http/, 'ws')
-      const streamUrl = `${wsBase}/fleets/${fleetId}/stream?token=${apiKey}`
+        const wsBase = apiUrl!.replace(/^http/, 'ws')
+        const streamUrl = `${wsBase}/fleets/${fleetId}/stream?token=${token}`
 
-      connect(streamUrl, (msg) => {
-        const data = msg as Record<string, unknown>
+        connect(streamUrl, (msg) => {
+          const data = msg as Record<string, unknown>
 
-        if (data['type'] === 'snapshot') {
-          // Full world state on connect — seed all agents
-          const snapshot = data['data'] as {
-            agents: Array<{
-              agentId: string
-              role: string
-              permissionTier: 'manager' | 'worker'
-              status: string
-              world: { room: string; x: number; y: number; facing: string }
-            }>
+          if (data['type'] === 'snapshot') {
+            const snapshot = data['data'] as {
+              agents: Array<{
+                agentId: string
+                role: string
+                permissionTier: 'manager' | 'worker'
+                status: string
+                world: { room: string; x: number; y: number; facing: string }
+              }>
+            }
+            for (const entry of snapshot.agents ?? []) {
+              upsertAgent({
+                agentId: entry.agentId,
+                role: entry.role,
+                permissionTier: entry.permissionTier,
+                status: toUiStatus(entry.status),
+                world: {
+                  room: entry.world.room,
+                  x: entry.world.x,
+                  y: entry.world.y,
+                  facing: entry.world.facing as 'north' | 'south' | 'east' | 'west',
+                },
+              })
+            }
+          } else if (data['type'] === 'agent_event') {
+            const agentId = data['agentId'] as string
+            const event = data['event'] as { type: string; payload?: Record<string, unknown> }
+
+            switch (event.type) {
+              case 'world_move': {
+                const p = event.payload as { room: string; x: number; y: number }
+                updatePosition(agentId, p.room, p.x, p.y)
+                break
+              }
+              case 'state_change': {
+                const p = event.payload as { status: string }
+                updateStatus(agentId, toUiStatus(p.status))
+                break
+              }
+              case 'action': {
+                const p = event.payload as { label: string }
+                setCurrentAction(agentId, p.label)
+                break
+              }
+              case 'task_start': {
+                const p = event.payload as { taskId: string; description: string }
+                setCurrentTask(agentId, { taskId: p.taskId, description: p.description })
+                updateStatus(agentId, 'working')
+                break
+              }
+              case 'task_complete':
+                completeTask(agentId)
+                break
+              case 'message_sent': {
+                const p = event.payload as { preview: string }
+                scheduleSpeechBubble(agentId, `→ ${p.preview}`)
+                break
+              }
+              case 'message_recv': {
+                const p = event.payload as { preview: string }
+                scheduleSpeechBubble(agentId, p.preview)
+                break
+              }
+            }
+          } else if (data['type'] === 'task_queued') {
+            const agentId = data['agentId'] as string
+            const description = data['description'] as string
+            const taskId = data['taskId'] as string
+            setCurrentTask(agentId, { taskId, description })
+            updateStatus(agentId, 'working')
+          } else if (data['type'] === 'task_complete') {
+            completeTask(data['agentId'] as string)
           }
-          for (const entry of snapshot.agents ?? []) {
-            upsertAgent({
-              agentId: entry.agentId,
-              role: entry.role,
-              permissionTier: entry.permissionTier,
-              status: toUiStatus(entry.status),
-              world: {
-                room: entry.world.room,
-                x: entry.world.x,
-                y: entry.world.y,
-                facing: (entry.world.facing as AgentStatus) === undefined
-                  ? 'south'
-                  : entry.world.facing as 'north' | 'south' | 'east' | 'west',
-              },
-            })
-          }
-        } else if (data['type'] === 'agent_event') {
-          const agentId = data['agentId'] as string
-          const event = data['event'] as { type: string; payload?: Record<string, unknown> }
-
-          switch (event.type) {
-            case 'world_move': {
-              const p = event.payload as { room: string; x: number; y: number }
-              updatePosition(agentId, p.room, p.x, p.y)
-              break
-            }
-            case 'state_change': {
-              const p = event.payload as { status: string }
-              updateStatus(agentId, toUiStatus(p.status))
-              break
-            }
-            case 'action': {
-              const p = event.payload as { label: string }
-              setCurrentAction(agentId, p.label)
-              break
-            }
-            case 'task_start': {
-              const p = event.payload as { taskId: string; description: string }
-              setCurrentTask(agentId, { taskId: p.taskId, description: p.description })
-              updateStatus(agentId, 'working')
-              break
-            }
-            case 'task_complete':
-              completeTask(agentId)
-              break
-            case 'message_sent': {
-              const p = event.payload as { preview: string }
-              scheduleSpeechBubble(agentId, `→ ${p.preview}`)
-              break
-            }
-            case 'message_recv': {
-              const p = event.payload as { preview: string }
-              scheduleSpeechBubble(agentId, p.preview)
-              break
-            }
-          }
-        } else if (data['type'] === 'task_queued') {
-          const agentId = data['agentId'] as string
-          const description = data['description'] as string
-          const taskId = data['taskId'] as string
-          setCurrentTask(agentId, { taskId, description })
-          updateStatus(agentId, 'working')
-        } else if (data['type'] === 'task_complete') {
-          completeTask(data['agentId'] as string)
-        }
-      })
+        })
+      } catch {
+        // API unreachable — fall back to mock
+        stopSimRef.current = startMockSimulation()
+      }
     })()
 
     return () => disconnect()
@@ -165,7 +170,7 @@ export function useWorldConnection(fleetId?: string) {
     const existing = speechTimers.current.get(agentId)
     if (existing) clearTimeout(existing)
     speechTimers.current.set(agentId, setTimeout(() => {
-      // Speech bubble auto-clears via AgentSprite checking expiresAt
+      speechTimers.current.delete(agentId)
     }, 5200))
   }
 

@@ -38,8 +38,8 @@ router.post('/', async (c) => {
   }
 
   try {
-    await (await fleets()).insertOne(fleet as never)
-    await (await worldStates()).insertOne({
+    await (await fleets()).create(fleet as never)
+    await (await worldStates()).create({
       _id: `wld_${fleetId}`,
       fleetId,
       tenantId: fleet.tenantId,
@@ -58,7 +58,7 @@ router.get('/', async (c) => {
     const list = await (await fleets())
       .find({ tenantId: c.get('tenantId') })
       .sort({ createdAt: -1 })
-      .toArray()
+      .lean()
     return c.json(list)
   } catch {
     return c.json({ error: 'database error' }, 503)
@@ -68,10 +68,9 @@ router.get('/', async (c) => {
 // GET /fleets/:id
 router.get('/:id', async (c) => {
   try {
-    const fleet = await (await fleets()).findOne({
-      _id: c.req.param('id'),
-      tenantId: c.get('tenantId'),
-    })
+    const fleet = await (await fleets())
+      .findOne({ _id: c.req.param('id'), tenantId: c.get('tenantId') })
+      .lean()
     if (!fleet) return c.json({ error: 'fleet not found' }, 404)
     return c.json(fleet)
   } catch {

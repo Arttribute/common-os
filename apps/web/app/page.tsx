@@ -97,27 +97,47 @@ export default function HomePage() {
 				))}
 			</div>
 
-			{/* CTA */}
-			<Link
-				href="/world"
-				style={{
-					display: "inline-flex",
-					alignItems: "center",
-					gap: 8,
-					padding: "11px 28px",
-					background: "rgba(245, 158, 11, 0.12)",
-					border: "1px solid rgba(245, 158, 11, 0.3)",
-					borderRadius: 8,
-					color: "#f59e0b",
-					fontSize: 12,
-					fontFamily: "monospace",
-					textDecoration: "none",
-					letterSpacing: 0.5,
-					transition: "background 0.15s",
-				}}
-			>
-				open world →
-			</Link>
+			{/* CTAs */}
+			<div style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "center" }}>
+				<Link
+					href="/auth"
+					style={{
+						display: "inline-flex",
+						alignItems: "center",
+						gap: 8,
+						padding: "11px 28px",
+						background: "rgba(245, 158, 11, 0.12)",
+						border: "1px solid rgba(245, 158, 11, 0.3)",
+						borderRadius: 8,
+						color: "#f59e0b",
+						fontSize: 12,
+						fontFamily: "monospace",
+						textDecoration: "none",
+						letterSpacing: 0.5,
+					}}
+				>
+					get started →
+				</Link>
+				<Link
+					href="/world"
+					style={{
+						display: "inline-flex",
+						alignItems: "center",
+						gap: 8,
+						padding: "11px 28px",
+						background: "transparent",
+						border: "1px solid rgba(255,255,255,0.08)",
+						borderRadius: 8,
+						color: "#475569",
+						fontSize: 12,
+						fontFamily: "monospace",
+						textDecoration: "none",
+						letterSpacing: 0.5,
+					}}
+				>
+					demo world
+				</Link>
+			</div>
 
 			{/* Footer */}
 			<div

@@ -9,7 +9,7 @@ import type { Env, MessageDoc } from "../types.js";
 
 const router = new Hono<Env>();
 
-// POST /fleets/:id/agents — deploy agent VM (tenant only)
+// POST /fleets/:id/agents — deploy agent (tenant only)
 router.post("/:id/agents", async (c) => {
 	if (c.get("authType") === "agent") {
 		return c.json({ error: "tenant authorization required" }, 403);
@@ -37,7 +37,7 @@ router.post("/:id/agents", async (c) => {
 	const fleet = await (await fleets()).findOne({
 		_id: fleetId,
 		tenantId: c.get("tenantId"),
-	});
+	}).lean();
 	if (!fleet) return c.json({ error: "fleet not found" }, 404);
 
 	try {
@@ -77,7 +77,7 @@ router.get("/:id/agents", async (c) => {
 		const list = await (await agents())
 			.find({ fleetId: c.req.param("id"), tenantId: c.get("tenantId") })
 			.sort({ createdAt: -1 })
-			.toArray();
+			.lean();
 		return c.json(list);
 	} catch {
 		return c.json({ error: "database error" }, 503);
@@ -91,7 +91,7 @@ router.get("/:id/agents/:agentId", async (c) => {
 			_id: c.req.param("agentId"),
 			fleetId: c.req.param("id"),
 			tenantId: c.get("tenantId"),
-		});
+		}).lean();
 		if (!agent) return c.json({ error: "agent not found" }, 404);
 		return c.json(agent);
 	} catch {
@@ -99,7 +99,7 @@ router.get("/:id/agents/:agentId", async (c) => {
 	}
 });
 
-// PATCH /fleets/:id/agents/:agentId — update world position or AXL info
+// PATCH /fleets/:id/agents/:agentId
 router.patch("/:id/agents/:agentId", async (c) => {
 	const body = await c.req.json<Record<string, unknown>>();
 	const allowed = ["world", "axl.multiaddr", "axl.peerId", "status"];
@@ -123,7 +123,7 @@ router.patch("/:id/agents/:agentId", async (c) => {
 	}
 });
 
-// DELETE /fleets/:id/agents/:agentId — terminate VM (tenant only)
+// DELETE /fleets/:id/agents/:agentId — terminate (tenant only)
 router.delete("/:id/agents/:agentId", async (c) => {
 	if (c.get("authType") === "agent") {
 		return c.json({ error: "tenant authorization required" }, 403);
@@ -135,7 +135,7 @@ router.delete("/:id/agents/:agentId", async (c) => {
 			_id: c.req.param("agentId"),
 			fleetId: c.req.param("id"),
 			tenantId: c.get("tenantId"),
-		});
+		}).lean();
 		if (!agent) return c.json({ error: "agent not found" }, 404);
 
 		if (agent.vm.instanceId) {
@@ -143,7 +143,6 @@ router.delete("/:id/agents/:agentId", async (c) => {
 				if (agent.vm.provider === "gcp") {
 					await terminateAgentPod(agent.vm.instanceId);
 				} else {
-					// AWS: instanceId is the EKS namespace name
 					await terminateAgentPodEks(agent.vm.instanceId);
 				}
 			} catch {
@@ -163,16 +162,15 @@ router.delete("/:id/agents/:agentId", async (c) => {
 	}
 });
 
-// GET /fleets/:id/peers — AXL peer directory for the fleet
-// Used by agent daemons at startup to discover manager multiaddrs.
+// GET /fleets/:id/peers — AXL peer directory
 router.get("/:id/peers", async (c) => {
 	try {
 		const list = await (await agents())
 			.find(
 				{ fleetId: c.req.param("id"), tenantId: c.get("tenantId") },
-				{ projection: { _id: 1, permissionTier: 1, "axl.peerId": 1, "axl.multiaddr": 1 } },
+				{ _id: 1, permissionTier: 1, axl: 1 },
 			)
-			.toArray();
+			.lean();
 
 		return c.json(
 			list.map((a) => ({
@@ -187,8 +185,7 @@ router.get("/:id/peers", async (c) => {
 	}
 });
 
-// POST /fleets/:id/agents/:agentId/message — record an AXL inter-agent message
-// Called by daemon after sending or receiving an AXL P2P message.
+// POST /fleets/:id/agents/:agentId/message
 router.post("/:id/agents/:agentId/message", async (c) => {
 	const body = await c.req.json<{
 		toAgentId?: string;
@@ -224,7 +221,7 @@ router.post("/:id/agents/:agentId/message", async (c) => {
 			createdAt: now,
 		};
 
-		await (await messages()).insertOne(msg as never);
+		await (await messages()).create(msg as never);
 
 		broadcastToFleet(fleetId, {
 			type: "agent_message",
@@ -234,11 +231,10 @@ router.post("/:id/agents/:agentId/message", async (c) => {
 			ts: now.toISOString(),
 		});
 
-		// Look up recipient's AXL multiaddr so caller can route directly
 		const recipient = await (await agents()).findOne(
 			{ _id: toAgentId, fleetId },
-			{ projection: { "axl.multiaddr": 1, "axl.peerId": 1 } },
-		);
+			{ axl: 1 },
+		).lean();
 
 		return c.json({
 			messageId: msgId,

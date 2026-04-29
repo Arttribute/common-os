@@ -26,11 +26,14 @@ router.post('/tenant', async (c) => {
     return c.json({ error: 'invalid Privy token' }, 401)
   }
 
-  const body = await c.req.json<{ email?: string; walletAddress?: string }>().catch(() => ({})) as { email?: string; walletAddress?: string }
+  const body = await c.req.json<{ email?: string; walletAddress?: string }>().catch(() => ({})) as {
+    email?: string
+    walletAddress?: string
+  }
 
   try {
     const col = await tenants()
-    const existing = await col.findOne({ privyUserId })
+    const existing = await col.findOne({ privyUserId }).lean()
     if (existing) {
       const { apiKeyHash: _, ...safe } = existing
       return c.json(safe)
@@ -48,8 +51,8 @@ router.post('/tenant', async (c) => {
       updatedAt: new Date(),
     }
 
-    await col.insertOne(doc as never)
-    // Return with the plaintext key — shown once
+    await col.create(doc as never)
+    // Return with plaintext key — shown once
     return c.json({ ...doc, apiKeyHash: undefined, apiKey }, 201)
   } catch {
     return c.json({ error: 'database error' }, 503)
@@ -60,7 +63,7 @@ router.post('/tenant', async (c) => {
 router.get('/me', authMiddleware, async (c) => {
   try {
     const col = await tenants()
-    const tenant = await col.findOne({ _id: c.get('tenantId') })
+    const tenant = await col.findOne({ _id: c.get('tenantId') }).lean()
     if (!tenant) return c.json({ error: 'not found' }, 404)
     const { apiKeyHash: _, ...safe } = tenant
     return c.json(safe)

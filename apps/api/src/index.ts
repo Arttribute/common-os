@@ -68,11 +68,11 @@ server.on('upgrade', (req, socket, head) => {
       try {
         if (token.startsWith('cos_live_')) {
           const hash = createHash('sha256').update(token).digest('hex')
-          const tenant = await (await tenants()).findOne({ apiKeyHash: hash })
+          const tenant = await (await tenants()).findOne({ apiKeyHash: hash }).lean()
           tenantId = tenant?._id ?? null
         } else if (token.startsWith('cos_agent_')) {
           const hash = createHash('sha256').update(token).digest('hex')
-          const agent = await (await agents()).findOne({ agentTokenHash: hash })
+          const agent = await (await agents()).findOne({ agentTokenHash: hash }).lean()
           tenantId = agent?.tenantId ?? null
         }
       } catch { /* db not ready */ }
@@ -86,7 +86,7 @@ server.on('upgrade', (req, socket, head) => {
 
       // Send current world state snapshot on connect
       try {
-        const state = await (await worldStates()).findOne({ fleetId, tenantId })
+        const state = await (await worldStates()).findOne({ fleetId, tenantId }).lean()
         if (state) ws.send(JSON.stringify({ type: 'snapshot', data: state }))
       } catch { /* db not configured — client will retry */ }
 

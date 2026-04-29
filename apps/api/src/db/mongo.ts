@@ -1,72 +1,55 @@
-import { MongoClient, type Collection } from 'mongodb'
-import type { TenantDoc, FleetDoc, AgentDoc, TaskDoc, EventDoc, WorldStateDoc, MessageDoc } from '../types.js'
+import mongoose from 'mongoose'
+import {
+  TenantModel,
+  FleetModel,
+  AgentModel,
+  TaskModel,
+  EventModel,
+  WorldStateModel,
+  MessageModel,
+} from './models/index.js'
 
-let client: MongoClient | null = null
+let connectionPromise: Promise<void> | null = null
 
-async function getDb() {
+async function connect(): Promise<void> {
   const uri = process.env.MONGODB_URI
   if (!uri) throw new Error('MONGODB_URI environment variable not set')
-  if (!client) {
-    client = new MongoClient(uri)
-    await client.connect()
-    console.log('[mongo] connected')
+  if (mongoose.connection.readyState === 1) return
+  if (!connectionPromise) {
+    connectionPromise = mongoose
+      .connect(uri, { dbName: 'commonos' })
+      .then(() => { console.log('[mongo] connected') })
   }
-  return client.db('commonos')
+  await connectionPromise
 }
 
 export async function ensureIndexes(): Promise<void> {
   try {
-    const db = await getDb()
-    await db.collection('tenants').createIndexes([
-      { key: { apiKeyHash: 1 }, unique: true },
-      { key: { privyUserId: 1 }, unique: true, sparse: true },
+    await connect()
+    await Promise.all([
+      TenantModel.syncIndexes(),
+      FleetModel.syncIndexes(),
+      AgentModel.syncIndexes(),
+      TaskModel.syncIndexes(),
+      EventModel.syncIndexes(),
+      WorldStateModel.syncIndexes(),
+      MessageModel.syncIndexes(),
     ])
-    await db.collection('fleets').createIndexes([{ key: { tenantId: 1, createdAt: -1 } }])
-    await db.collection('agents').createIndexes([
-      { key: { tenantId: 1, status: 1 } },
-      { key: { fleetId: 1 } },
-      { key: { agentTokenHash: 1 }, unique: true },
-      { key: { 'vm.instanceId': 1 }, unique: true, sparse: true },
-    ])
-    await db.collection('tasks').createIndexes([
-      { key: { agentId: 1, status: 1, createdAt: -1 } },
-      { key: { fleetId: 1, status: 1 } },
-    ])
-    await db.collection('events').createIndexes([
-      { key: { fleetId: 1, createdAt: -1 } },
-      { key: { agentId: 1, createdAt: -1 } },
-      // TTL — auto-expire events after 30 days
-      { key: { createdAt: 1 }, expireAfterSeconds: 2592000 },
-    ])
-    await db.collection('world_states').createIndexes([{ key: { fleetId: 1 }, unique: true }])
-    await db.collection('messages').createIndexes([
-      { key: { fleetId: 1, createdAt: -1 } },
-      { key: { toAgentId: 1 } },
-    ])
-    console.log('[mongo] indexes ensured')
+    console.log('[mongo] indexes synced')
   } catch (err) {
-    console.warn('[mongo] index setup failed (non-fatal):', err)
+    console.warn('[mongo] index sync failed (non-fatal):', err)
   }
 }
 
-export async function tenants(): Promise<Collection<TenantDoc>> {
-  return (await getDb()).collection<TenantDoc>('tenants')
-}
-export async function fleets(): Promise<Collection<FleetDoc>> {
-  return (await getDb()).collection<FleetDoc>('fleets')
-}
-export async function agents(): Promise<Collection<AgentDoc>> {
-  return (await getDb()).collection<AgentDoc>('agents')
-}
-export async function tasks(): Promise<Collection<TaskDoc>> {
-  return (await getDb()).collection<TaskDoc>('tasks')
-}
-export async function events(): Promise<Collection<EventDoc>> {
-  return (await getDb()).collection<EventDoc>('events')
-}
-export async function worldStates(): Promise<Collection<WorldStateDoc>> {
-  return (await getDb()).collection<WorldStateDoc>('world_states')
-}
-export async function messages(): Promise<Collection<MessageDoc>> {
-  return (await getDb()).collection<MessageDoc>('messages')
-}
+// Each accessor ensures the connection is up before returning the Mongoose model.
+// Callers can `await agents()` exactly like before — the model's query API is a
+// superset of the driver's Collection API for the operations we use (find, findOne,
+// updateOne, create). Only change at call sites: insertOne() → create(), .toArray() → .lean().
+
+export async function tenants() { await connect(); return TenantModel }
+export async function fleets()  { await connect(); return FleetModel  }
+export async function agents()  { await connect(); return AgentModel  }
+export async function tasks()   { await connect(); return TaskModel   }
+export async function events()  { await connect(); return EventModel  }
+export async function worldStates() { await connect(); return WorldStateModel }
+export async function messages()    { await connect(); return MessageModel    }

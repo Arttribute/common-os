@@ -19,7 +19,7 @@ router.post('/:id/agents/:agentId/task', async (c) => {
       _id: agentId,
       fleetId,
       tenantId: c.get('tenantId'),
-    })
+    }).lean()
     if (!agent) return c.json({ error: 'agent not found' }, 404)
 
     const taskId = `tsk_${Date.now().toString(36)}${randomBytes(4).toString('hex')}`
@@ -41,7 +41,7 @@ router.post('/:id/agents/:agentId/task', async (c) => {
       createdAt: now,
     }
 
-    await (await tasks()).insertOne(task as never)
+    await (await tasks()).create(task as never)
     enqueueTask(agentId, taskId)
     broadcastToFleet(fleetId, {
       type: 'task_queued',
@@ -68,7 +68,7 @@ router.get('/:id/agents/:agentId/tasks', async (c) => {
       })
       .sort({ createdAt: -1 })
       .limit(50)
-      .toArray()
+      .lean()
     return c.json(list)
   } catch {
     return c.json({ error: 'database error' }, 503)

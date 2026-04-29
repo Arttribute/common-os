@@ -5,7 +5,7 @@ import type { Env } from '../types.js'
 
 const router = new Hono<Env>()
 
-// GET /agents/:agentId/tasks/next — dequeue next pending task (agent auth only)
+// GET /agents/:agentId/tasks/next
 router.get('/:agentId/tasks/next', async (c) => {
   if (c.get('authType') !== 'agent') {
     return c.json({ error: 'agent authorization required' }, 403)
@@ -19,7 +19,7 @@ router.get('/:agentId/tasks/next', async (c) => {
   if (!taskId) return c.body(null, 204)
 
   try {
-    const task = await (await tasks()).findOne({ _id: taskId, agentId })
+    const task = await (await tasks()).findOne({ _id: taskId, agentId }).lean()
     if (!task) return c.body(null, 204)
     return c.json({ id: task._id, description: task.description })
   } catch {
@@ -37,13 +37,16 @@ router.post('/:agentId/tasks/:taskId/complete', async (c) => {
     return c.json({ error: 'forbidden' }, 403)
   }
 
-  const body = await c.req.json<{ output?: string; error?: string }>().catch(() => ({})) as { output?: string; error?: string }
+  const body = await c.req.json<{ output?: string; error?: string }>().catch(() => ({})) as {
+    output?: string
+    error?: string
+  }
   const taskId = c.req.param('taskId')
   const now = new Date()
   const status = body.error ? 'failed' : 'completed'
 
   try {
-    const task = await (await tasks()).findOne({ _id: taskId, agentId })
+    const task = await (await tasks()).findOne({ _id: taskId, agentId }).lean()
     if (!task) return c.json({ error: 'task not found' }, 404)
 
     await (await tasks()).updateOne(

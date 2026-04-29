@@ -32,8 +32,6 @@ export async function provisionAgent(
 	const provider = (process.env.CLOUD_PROVIDER as "aws" | "gcp") ?? "aws";
 	const region = process.env.CLOUD_REGION ?? "us-east-1";
 
-	// Agent Commons registration: native path only.
-	// OpenClaw manages its own model identity — registration skipped.
 	const commons =
 		opts.integrationPath === "openclaw"
 			? { agentId: null, apiKey: null, walletAddress: null }
@@ -72,11 +70,11 @@ export async function provisionAgent(
 		updatedAt: now,
 	};
 
-	await (await agents()).insertOne(agentDoc as never);
+	await (await agents()).create(agentDoc as never);
 
 	await (await fleets()).updateOne(
 		{ _id: opts.fleetId },
-		{ $inc: { agentCount: 1 }, $set: { updatedAt: now } },
+		{ $inc: { agentCount: 1 } as never, $set: { updatedAt: now } },
 	);
 
 	await (await worldStates()).updateOne(
@@ -95,14 +93,11 @@ export async function provisionAgent(
 		},
 	);
 
-	// Cloud provisioning is async — agent is returned to caller immediately.
 	void launchCloudInstance(agentDoc, opts, agentToken, commons.apiKey);
 
 	return { ...agentDoc, agentToken };
 }
 
-// Registers the agent with Agent Commons to get an identity + API key.
-// Skips gracefully if AGENTCOMMONS_API_KEY is not configured.
 async function registerWithAgentCommons(
 	agentId: string,
 	role: string,
@@ -154,7 +149,6 @@ async function launchCloudInstance(
 
 	try {
 		if (agentDoc.vm.provider === "gcp") {
-			// GCP: deploy per-agent pod on shared GKE cluster with GCS FUSE storage
 			const result = await launchAgentPod({
 				agentId: agentDoc._id,
 				agentToken,
@@ -180,7 +174,6 @@ async function launchCloudInstance(
 				},
 			);
 		} else {
-			// AWS: deploy per-agent pod on shared EKS cluster (same pattern as GKE)
 			const result = await launchAgentPodEks({
 				agentId: agentDoc._id,
 				agentToken,
@@ -208,6 +201,5 @@ async function launchCloudInstance(
 		}
 	} catch (err) {
 		console.error(`[provisioner] cloud launch failed for ${agentDoc._id}:`, err);
-		// Agent stays at provisioning status — daemon will never boot without infra
 	}
 }

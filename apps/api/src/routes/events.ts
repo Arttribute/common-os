@@ -27,13 +27,13 @@ router.post("/", async (c) => {
 		const agentDoc = await (await agents()).findOne({
 			_id: agentId,
 			tenantId: c.get("tenantId"),
-		});
+		}).lean();
 		if (!agentDoc) return c.json({ error: "agent not found" }, 404);
 
 		const now = new Date();
 		const eventId = `evt_${Date.now().toString(36)}${randomBytes(4).toString("hex")}`;
 
-		await (await events()).insertOne({
+		await (await events()).create({
 			_id: eventId,
 			agentId,
 			fleetId: agentDoc.fleetId,
@@ -43,7 +43,6 @@ router.post("/", async (c) => {
 			createdAt: now,
 		} as never);
 
-		// Side effects
 		const agentCol = await agents();
 
 		if (event.type === "world_move") {

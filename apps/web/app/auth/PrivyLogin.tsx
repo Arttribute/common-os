@@ -2,14 +2,26 @@
 import { usePrivy } from '@privy-io/react-auth'
 import { useRouter } from 'next/navigation'
 import { useEffect } from 'react'
+import { useAuth } from '@/hooks/useAuth'
 
 export default function PrivyLogin() {
-  const { ready, authenticated, login } = usePrivy()
+  const { ready, login } = usePrivy()
+  const { authenticated, tenantId, onboarding } = useAuth()
   const router = useRouter()
 
   useEffect(() => {
-    if (ready && authenticated) router.replace('/world')
-  }, [ready, authenticated, router])
+    if (ready && authenticated && tenantId) {
+      router.replace('/dashboard')
+    }
+  }, [ready, authenticated, tenantId, router])
+
+  const statusText = !ready
+    ? 'loading…'
+    : onboarding
+      ? 'setting up your account…'
+      : authenticated && !tenantId
+        ? 'connecting…'
+        : 'connect wallet / sign in'
 
   return (
     <div
@@ -34,8 +46,8 @@ export default function PrivyLogin() {
       </p>
 
       <button
-        onClick={login}
-        disabled={!ready}
+        onClick={authenticated ? undefined : login}
+        disabled={!ready || onboarding || (authenticated && !tenantId)}
         style={{
           padding: '11px 28px',
           background: 'rgba(245, 158, 11, 0.12)',
@@ -44,12 +56,13 @@ export default function PrivyLogin() {
           color: '#f59e0b',
           fontSize: 12,
           fontFamily: 'monospace',
-          cursor: ready ? 'pointer' : 'not-allowed',
-          opacity: ready ? 1 : 0.5,
+          cursor: ready && !onboarding ? 'pointer' : 'not-allowed',
+          opacity: ready && !onboarding ? 1 : 0.5,
           letterSpacing: 0.5,
+          minWidth: 200,
         }}
       >
-        {ready ? 'connect wallet / sign in' : 'loading…'}
+        {statusText}
       </button>
     </div>
   )

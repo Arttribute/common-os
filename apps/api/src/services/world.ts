@@ -11,7 +11,7 @@ export async function removeAgentFromWorldState(fleetId: string, agentId: string
 }
 
 export async function upsertAgentInWorldState(fleetId: string, agentId: string): Promise<void> {
-  const agent = await (await agents()).findOne({ _id: agentId, fleetId })
+  const agent = await (await agents()).findOne({ _id: agentId, fleetId }).lean()
   if (!agent) return
 
   const entry = {
@@ -22,11 +22,11 @@ export async function upsertAgentInWorldState(fleetId: string, agentId: string):
     world: agent.world,
   }
 
-  const existing = await (await worldStates()).findOne({ fleetId, 'agents.agentId': agentId })
+  const existing = await (await worldStates()).findOne({ fleetId, 'agents.agentId': agentId }).lean()
   if (existing) {
     await (await worldStates()).updateOne(
       { fleetId, 'agents.agentId': agentId },
-      { $set: { 'agents.$': entry, updatedAt: new Date() } },
+      { $set: { 'agents.$': entry as never, updatedAt: new Date() } },
     )
   } else {
     await (await worldStates()).updateOne(
