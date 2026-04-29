@@ -101,7 +101,7 @@ A **shared** Cloud Run service that wraps `agent-commons run` CLI calls. One ins
 | ~~AXL peer registration~~ | `packages/daemon/src/daemon.ts` | ✅ Done — `registerAxlPeer()` retries 5×, PATCHes agent doc with peerId + multiaddr |
 | ~~Self-contained daemon bundle~~ | `packages/daemon/tsup.config.ts` | ✅ Done — `noExternal: [/.*/]` → single `daemon.mjs` (55KB), no npm publish needed |
 | ~~Agent image build config~~ | `apps/api/agent/cloudbuild.yaml` | ✅ Done — builds events+sdk+daemon, then Docker image, pushes to Artifact Registry |
-| GKE cluster setup | GCP console / terraform | ⬜ Cluster `common-os-agents` needs GCS FUSE CSI + Workload Identity enabled; OR auto-creates on first deploy |
+| GKE cluster setup | GCP console / `gcloud` | ⬜ Cluster `common-os-agents` needs GCS FUSE CSI + Workload Identity enabled; OR auto-creates on first `launchAgentPod()` call |
 | Agent image build | `apps/api/agent/` + Artifact Registry | ⬜ Run `gcloud builds submit` with `cloudbuild.yaml`; set `AGENT_IMAGE_URL` env var |
 | Set MONGODB_URI | env vars | ⬜ Required before any run |
 | Set GCP credentials | env vars | ⬜ `GCP_PROJECT_ID`, `GCP_SERVICE_ACCOUNT_KEY`, `GKE_CLUSTER` |
@@ -1108,11 +1108,6 @@ systemctl start commonos-daemon
 │   ├── event-schema/          # @commonos/events — shared Zod event types
 │   └── daemon/                # @commonos/daemon — process running inside each VM
 │
-├── infra/
-│   ├── terraform/aws/         # VPC, EC2, IAM, security groups per tenant
-│   └── terraform/gcp/         # VPC Network, Compute, IAM per tenant
-│                              # Note: Terraform runs post-hackathon (automated per-tenant VPC).
-│                              # For hackathon: one VPC per provider set up manually in console.
 ├── .github/
 │   └── workflows/
 │       ├── ci.yml
