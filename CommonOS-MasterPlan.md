@@ -1,5 +1,5 @@
 # COMMONOS — MASTER PLAN
-> Version 1.8 — April 2026 | One-week hackathon build. Builds on Agent Commons infrastructure.
+> Version 1.9 — April 2026 | One-week hackathon build. Builds on Agent Commons infrastructure.
 > A deployment and management framework for persistent AI agent fleets — each agent gets its own compute space.
 
 ---
@@ -9,21 +9,28 @@
 | Phase | What | Status |
 |---|---|---|
 | 1 — Scaffold & CI/CD | Monorepo, packages building, CI passing | ✅ Complete |
-| 2 — Data Layer & Cloud | `@common-os/events` (Zod schema), `@common-os/cloud` (AWS + GCP providers — EC2/GCE kept as library but agents use EKS/GKE pods) | ✅ Complete · MongoDB wired · Redis replaced by in-memory for hackathon |
+| 2 — Data Layer & Cloud | `@common-os/events` (Zod schema), `@common-os/cloud` library (providers as reference — agents use Kubernetes pods directly) | ✅ Complete · MongoDB wired · Redis replaced by in-memory for hackathon |
 | 3 — Fleet Control Plane API | All routes, auth, provisioner, WebSocket stream wired; Agent Commons registration call present | 🔄 Partial · needs MONGODB_URI + GCP credentials + real Agent Commons endpoint verification |
-| 3b — Compute Wiring | GCP: `launchAgentPod()` — GKE pod + GCS FUSE CSI; AWS: `launchAgentPodEks()` — EKS pod + EFS CSI (emptyDir fallback); both terminate via namespace delete; wired into provisioner + terminate route | ✅ Complete |
-| 4 — Fleet Daemon | Task loop, file watcher, heartbeat, health monitor; native path → `POST {RUNNER_URL}/run`; `runnerUrl` in config; AXL started in entrypoint.sh; AXL peer multiaddr registered with control plane on boot; self-contained `daemon.mjs` bundle | ✅ Complete |
+| 3b — Compute Wiring (GCP/GKE) | `launchAgentPod()` — GKE pod + GCS FUSE CSI; `terminateAgentPod()` — namespace delete; wired into provisioner + terminate route | ✅ Complete — **primary target** |
+| 3c — Compute Wiring (AWS/EKS) | `launchAgentPodEks()` — EKS pod + EFS CSI (emptyDir fallback); same pod pattern as GKE | ✅ Code complete · untested — wire after GKE is live |
+| 4 — Fleet Daemon | Task loop, file watcher, heartbeat, health monitor; native path → `POST {RUNNER_URL}/run`; AXL started in entrypoint.sh; AXL peer multiaddr registered with control plane on boot; self-contained `daemon.mjs` bundle | ✅ Complete |
 | 5 — SDK & CLI | SDK complete; CLI all commands wired to real API via SDK | ✅ Complete |
 | 6 — World UI | Phaser isometric world, agent sprites, HUD, mock simulation + real API hook | ✅ Complete |
-| 7 — Bounty Integrations | AXL, Uniswap | ⬜ Not started |
-| 8 — Gensyn Compute Provider | Third `CloudProvider` — decentralized compute, AXL native, on-chain payment from agent wallet | ⬜ Not started |
+| 7 — Bounty Integrations | AXL (Gensyn), Uniswap | ⬜ Not started |
+| 8 — Gensyn Compute Provider | Third provider — decentralized compute, AXL native, same pod-per-agent pattern | ⬜ After GKE is live |
 
-**Critical path (as of 2026-04-29):**
-1. **MONGODB_URI + GCP credentials** — set `GCP_PROJECT_ID`, `GCP_SERVICE_ACCOUNT_KEY`, `GKE_CLUSTER` env vars on the API server
-2. **GKE cluster setup** — cluster `common-os-agents` must exist with GCS FUSE CSI driver enabled and Workload Identity configured; OR rely on auto-create in `launchAgentPod()`
-3. **Agent image** — publish `common-os-agent` Docker image to `europe-west1-docker.pkg.dev/{project}/common-os/agent:latest`; `AGENT_IMAGE_URL` env var
-4. **RUNNER_URL** — set to deployed `common-os-runner-prod` Cloud Run URL
-5. ~~**AXL peer registration**~~ — ✅ done: daemon queries `localhost:4001/peer` on boot and PATCHes agent doc
+**Priority: GCP/GKE end-to-end first. AWS EKS and Gensyn are follow-on providers with the same pod-per-agent workflow.**
+
+**GKE critical path (immediate):**
+1. **MONGODB_URI** — set on API server before any run
+2. **GCP credentials** — `GCP_PROJECT_ID`, `GCP_SERVICE_ACCOUNT_KEY`, `GKE_CLUSTER` env vars on API server
+3. **GKE cluster** — cluster `common-os-agents` with GCS FUSE CSI + Workload Identity; auto-creates on first `launchAgentPod()` call if credentials are set
+4. **Agent image** — run `gcloud builds submit --config=apps/api/agent/cloudbuild.yaml .`; set `AGENT_IMAGE_URL`
+5. **RUNNER_URL** — deploy `apps/runner/` to Cloud Run; set `RUNNER_URL` env var on API server
+
+**Follow-on (after GKE live):**
+- AWS EKS: set `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `EKS_CLUSTER`, `EFS_FILE_SYSTEM_ID`
+- Gensyn: implement provider using same namespace+pod pattern with Gensyn compute nodes
 
 ---
 
@@ -88,7 +95,7 @@ A **shared** Cloud Run service that wraps `agent-commons run` CLI calls. One ins
 | ~~Per-agent Cloud Run~~ | — | Replaced by GKE pod approach |
 | ~~`deployRunner()` per-agent GKE runner~~ | — | Removed — use shared Cloud Run runner (`common-os-runner-prod`) |
 | ~~`launchAgentPod()`~~ | `apps/api/src/services/cloud-init.ts` | ✅ Done — GKE namespace + pod per agent, GCS FUSE CSI storage, all env vars injected |
-| ~~Wire into provisioner~~ | `apps/api/src/services/provisioner.ts` | ✅ Done — GCP path calls `launchAgentPod()`, AWS calls `buildStartupScript()` + EC2 |
+| ~~Wire into provisioner~~ | `apps/api/src/services/provisioner.ts` | ✅ Done — GCP calls `launchAgentPod()`, AWS calls `launchAgentPodEks()` |
 | ~~Daemon calls runner~~ | `packages/daemon/src/daemon.ts` | ✅ Done — `runViaNative()` → `POST {RUNNER_URL}/run` |
 | ~~AXL in container~~ | `apps/api/agent/entrypoint.sh` | ✅ Done — `axl start --port 4001 &` before daemon |
 | ~~AXL peer registration~~ | `packages/daemon/src/daemon.ts` | ✅ Done — `registerAxlPeer()` retries 5×, PATCHes agent doc with peerId + multiaddr |
