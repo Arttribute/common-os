@@ -4,30 +4,32 @@
 
 ---
 
-## BUILD STATUS — 2026-04-27
+## BUILD STATUS — 2026-04-29
 
 | Phase | What | Status |
 |---|---|---|
 | 1 — Scaffold & CI/CD | Monorepo, packages building, CI passing | ✅ Complete |
-| 2 — Data Layer & Cloud | `@common-os/events` (Zod schema), `@common-os/cloud` (AWS + GCP providers) | ✅ Complete · MongoDB wired · Redis replaced by in-memory for hackathon |
+| 2 — Data Layer & Cloud | `@common-os/events` (Zod schema), `@common-os/cloud` (AWS + GCP Compute Engine providers) | ✅ Complete · MongoDB wired · Redis replaced by in-memory for hackathon |
 | 3 — Fleet Control Plane API | All routes, auth, provisioner, WebSocket stream wired; Agent Commons registration call present | 🔄 Partial · needs MONGODB_URI + GCP credentials + real Agent Commons endpoint verification |
-| 3b — Compute Wiring | `launch()` in `cloud-init.ts` exists but has hardcoded values; not yet called from provisioner | ⚠️ Needs: parameterize `launch()`, wire into `provisioner.ts`, drop `deployRunner()` / GKE |
-| 4 — Fleet Daemon | Task loop, file watcher, heartbeat done; all three runtime dispatch branches wired (native, openclaw, guest); `workspaceDir` generalises watch path | 🔄 Partial · AXL registration + health monitor not started · verify `@common-os/daemon` npm publish name |
-| 5 — SDK & CLI | SDK complete; CLI structure done, actions still stubs | 🔄 Partial |
+| 3b — Compute Wiring | `launchAgentPod()` — per-agent GKE pod on shared cluster `common-os-agents`; GCS FUSE CSI for storage; AXL starts in-container; `terminateAgentPod()` deletes namespace; wired into provisioner + terminate route | ✅ Complete |
+| 4 — Fleet Daemon | Task loop, file watcher, heartbeat, health monitor; native path → `POST {RUNNER_URL}/run`; `runnerUrl` in config; AXL started in entrypoint.sh; AXL peer multiaddr registered with control plane on boot; self-contained `daemon.mjs` bundle | ✅ Complete |
+| 5 — SDK & CLI | SDK complete; CLI all commands wired to real API via SDK | ✅ Complete |
 | 6 — World UI | Phaser isometric world, agent sprites, HUD, mock simulation + real API hook | ✅ Complete |
 | 7 — Bounty Integrations | AXL, Uniswap | ⬜ Not started |
+| 8 — Gensyn Compute Provider | Third `CloudProvider` — decentralized compute, AXL native, on-chain payment from agent wallet | ⬜ Not started |
 
-**Critical path (as of 2026-04-27):**
-1. **Parameterize and wire `launch()`** — remove hardcoded values, call it from `provisioner.ts` instead of `buildStartupScript()` + GCE
-2. **Drop `deployRunner()` / GKE** — use the shared Cloud Run runner (`common-os-runner-prod`) instead
-3. **MONGODB_URI + GCP credentials** — nothing runs without these
-4. **Agent Commons API** — endpoints are speculative; needs verification before demo
+**Critical path (as of 2026-04-29):**
+1. **MONGODB_URI + GCP credentials** — set `GCP_PROJECT_ID`, `GCP_SERVICE_ACCOUNT_KEY`, `GKE_CLUSTER` env vars on the API server
+2. **GKE cluster setup** — cluster `common-os-agents` must exist with GCS FUSE CSI driver enabled and Workload Identity configured; OR rely on auto-create in `launchAgentPod()`
+3. **Agent image** — publish `common-os-agent` Docker image to `europe-west1-docker.pkg.dev/{project}/common-os/agent:latest`; `AGENT_IMAGE_URL` env var
+4. **RUNNER_URL** — set to deployed `common-os-runner-prod` Cloud Run URL
+5. ~~**AXL peer registration**~~ — ✅ done: daemon queries `localhost:4001/peer` on boot and PATCHes agent doc
 
 ---
 
-## COMPUTE MODEL — CLOUD RUN + GCS FUSE
+## COMPUTE MODEL — GKE + GCS FUSE
 
-Each agent gets its own **Cloud Run service** backed by a **GCS FUSE-mounted storage bucket**. This is the single compute model for CommonOS on GCP.
+Each agent gets its own **Kubernetes namespace + pod** on the shared GKE cluster `common-os-agents`, with a **GCS FUSE-mounted storage bucket** for persistent state. This is the compute model for CommonOS on GCP.
 
 ```
 POST /fleets/:id/agents
@@ -36,17 +38,21 @@ POST /fleets/:id/agents
   provisioner.ts
   ├── registerWithAgentCommons()    → get commons agentId + apiKey
   ├── insert agent doc (MongoDB)
-  └── launch()  ──────────────────────────────────────────────────┐
+  └── launchAgentPod()  ──────────────────────────────────────────┐
                                                                    ▼
-                                              Cloud Run service per agent
+                                              GKE cluster: common-os-agents
+                                              namespace: agent-{agentId}
                                               ┌─────────────────────────────┐
-                                              │  agent-{id}-session-{sid}   │
-                                              │  image: common-os-agent     │
+                                              │  pod: agent-{agentId}       │
+                                              │  container: common-os-agent │
                                               │  entrypoint.sh              │
                                               │    → generates config.json  │
-                                              │    → bunx common-os-daemon  │
+                                              │    → axl start &            │
+                                              │    → bun /app/daemon.mjs    │
                                               ├─────────────────────────────┤
                                               │  /mnt/shared  (GCS FUSE)    │
+                                              │  CSI: gcsfuse.csi.storage.  │
+                                              │       gke.io                │
                                               │  bucket: agent-session-     │
                                               │  state-bucket               │
                                               │  path: agents/{id}/         │
@@ -57,8 +63,9 @@ POST /fleets/:id/agents
 ### Agent container (`apps/api/agent/`)
 - **Image**: `europe-west1-docker.pkg.dev/{project}/arttribute/common-os-agent:latest`
 - **Runtime**: Bun + `@agent-commons/cli` pre-installed
-- **Entrypoint**: `entrypoint.sh` — reads env vars, writes `/etc/common-os/config.json`, runs `bunx common-os-daemon`
-- **Storage**: GCS bucket mounted at `/mnt/shared` via GCS FUSE (Cloud Run Gen2 required)
+- **Entrypoint**: `entrypoint.sh` — reads env vars, writes `/etc/common-os/config.json`, starts AXL on port 4001, runs `bun /app/daemon.mjs`
+- **Build**: `apps/api/agent/cloudbuild.yaml` — builds daemon bundle then Docker image, pushes to Artifact Registry
+- **Storage**: GCS bucket mounted at `/mnt/shared` via GCS FUSE CSI driver on GKE
 - **Config via env vars**: `AGENT_ID`, `AGENT_TOKEN`, `API_URL`, `FLEET_ID`, `TENANT_ID`, `COMMONS_API_KEY`, `COMMONS_AGENT_ID`, `INTEGRATION_PATH`, `ROLE`
 
 ### Runner service (`apps/runner/`)
@@ -66,7 +73,7 @@ A **shared** Cloud Run service that wraps `agent-commons run` CLI calls. One ins
 - `GET /health` — liveness check
 - `POST /run` — `{ agentId, sessionId?, prompt }` → executes `agent-commons run ...` via Bun shell → returns output
 - Deployed via `apps/runner/cloudbuild.yaml` → `common-os-runner-prod` on Cloud Run (europe-west1)
-- Daemon's `executeTask()` should call this endpoint (currently posts directly to Agent Commons API — needs update)
+- Daemon's `executeTask()` calls this endpoint via `runViaNative()` → `POST {RUNNER_URL}/run`
 
 ### Storage model
 - One GCS bucket per platform (`agent-session-state-bucket`)
@@ -76,14 +83,22 @@ A **shared** Cloud Run service that wraps `agent-commons run` CLI calls. One ins
 
 ### What still needs to be done
 
-| Item | File | Work |
+| Item | File | Status |
 |---|---|---|
-| Parameterize `launch()` | `apps/api/src/services/cloud-init.ts` | Remove hardcoded `agentId`, `projectId`, `imageUrl`; accept them as params |
-| Wire `launch()` into provisioner | `apps/api/src/services/provisioner.ts` | Replace `buildStartupScript()` + `cloud.provision()` with `launch()` |
-| Drop `deployRunner()` | `apps/api/src/services/cloud-init.ts` | Remove GKE deploy function — use shared runner instead |
-| Daemon calls runner | `packages/daemon/src/daemon.ts` | `executeTask()` → `POST {RUNNER_URL}/run` instead of direct Agent Commons fetch |
-| Package name | `apps/api/agent/entrypoint.sh` | Confirm `bunx common-os-daemon` resolves to the published `@common-os/daemon` package |
-| Env var injection | `apps/api/src/services/cloud-init.ts:launch()` | Pass all agent config as Cloud Run container env vars |
+| ~~Per-agent Cloud Run~~ | — | Replaced by GKE pod approach |
+| ~~`deployRunner()` per-agent GKE runner~~ | — | Removed — use shared Cloud Run runner (`common-os-runner-prod`) |
+| ~~`launchAgentPod()`~~ | `apps/api/src/services/cloud-init.ts` | ✅ Done — GKE namespace + pod per agent, GCS FUSE CSI storage, all env vars injected |
+| ~~Wire into provisioner~~ | `apps/api/src/services/provisioner.ts` | ✅ Done — GCP path calls `launchAgentPod()`, AWS calls `buildStartupScript()` + EC2 |
+| ~~Daemon calls runner~~ | `packages/daemon/src/daemon.ts` | ✅ Done — `runViaNative()` → `POST {RUNNER_URL}/run` |
+| ~~AXL in container~~ | `apps/api/agent/entrypoint.sh` | ✅ Done — `axl start --port 4001 &` before daemon |
+| ~~AXL peer registration~~ | `packages/daemon/src/daemon.ts` | ✅ Done — `registerAxlPeer()` retries 5×, PATCHes agent doc with peerId + multiaddr |
+| ~~Self-contained daemon bundle~~ | `packages/daemon/tsup.config.ts` | ✅ Done — `noExternal: [/.*/]` → single `daemon.mjs` (55KB), no npm publish needed |
+| ~~Agent image build config~~ | `apps/api/agent/cloudbuild.yaml` | ✅ Done — builds events+sdk+daemon, then Docker image, pushes to Artifact Registry |
+| GKE cluster setup | GCP console / terraform | ⬜ Cluster `common-os-agents` needs GCS FUSE CSI + Workload Identity enabled; OR auto-creates on first deploy |
+| Agent image build | `apps/api/agent/` + Artifact Registry | ⬜ Run `gcloud builds submit` with `cloudbuild.yaml`; set `AGENT_IMAGE_URL` env var |
+| Set MONGODB_URI | env vars | ⬜ Required before any run |
+| Set GCP credentials | env vars | ⬜ `GCP_PROJECT_ID`, `GCP_SERVICE_ACCOUNT_KEY`, `GKE_CLUSTER` |
+| Set RUNNER_URL | env vars | ⬜ `common-os-runner-prod` Cloud Run URL |
 
 ---
 
@@ -111,6 +126,7 @@ A **shared** Cloud Run service that wraps `agent-commons run` CLI calls. One ins
     - 11.5 Phase 5 — SDK & CLI
     - 11.6 Phase 6 — World UI
     - 11.7 Phase 7 — Bounty Integrations
+    - 11.8 Phase 8 — Gensyn Compute Provider *(post-GKE)*
 12. [CI/CD & Release Workflow](#12-cicd--release-workflow)
 13. [Tech Stack](#13-tech-stack)
 14. [Bounty Strategy](#14-bounty-strategy)
@@ -1526,6 +1542,163 @@ Agents already have Commons wallets (USDC on Base Sepolia). Uniswap swap is a na
 
 ---
 
+### 11.8 Phase 8 — Gensyn Compute Provider
+*Decentralized compute as a first-class `CloudProvider`* · **⬜ NOT STARTED — implement after GKE end-to-end**
+
+#### Why Gensyn
+
+CommonOS already supports AWS and GCP as compute providers. Gensyn is the natural third option — decentralized compute with properties the centralized providers can't match:
+
+| Property | AWS / GCP | Gensyn |
+|---|---|---|
+| AXL support | Sidecar required in every pod | AXL native on every node — no sidecar needed |
+| Payment | Fiat billing to tenant | On-chain from agent's own wallet — agents pay for their own compute |
+| Infrastructure management | CommonOS manages cluster | Gensyn manages the nodes — zero cluster overhead |
+| Decentralization | Centralized cloud | Fully decentralized node network |
+| Audit trail | Cloud billing dashboard | On-chain payment record — verifiable by anyone |
+
+This is the architecture that makes agent autonomy complete. An agent on Gensyn doesn't just run in isolation — it pays for its own compute from its own wallet, communicates via AXL natively, and leaves a verifiable on-chain trail of what it did and what it spent.
+
+#### What it borrows from GKE
+
+Gensyn runs the same containers as GKE pods. No new images, no new daemon, no new runtimes:
+- Same `common-os-agent` container image (daemon + runtime)
+- Same `entrypoint.sh` → `config.json` → `bunx common-os-daemon` sequence
+- Same three integration paths: native, openclaw, guest
+- Same event stream, same task polling, same file watcher
+- Storage: GCS FUSE → **IPFS/Filecoin** (same `workspaceDir` abstraction, different mount)
+
+The only things that change are at the provisioner level — how the node is acquired, how it's paid for, and whether the AXL sidecar is needed.
+
+#### What's different
+
+**AXL sidecar becomes conditional.** On GKE, AXL runs as a sidecar container in every pod. On Gensyn, AXL is native — every Gensyn node already speaks AXL. The provisioner skips adding the sidecar:
+
+```typescript
+// packages/daemon's pod spec builder (post-GKE)
+const needsAxlSidecar = agentDoc.vm.provider !== 'gensyn';
+if (needsAxlSidecar) {
+  podSpec.containers.push(axlSidecarContainer);
+}
+```
+
+**On-chain payment authorization.** Before provisioning on Gensyn, the agent's wallet must authorize payment. The provisioner calls the Gensyn SDK to reserve compute and get a node assignment, using the agent's Commons wallet:
+
+```typescript
+// Gensyn path in provisioner
+if (opts.provider === 'gensyn') {
+  const nodeAssignment = await gensynClient.reserveNode({
+    walletAddress: agentDoc.commons.walletAddress,
+    instanceType: opts.instanceType,
+    duration: opts.leaseDuration,
+  });
+  // nodeAssignment.nodeId used as instanceId
+}
+```
+
+**IPFS/Filecoin for persistent state.** GCS FUSE is a GCP primitive. On Gensyn nodes, persistent agent state is stored on IPFS/Filecoin — same `workspaceDir` abstraction in the daemon config, different underlying mount:
+
+```
+GKE:    workspaceDir = /mnt/shared  (GCS FUSE bucket)
+Gensyn: workspaceDir = /mnt/shared  (IPFS/Filecoin mount — same path, different provider)
+```
+
+The daemon doesn't care — it watches `workspaceDir` and emits `file_changed` events regardless of what's underneath.
+
+#### Implementation plan
+
+**Step 1 — `GcpProvider` → `GkeProvider` rename + Gensyn stub**
+```
+packages/cloud/src/providers/
+  aws.ts          ← exists (EC2)
+  gcp.ts          ← rename to gke.ts, update exports
+  gensyn.ts       ← new stub implementing CloudProvider interface
+```
+
+**Step 2 — Type union update**
+```typescript
+// packages/cloud/src/index.ts
+export type ComputeProvider = 'aws' | 'gcp' | 'gensyn';
+
+export function getCloudProvider(
+  provider: ComputeProvider,
+  region: string
+): CloudProvider {
+  switch (provider) {
+    case 'aws':    return new AWSProvider(region);
+    case 'gcp':    return new GCPProvider(region);
+    case 'gensyn': return new GensynProvider(region);
+  }
+}
+```
+
+```typescript
+// apps/api/src/types.ts — AgentDoc.vm.provider
+provider: 'aws' | 'gcp' | 'gensyn';
+```
+
+**Step 3 — `GcpProvider` stub for Gensyn**
+Implement `CloudProvider` interface. Reserve node via Gensyn SDK, return `instanceId` as the node ID. All other `CloudProvider` methods (`terminate`, `stop`, `start`, `getStatus`) map to Gensyn node lifecycle API:
+
+```typescript
+// packages/cloud/src/providers/gensyn.ts
+export class GensynProvider implements CloudProvider {
+  async provision(config: AgentInstanceConfig): Promise<ProvisionedInstance> {
+    // TODO: call Gensyn SDK to reserve node, authorize wallet payment
+    // Returns nodeId, publicIp, privateIp
+    throw new Error('GensynProvider: not yet implemented');
+  }
+  async terminate(instanceId: string): Promise<void> { /* TODO */ }
+  async stop(instanceId: string): Promise<void> { /* TODO */ }
+  async start(instanceId: string): Promise<void> { /* TODO */ }
+  async getStatus(instanceId: string): Promise<ProvisionedInstance> { /* TODO */ }
+}
+```
+
+**Step 4 — AXL sidecar conditional in pod spec**
+Once GKE pod spec builder exists (part of Phase 3b), add the provider check:
+
+```typescript
+// Gensyn nodes have AXL native — no sidecar needed
+if (agentDoc.vm.provider !== 'gensyn') {
+  podSpec.containers.push(buildAxlSidecarSpec());
+}
+```
+
+**Step 5 — Storage abstraction**
+Add `storageMountType: 'gcs' | 'ipfs'` to agent config, resolved from provider at provision time:
+
+```typescript
+const storageMountType = agentDoc.vm.provider === 'gensyn' ? 'ipfs' : 'gcs';
+```
+
+Pod spec builder selects the appropriate volume mount based on this field.
+
+#### Env vars required (Gensyn path)
+
+```
+GENSYN_API_KEY              # platform key for reserving nodes
+GENSYN_NETWORK              # testnet | mainnet
+```
+
+#### Decentralization roadmap
+
+Gensyn is the first step toward a fully decentralized CommonOS. The path:
+
+```
+Now:        AWS / GCP (centralized VMs)
+GKE:        GKE + gVisor (centralized cluster, container economics)
+Gensyn:     Decentralized compute, AXL native, on-chain payment
+Akash:      Kubernetes-compatible decentralized compute (alternative to Gensyn)
+Full:       Akash/Gensyn compute + IPFS/Filecoin storage + smart contract control plane
+```
+
+At full decentralization: the fleet control plane itself can be replaced by on-chain logic — agent deployment triggered by smart contract, agent payment settled on-chain, agent identity anchored to ENS. CommonOS becomes infrastructure that can run without trusting any central server.
+
+**Prerequisite:** GKE end-to-end must be working first. The pod spec, container images, daemon sequence, and AXL integration from GKE are directly reused on Gensyn. Building Gensyn before GKE is solid means building on sand.
+
+---
+
 ## 12. CI/CD & RELEASE WORKFLOW
 
 Carried over from Agent Commons with two adaptations.
@@ -1574,8 +1747,10 @@ Carried over from Agent Commons with two adaptations.
 | Git hooks | Husky | |
 | Cloud (AWS) | `@aws-sdk/client-ec2` | |
 | Cloud (GCP) | `@google-cloud/compute` | |
+| Cloud (Gensyn) | Gensyn SDK *(planned)* | Decentralized compute — post-GKE |
 | IaC | Terraform | Per-tenant automated VPC provisioning: post-hackathon. Manual VPC setup for hackathon demo. |
-| P2P messaging | Gensyn AXL | Inter-agent communication |
+| P2P messaging | Gensyn AXL | Inter-agent communication; native on Gensyn nodes, sidecar on GKE |
+| Storage (future) | IPFS / Filecoin *(planned)* | Replaces GCS FUSE on Gensyn nodes |
 | Agent runtime (native) | `agc` CLI (Agent Commons) | Runs inside VM |
 | Agent runtime (guest) | Docker + `@commonos/sdk` | Tenant's own image |
 

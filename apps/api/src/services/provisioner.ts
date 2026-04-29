@@ -2,7 +2,7 @@ import { getCloudProvider } from "@common-os/cloud";
 import { createHash, randomBytes } from "crypto";
 import { agents, fleets, worldStates } from "../db/mongo.js";
 import type { AgentDoc, FleetDoc } from "../types.js";
-import { buildStartupScript } from "./cloud-init.js";
+import { buildStartupScript, launchAgentPod } from "./cloud-init.js";
 
 interface ProvisionAgentOptions {
 	fleetId: string;
@@ -35,7 +35,6 @@ export async function provisionAgent(
 
 	// Agent Commons registration: native path only.
 	// OpenClaw manages its own model identity — registration skipped.
-	// Guest agents may optionally register if they want Commons identity.
 	const commons =
 		opts.integrationPath === "openclaw"
 			? { agentId: null, apiKey: null, walletAddress: null }
@@ -104,8 +103,7 @@ export async function provisionAgent(
 }
 
 // Registers the agent with Agent Commons to get an identity + API key.
-// Agent Commons owns the agent's identity; CommonOS owns the VM it runs on.
-// Requires AGENTCOMMONS_API_KEY env var. Skips gracefully if not configured.
+// Skips gracefully if AGENTCOMMONS_API_KEY is not configured.
 async function registerWithAgentCommons(
 	agentId: string,
 	role: string,
@@ -156,47 +154,79 @@ async function launchCloudInstance(
 	const apiUrl = process.env.API_URL ?? "http://localhost:3001";
 
 	try {
-		const cloud = getCloudProvider(agentDoc.vm.provider, agentDoc.vm.region);
-		const startupScript = buildStartupScript({
-			agentId: agentDoc._id,
-			agentToken,
-			apiUrl,
-			role: opts.role,
-			systemPrompt: opts.systemPrompt,
-			dockerImage: opts.dockerImage,
-			commonsApiKey: commonsApiKey ?? "",
-			commonsAgentId: agentDoc.commons.agentId ?? "",
-			integrationPath: opts.integrationPath,
-		});
-
-		const instance = await cloud.provision({
-			tenantId: agentDoc.tenantId,
-			agentId: agentDoc._id,
-			region: agentDoc.vm.region,
-			instanceType: agentDoc.vm.instanceType,
-			diskGb: agentDoc.vm.diskGb,
-			startupScript,
-			tags: {
-				fleet: agentDoc.fleetId,
-				tenant: agentDoc.tenantId,
+		if (agentDoc.vm.provider === "gcp") {
+			// GCP: deploy per-agent pod on shared GKE cluster with GCS FUSE storage
+			const result = await launchAgentPod({
+				agentId: agentDoc._id,
+				agentToken,
+				fleetId: agentDoc.fleetId,
+				tenantId: agentDoc.tenantId,
+				apiUrl,
 				role: opts.role,
-				"managed-by": "common-os",
-			},
-		});
+				integrationPath: opts.integrationPath,
+				dockerImage: opts.dockerImage,
+				commonsApiKey: commonsApiKey ?? "",
+				commonsAgentId: agentDoc.commons.agentId ?? "",
+				runnerUrl: process.env.RUNNER_URL,
+			});
 
-		await (await agents()).updateOne(
-			{ _id: agentDoc._id },
-			{
-				$set: {
-					"vm.instanceId": instance.instanceId,
-					"vm.publicIp": instance.publicIp,
-					"vm.privateIp": instance.privateIp,
-					status: "starting",
-					updatedAt: new Date(),
+			await (await agents()).updateOne(
+				{ _id: agentDoc._id },
+				{
+					$set: {
+						"vm.instanceId": result.serviceId,
+						status: "starting",
+						updatedAt: new Date(),
+					},
 				},
-			},
-		);
-	} catch {
-		// Cloud credentials not configured — agent stays at provisioning status
+			);
+		} else {
+			// AWS (default): provision EC2 instance with cloud-init startup script
+			const cloud = getCloudProvider(agentDoc.vm.provider, agentDoc.vm.region);
+			const startupScript = buildStartupScript({
+				agentId: agentDoc._id,
+				agentToken,
+				fleetId: agentDoc.fleetId,
+				tenantId: agentDoc.tenantId,
+				apiUrl,
+				role: opts.role,
+				systemPrompt: opts.systemPrompt,
+				dockerImage: opts.dockerImage,
+				commonsApiKey: commonsApiKey ?? "",
+				commonsAgentId: agentDoc.commons.agentId ?? "",
+				integrationPath: opts.integrationPath === "openclaw" ? "native" : opts.integrationPath,
+			});
+
+			const instance = await cloud.provision({
+				tenantId: agentDoc.tenantId,
+				agentId: agentDoc._id,
+				region: agentDoc.vm.region,
+				instanceType: agentDoc.vm.instanceType,
+				diskGb: agentDoc.vm.diskGb,
+				startupScript,
+				tags: {
+					fleet: agentDoc.fleetId,
+					tenant: agentDoc.tenantId,
+					role: opts.role,
+					"managed-by": "common-os",
+				},
+			});
+
+			await (await agents()).updateOne(
+				{ _id: agentDoc._id },
+				{
+					$set: {
+						"vm.instanceId": instance.instanceId,
+						"vm.publicIp": instance.publicIp,
+						"vm.privateIp": instance.privateIp,
+						status: "starting",
+						updatedAt: new Date(),
+					},
+				},
+			);
+		}
+	} catch (err) {
+		console.error(`[provisioner] cloud launch failed for ${agentDoc._id}:`, err);
+		// Agent stays at provisioning status — daemon will never boot without infra
 	}
 }

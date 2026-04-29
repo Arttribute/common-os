@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { CommonOSClient } from "@commonos/sdk";
+import { CommonOSClient } from "@common-os/sdk";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";

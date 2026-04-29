@@ -1,0 +1,38 @@
+steps:
+  # Step 1: Build the daemon bundle (self-contained daemon.mjs)
+  # Runs from repo root so pnpm workspace resolution works across packages.
+  - name: node
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        npm install -g pnpm
+        pnpm install
+        pnpm --filter @common-os/events build
+        pnpm --filter @common-os/sdk build
+        pnpm --filter @common-os/daemon build
+
+  # Step 2: Build agent Docker image
+  # Build context is repo root so the Dockerfile can COPY packages/daemon/dist/
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - build
+      - -t
+      - "europe-west1-docker.pkg.dev/$PROJECT_ID/common-os/agent:$SHORT_SHA"
+      - -f
+      - apps/api/agent/Dockerfile
+      - "."
+
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - tag
+      - "europe-west1-docker.pkg.dev/$PROJECT_ID/common-os/agent:$SHORT_SHA"
+      - "europe-west1-docker.pkg.dev/$PROJECT_ID/common-os/agent:latest"
+
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - push
+      - "europe-west1-docker.pkg.dev/$PROJECT_ID/common-os/agent"
+      - --all-tags
+
+timeout: 1800s

@@ -17,6 +17,9 @@ export default defineConfig([
     format: ["esm"],
     banner: { js: "#!/usr/bin/env node" },
     sourcemap: true,
+    // Bundle all dependencies so daemon.mjs is fully self-contained —
+    // no node_modules needed at runtime inside the agent container.
+    noExternal: [/.*/],
     outDir: "dist",
     outExtension() {
       return { js: ".mjs" };

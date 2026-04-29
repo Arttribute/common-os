@@ -2,6 +2,7 @@ import { getCloudProvider } from "@common-os/cloud";
 import { Hono } from "hono";
 import { agents, fleets } from "../db/mongo.js";
 import { provisionAgent } from "../services/provisioner.js";
+import { terminateAgentPod } from "../services/cloud-init.js";
 import { removeAgentFromWorldState } from "../services/world.js";
 import type { Env } from "../types.js";
 
@@ -138,8 +139,13 @@ router.delete("/:id/agents/:agentId", async (c) => {
 
 		if (agent.vm.instanceId) {
 			try {
-				const cloud = getCloudProvider(agent.vm.provider, agent.vm.region);
-				await cloud.terminate(agent.vm.instanceId);
+				if (agent.vm.provider === "gcp") {
+					// instanceId is the Kubernetes namespace name for GKE agents
+					await terminateAgentPod(agent.vm.instanceId);
+				} else {
+					const cloud = getCloudProvider(agent.vm.provider, agent.vm.region);
+					await cloud.terminate(agent.vm.instanceId);
+				}
 			} catch {
 				// Don't block if cloud call fails
 			}

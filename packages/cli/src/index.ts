@@ -1,1 +1,1 @@
-export { CommonOSClient } from "@commonos/sdk";
+export { CommonOSClient } from "@common-os/sdk";

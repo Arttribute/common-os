@@ -10,9 +10,13 @@ const agent = new CommonOSAgentClient({
   apiUrl: config.apiUrl,
 });
 
-const HEARTBEAT_MS  = 30_000;
-const POLL_MS       = 5_000;
-const WORKSPACE_DIR = process.env.COMMONOS_WORKSPACE ?? config.workspaceDir;
+const HEARTBEAT_MS   = 30_000;
+const POLL_MS        = 5_000;
+const HEALTH_MS      = 10_000;
+const WORKSPACE_DIR  = process.env.COMMONOS_WORKSPACE ?? config.workspaceDir;
+const RUNNER_URL     = process.env.RUNNER_URL ?? config.runnerUrl ?? "";
+// AXL runs on localhost:4001 inside the same pod/container
+const AXL_API_URL    = process.env.AXL_API_URL ?? "http://localhost:4001";
 
 // ─── Main ──────────────────────────────────────────────────────────────────
 
@@ -22,6 +26,8 @@ async function main() {
   await agent.emit({ type: "state_change", payload: { status: "online" } });
   console.log("[daemon] online");
 
+  await registerAxlPeer();
+
   setInterval(() => {
     agent.emit({ type: "heartbeat" }).catch((err) => {
       console.error("[daemon] heartbeat error:", err);
@@ -29,6 +35,7 @@ async function main() {
   }, HEARTBEAT_MS);
 
   startFileWatcher();
+  startHealthMonitor();
   await pollTasks();
 }
 
@@ -54,6 +61,87 @@ function startFileWatcher() {
 
 function emitFileChange(path: string, op: "create" | "modify" | "delete") {
   agent.emit({ type: "file_changed", payload: { path, op } }).catch(() => {});
+}
+
+// ─── Health monitor ────────────────────────────────────────────────────────
+// Checks that the runtime (runner or openclaw gateway) is reachable.
+// Emits an error event if it becomes unreachable.
+
+let runtimeHealthy = true;
+
+function startHealthMonitor() {
+  if (!RUNNER_URL && config.integrationPath !== "openclaw") {
+    // No runtime endpoint to probe — skip
+    return;
+  }
+
+  const probeUrl =
+    config.integrationPath === "openclaw"
+      ? `${config.openclawGatewayUrl}/health`
+      : `${RUNNER_URL}/health`;
+
+  setInterval(async () => {
+    try {
+      const res = await fetch(probeUrl, { signal: AbortSignal.timeout(5_000) });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      if (!runtimeHealthy) {
+        runtimeHealthy = true;
+        console.log("[daemon] runtime healthy again");
+        await agent.emit({ type: "state_change", payload: { status: "idle" } });
+      }
+    } catch (err) {
+      if (runtimeHealthy) {
+        runtimeHealthy = false;
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error("[daemon] runtime health check failed:", msg);
+        await agent
+          .emit({ type: "error", payload: { message: `runtime unreachable: ${msg}` } })
+          .catch(() => {});
+      }
+    }
+  }, HEALTH_MS);
+
+  console.log(`[daemon] health monitor → ${probeUrl}`);
+}
+
+// ─── AXL peer registration ────────────────────────────────────────────────
+// Queries the local AXL node for its peer ID and multiaddr, then PATCHes the
+// agent document so the control plane knows how to route inter-agent messages.
+
+async function registerAxlPeer(): Promise<void> {
+  // Retry a few times — AXL may still be initialising when the daemon starts
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const res = await fetch(`${AXL_API_URL}/peer`, {
+        signal: AbortSignal.timeout(3_000),
+      });
+      if (!res.ok) throw new Error(`AXL peer endpoint returned ${res.status}`);
+
+      const data = await res.json() as { peerId?: string; multiaddr?: string; addrs?: string[] };
+      const peerId   = data.peerId ?? null;
+      const multiaddr = data.multiaddr ?? data.addrs?.[0] ?? null;
+
+      if (!peerId && !multiaddr) throw new Error("AXL returned no peer info");
+
+      // PATCH the agent document via the control plane API
+      await fetch(`${config.apiUrl}/fleets/${config.fleetId}/agents/${config.agentId}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${config.agentToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ "axl.peerId": peerId, "axl.multiaddr": multiaddr }),
+      });
+
+      console.log(`[daemon] AXL peer registered  peerId=${peerId}  multiaddr=${multiaddr}`);
+      return;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[daemon] AXL peer registration attempt ${attempt + 1}/5 failed: ${msg}`);
+      if (attempt < 4) await sleep(3_000);
+    }
+  }
+  console.warn("[daemon] AXL peer registration failed after 5 attempts — continuing without P2P");
 }
 
 // ─── Task polling loop ─────────────────────────────────────────────────────
@@ -108,16 +196,13 @@ async function handleTask(task: { id: string; description: string }) {
 }
 
 // ─── Task execution ────────────────────────────────────────────────────────
-// Integration point: plug in Agent Commons native call, Docker container pipe,
-// or direct LLM invocation here. For the native path, use config.commonsApiKey
-// and config.commonsAgentId to call the Agent Commons run endpoint.
 
 async function executeTask(description: string): Promise<string> {
-  if (config.integrationPath === "native" && config.commonsApiKey && config.commonsAgentId) {
-    return await runViaNative(description);
-  }
   if (config.integrationPath === "openclaw") {
     return await runViaOpenClaw(description);
+  }
+  if (config.integrationPath === "native") {
+    return await runViaNative(description);
   }
   // Guest path: the container running alongside handles execution.
   // Daemon signals readiness — actual output arrives via file_changed events.
@@ -127,19 +212,23 @@ async function executeTask(description: string): Promise<string> {
 }
 
 async function runViaNative(description: string): Promise<string> {
-  // Agent Commons native run — agent identity registered at provision time.
-  // TODO: replace with @agent-commons/sdk once endpoint shape is confirmed.
-  const res = await fetch("https://api.agentcommons.io/v1/runs", {
+  if (!RUNNER_URL) {
+    throw new Error("RUNNER_URL not configured for native path");
+  }
+
+  const res = await fetch(`${RUNNER_URL}/run`, {
     method: "POST",
-    headers: {
-      "x-api-key": config.commonsApiKey,
-      "x-agent-id": config.commonsAgentId,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ input: description }),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      agentId: config.commonsAgentId || config.agentId,
+      prompt: description,
+    }),
   });
 
-  if (!res.ok) throw new Error(`Agent Commons run failed: ${res.status}`);
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.status.toString());
+    throw new Error(`runner error: ${text}`);
+  }
 
   const data = await res.json() as { output?: string; result?: string };
   return data.output ?? data.result ?? "done";
@@ -147,8 +236,6 @@ async function runViaNative(description: string): Promise<string> {
 
 async function runViaOpenClaw(description: string): Promise<string> {
   // OpenClaw gateway runs as a sidecar at localhost:18789.
-  // Inject the task as a message into the gateway's WebSocket API.
-  // The gateway processes it via the configured channels and model.
   const res = await fetch(`${config.openclawGatewayUrl}/api/message`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

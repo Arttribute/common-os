@@ -14,16 +14,29 @@ cat > /etc/common-os/config.json << CONFIGEOF
   "openclawGatewayUrl": "${OPENCLAW_GATEWAY_URL:-http://localhost:18789}",
   "workspaceDir":       "${WORKSPACE_DIR:-/mnt/shared}",
   "integrationPath":    "${INTEGRATION_PATH:-native}",
-  "dockerImage":        ${DOCKER_IMAGE:-null},
+  "dockerImage":        $([ -n "${DOCKER_IMAGE:-}" ] && printf '"%s"' "${DOCKER_IMAGE}" || echo "null"),
   "role":               "${ROLE:-worker}",
+  "runnerUrl":          "${RUNNER_URL:-}",
   "worldRoom":          "dev-room",
   "worldX":             2,
   "worldY":             2
 }
 CONFIGEOF
 
-echo "Config generated at /etc/common-os/config.json"
-echo "Starting CommonOS Fleet Daemon with Bun..."
+echo "Config written to /etc/common-os/config.json"
 
-# Execute the daemon in the foreground using bunx instead of npx
-exec bunx common-os-daemon
+# ── AXL — P2P inter-agent communication ─────────────────────
+# Runs as a background process alongside the daemon.
+# The daemon will query localhost:4001 for the peer multiaddr
+# and register it with the control plane.
+if command -v axl &>/dev/null; then
+  echo "Starting AXL node on port 4001..."
+  axl start --port 4001 &
+  sleep 1   # brief wait for AXL to bind
+  echo "AXL node started"
+else
+  echo "AXL binary not found — skipping P2P node"
+fi
+
+echo "Starting CommonOS Fleet Daemon..."
+exec bun /app/daemon.mjs

@@ -9,7 +9,8 @@
     "declarationMap": true,
     "outDir": "./dist",
     "esModuleInterop": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "types": ["node"]
   },
   "include": ["src"],
   "exclude": ["dist", "node_modules"]
