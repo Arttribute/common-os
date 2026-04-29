@@ -1,8 +1,7 @@
-import { getCloudProvider } from "@common-os/cloud";
 import { createHash, randomBytes } from "crypto";
 import { agents, fleets, worldStates } from "../db/mongo.js";
 import type { AgentDoc, FleetDoc } from "../types.js";
-import { buildStartupScript, launchAgentPod } from "./cloud-init.js";
+import { launchAgentPod, launchAgentPodEks } from "./cloud-init.js";
 
 interface ProvisionAgentOptions {
 	fleetId: string;
@@ -181,44 +180,26 @@ async function launchCloudInstance(
 				},
 			);
 		} else {
-			// AWS (default): provision EC2 instance with cloud-init startup script
-			const cloud = getCloudProvider(agentDoc.vm.provider, agentDoc.vm.region);
-			const startupScript = buildStartupScript({
+			// AWS: deploy per-agent pod on shared EKS cluster (same pattern as GKE)
+			const result = await launchAgentPodEks({
 				agentId: agentDoc._id,
 				agentToken,
 				fleetId: agentDoc.fleetId,
 				tenantId: agentDoc.tenantId,
 				apiUrl,
 				role: opts.role,
-				systemPrompt: opts.systemPrompt,
+				integrationPath: opts.integrationPath,
 				dockerImage: opts.dockerImage,
 				commonsApiKey: commonsApiKey ?? "",
 				commonsAgentId: agentDoc.commons.agentId ?? "",
-				integrationPath: opts.integrationPath === "openclaw" ? "native" : opts.integrationPath,
-			});
-
-			const instance = await cloud.provision({
-				tenantId: agentDoc.tenantId,
-				agentId: agentDoc._id,
-				region: agentDoc.vm.region,
-				instanceType: agentDoc.vm.instanceType,
-				diskGb: agentDoc.vm.diskGb,
-				startupScript,
-				tags: {
-					fleet: agentDoc.fleetId,
-					tenant: agentDoc.tenantId,
-					role: opts.role,
-					"managed-by": "common-os",
-				},
+				runnerUrl: process.env.RUNNER_URL,
 			});
 
 			await (await agents()).updateOne(
 				{ _id: agentDoc._id },
 				{
 					$set: {
-						"vm.instanceId": instance.instanceId,
-						"vm.publicIp": instance.publicIp,
-						"vm.privateIp": instance.privateIp,
+						"vm.instanceId": result.serviceId,
 						status: "starting",
 						updatedAt: new Date(),
 					},

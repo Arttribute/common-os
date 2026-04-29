@@ -9,9 +9,9 @@
 | Phase | What | Status |
 |---|---|---|
 | 1 — Scaffold & CI/CD | Monorepo, packages building, CI passing | ✅ Complete |
-| 2 — Data Layer & Cloud | `@common-os/events` (Zod schema), `@common-os/cloud` (AWS + GCP Compute Engine providers) | ✅ Complete · MongoDB wired · Redis replaced by in-memory for hackathon |
+| 2 — Data Layer & Cloud | `@common-os/events` (Zod schema), `@common-os/cloud` (AWS + GCP providers — EC2/GCE kept as library but agents use EKS/GKE pods) | ✅ Complete · MongoDB wired · Redis replaced by in-memory for hackathon |
 | 3 — Fleet Control Plane API | All routes, auth, provisioner, WebSocket stream wired; Agent Commons registration call present | 🔄 Partial · needs MONGODB_URI + GCP credentials + real Agent Commons endpoint verification |
-| 3b — Compute Wiring | `launchAgentPod()` — per-agent GKE pod on shared cluster `common-os-agents`; GCS FUSE CSI for storage; AXL starts in-container; `terminateAgentPod()` deletes namespace; wired into provisioner + terminate route | ✅ Complete |
+| 3b — Compute Wiring | GCP: `launchAgentPod()` — GKE pod + GCS FUSE CSI; AWS: `launchAgentPodEks()` — EKS pod + EFS CSI (emptyDir fallback); both terminate via namespace delete; wired into provisioner + terminate route | ✅ Complete |
 | 4 — Fleet Daemon | Task loop, file watcher, heartbeat, health monitor; native path → `POST {RUNNER_URL}/run`; `runnerUrl` in config; AXL started in entrypoint.sh; AXL peer multiaddr registered with control plane on boot; self-contained `daemon.mjs` bundle | ✅ Complete |
 | 5 — SDK & CLI | SDK complete; CLI all commands wired to real API via SDK | ✅ Complete |
 | 6 — World UI | Phaser isometric world, agent sprites, HUD, mock simulation + real API hook | ✅ Complete |
