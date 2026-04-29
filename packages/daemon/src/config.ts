@@ -21,6 +21,9 @@ export interface DaemonConfig {
   worldRoom: string;
   worldX: number;
   worldY: number;
+  // AXL peer routing — populated at runtime via discoverFleetPeers()
+  managerAgentId?: string;
+  managerMultiaddr?: string;
 }
 
 export function loadConfig(path = "/etc/common-os/config.json"): DaemonConfig {

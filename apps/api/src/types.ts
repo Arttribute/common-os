@@ -138,3 +138,15 @@ export interface WorldStateDoc {
   }>
   updatedAt: Date
 }
+
+export interface MessageDoc {
+  _id: string
+  fromAgentId: string
+  toAgentId: string
+  fleetId: string
+  tenantId: string
+  content: string
+  axlMessageId: string | null
+  deliveredAt: Date | null
+  createdAt: Date
+}

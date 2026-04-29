@@ -13,6 +13,7 @@ const agent = new CommonOSAgentClient({
 const HEARTBEAT_MS   = 30_000;
 const POLL_MS        = 5_000;
 const HEALTH_MS      = 10_000;
+const AXL_INBOX_MS   = 5_000;
 const WORKSPACE_DIR  = process.env.COMMONOS_WORKSPACE ?? config.workspaceDir;
 const RUNNER_URL     = process.env.RUNNER_URL ?? config.runnerUrl ?? "";
 // AXL runs on localhost:4001 inside the same pod/container
@@ -27,6 +28,7 @@ async function main() {
   console.log("[daemon] online");
 
   await registerAxlPeer();
+  await discoverFleetPeers();
 
   setInterval(() => {
     agent.emit({ type: "heartbeat" }).catch((err) => {
@@ -36,6 +38,8 @@ async function main() {
 
   startFileWatcher();
   startHealthMonitor();
+  // AXL inbox runs concurrently — does not block task polling
+  void startAxlInboxLoop();
   await pollTasks();
 }
 
@@ -144,6 +148,139 @@ async function registerAxlPeer(): Promise<void> {
   console.warn("[daemon] AXL peer registration failed after 5 attempts — continuing without P2P");
 }
 
+// ─── AXL fleet peer discovery ─────────────────────────────────────────────
+// Fetches all agents in the fleet at startup to cache the manager's AXL
+// multiaddr for direct P2P message routing (no control-plane relay needed).
+
+async function discoverFleetPeers(): Promise<void> {
+  if (!config.fleetId || !config.apiUrl) return;
+  try {
+    const res = await fetch(
+      `${config.apiUrl}/fleets/${config.fleetId}/peers`,
+      {
+        headers: { Authorization: `Bearer ${config.agentToken}` },
+        signal: AbortSignal.timeout(5_000),
+      },
+    );
+    if (!res.ok) return;
+
+    const peers = (await res.json()) as Array<{
+      agentId: string;
+      peerId: string | null;
+      multiaddr: string | null;
+      permissionTier: string;
+    }>;
+
+    // Find the manager — the peer we'll report completions to
+    const manager = peers.find(
+      (p) => p.permissionTier === "manager" && p.agentId !== config.agentId && p.multiaddr,
+    );
+
+    if (manager) {
+      config.managerAgentId = manager.agentId;
+      config.managerMultiaddr = manager.multiaddr!;
+      console.log(
+        `[daemon] manager peer cached  agentId=${manager.agentId}  multiaddr=${manager.multiaddr}`,
+      );
+    }
+  } catch {
+    // Non-fatal — fleet may have no manager yet
+  }
+}
+
+// ─── AXL inbox loop ────────────────────────────────────────────────────────
+// Polls the local AXL node for inbound P2P messages from other agents.
+// Delivers each message as a message_recv event to the control plane, and
+// optionally executes the message as a task if it looks like an instruction.
+
+let lastSeenAxlMessageTs = 0;
+
+async function startAxlInboxLoop(): Promise<void> {
+  console.log("[daemon] AXL inbox loop started");
+  while (true) {
+    try {
+      await pollAxlInbox();
+    } catch {
+      // Non-fatal — AXL may still be starting
+    }
+    await sleep(AXL_INBOX_MS);
+  }
+}
+
+async function pollAxlInbox(): Promise<void> {
+  const res = await fetch(`${AXL_API_URL}/messages`, {
+    signal: AbortSignal.timeout(5_000),
+  });
+  if (!res.ok) return;
+
+  const messages = (await res.json()) as Array<{
+    id?: string;
+    from?: string;
+    fromPeerId?: string;
+    data?: string;
+    content?: string;
+    timestamp?: number;
+  }>;
+  if (!Array.isArray(messages) || messages.length === 0) return;
+
+  for (const msg of messages) {
+    const ts = msg.timestamp ?? 0;
+    if (ts <= lastSeenAxlMessageTs) continue;
+
+    const content = msg.data ?? msg.content ?? "";
+    const fromPeerId = msg.from ?? msg.fromPeerId ?? "unknown";
+
+    console.log(`[daemon] AXL message from ${fromPeerId}: ${content.slice(0, 80)}`);
+
+    await agent
+      .emit({
+        type: "message_recv",
+        payload: { fromAgentId: fromPeerId, preview: content.slice(0, 100) },
+      })
+      .catch(() => {});
+
+    // Execute task instructions from peer agents
+    if (content && config.integrationPath !== "guest") {
+      void handleTask({ id: `axl_${Date.now()}`, description: content }).catch(
+        () => {},
+      );
+    }
+
+    if (ts > lastSeenAxlMessageTs) lastSeenAxlMessageTs = ts;
+  }
+}
+
+// ─── AXL outbound ──────────────────────────────────────────────────────────
+// Sends a message to a peer agent via the local AXL node (direct P2P — no
+// control-plane relay).  Emits a message_sent event so the world UI
+// animates the talking sprite.
+
+async function sendAxlMessage(
+  toMultiaddr: string,
+  toAgentId: string,
+  content: string,
+): Promise<void> {
+  const res = await fetch(`${AXL_API_URL}/send`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ to: toMultiaddr, data: content }),
+    signal: AbortSignal.timeout(10_000),
+  });
+
+  if (!res.ok) {
+    throw new Error(`AXL send failed: ${res.status}`);
+  }
+
+  await agent
+    .emit({
+      type: "message_sent",
+      payload: { toAgentId, preview: content.slice(0, 100) },
+    })
+    .catch(() => {});
+
+  console.log(`[daemon] AXL message sent → ${toAgentId}  "${content.slice(0, 60)}"`);
+}
+
 // ─── Task polling loop ─────────────────────────────────────────────────────
 
 async function pollTasks() {
@@ -185,6 +322,14 @@ async function handleTask(task: { id: string; description: string }) {
     });
 
     console.log(`[daemon] task ${task.id} complete`);
+
+    // Notify manager via AXL (P2P — no control-plane relay)
+    if (config.managerAgentId && config.managerMultiaddr) {
+      const summary = `Task complete: ${task.description.slice(0, 60)} → ${output.slice(0, 80)}`;
+      await sendAxlMessage(config.managerMultiaddr, config.managerAgentId, summary).catch(
+        (err) => console.warn("[daemon] AXL manager notify failed:", err),
+      );
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await agent.emit({ type: "error", payload: { message: msg } });

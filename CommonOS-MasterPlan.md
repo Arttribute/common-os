@@ -4,7 +4,7 @@
 
 ---
 
-## BUILD STATUS — 2026-04-29
+## BUILD STATUS — 2026-04-29 (updated)
 
 | Phase | What | Status |
 |---|---|---|
@@ -16,7 +16,7 @@
 | 4 — Fleet Daemon | Task loop, file watcher, heartbeat, health monitor; native path → `POST {RUNNER_URL}/run`; AXL started in entrypoint.sh; AXL peer multiaddr registered with control plane on boot; self-contained `daemon.mjs` bundle | ✅ Complete |
 | 5 — SDK & CLI | SDK complete; CLI all commands wired to real API via SDK | ✅ Complete |
 | 6 — World UI | Phaser isometric world, agent sprites, HUD, mock simulation + real API hook | ✅ Complete |
-| 7 — Bounty Integrations | AXL (Gensyn), Uniswap | ⬜ Not started |
+| 7 — Bounty Integrations | AXL (Gensyn) ✅ · ENS identity for agents ⬜ | 🔄 AXL done · ENS pending |
 | 8 — Gensyn Compute Provider | Third provider — decentralized compute, AXL native, same pod-per-agent pattern | ⬜ After GKE is live |
 
 **Priority: GCP/GKE end-to-end first. AWS EKS and Gensyn are follow-on providers with the same pod-per-agent workflow.**
@@ -1516,31 +1516,30 @@ Privy handles wallet connect + social login. On first Privy login, the API creat
 ---
 
 ### 11.7 Phase 7 — Bounty Integrations
-*Blocked on Phase 3 (API) and Phase 4 (daemon) being live* · **⬜ NOT STARTED**
+**🔄 AXL complete · ENS pending**
 
-#### Gensyn AXL (primary — $5,000)
+#### Gensyn AXL (primary — $5,000) ✅ DONE
 
 AXL is a P2P encrypted communication layer with built-in MCP and A2A support. It replaces the need for a central message broker for inter-agent communication.
 
 **Why this is architecturally justified:** isolated VMs on separate networks should not depend on a central Redis broker for agent-to-agent messaging. AXL gives P2P encrypted communication with peer discovery — matching the decentralized compute model.
 
-**Integration points:**
-- Cloud-init installs and starts AXL binary as a systemd service on every VM (see Section 9)
-- Daemon registers AXL peer multiaddr with fleet control plane on boot
-- Fleet control plane maintains AXL peer directory in Redis per fleet
-- Outbound agent messages route via AXL directly to recipient VM — no control plane relay
-- Inbound AXL messages delivered by daemon to agent runtime
-- `messages` collection persists the record; AXL handles the transport
+**Integration points (all implemented):**
+- AXL started in `entrypoint.sh` before daemon (port 4001)
+- `registerAxlPeer()` — daemon queries `GET localhost:4001/peer`, PATCHes agent doc with peerId + multiaddr ✅
+- `discoverFleetPeers()` — daemon fetches `GET /fleets/:id/peers` at startup, caches manager's multiaddr ✅
+- `startAxlInboxLoop()` — daemon polls `GET localhost:4001/messages` every 5s, emits `message_recv` events ✅
+- `sendAxlMessage()` — daemon sends via `POST localhost:4001/send`, emits `message_sent` events ✅
+- Post-task-completion: worker daemon notifies manager via AXL if manager multiaddr is cached ✅
+- `GET /fleets/:id/peers` — control plane returns AXL peer directory for the fleet ✅
+- `POST /fleets/:id/agents/:agentId/message` — stores message in DB, broadcasts to WebSocket ✅
+- `messages` MongoDB collection + indexes wired ✅
 
 **Demo scenario:** two VMs provisioned → manager agent assigns task to worker → worker completes task → sends message to manager via AXL → both agents animate in the world UI (walk + talk) → message stored in DB
 
-#### Uniswap (secondary — $5,000, if time permits)
+#### ENS — AI Agent Identity (secondary — up to $5,000 across two tracks) ⬜ PENDING
 
-Agents already have Commons wallets (USDC on Base Sepolia). Uniswap swap is a natural tool extension.
-
-**Integration:** add `swap_tokens` tool callable by agent runtime → calls Uniswap API using agent's wallet → returns swap result → agent emits `action: swapping tokens` event visible in world UI
-
-**Required:** `FEEDBACK.md` in repo root documenting DX experience with Uniswap API — mandatory for prize eligibility.
+Every CommonOS agent gets a human-readable ENS name at provision time and keeps its onchain profile updated live. See Section 14 for the full plan and what to build.
 
 ---
 
@@ -1760,18 +1759,56 @@ Carried over from Agent Commons with two adaptations.
 
 ## 14. BOUNTY STRATEGY
 
-| Bounty | Prize | Priority | Effort |
+| Bounty | Prize | Priority | Status |
 |---|---|---|---|
-| Gensyn AXL | $5,000 | Primary — build Day 4 | Medium |
-| Uniswap API | $5,000 | Secondary — build Day 7 only if ahead | Low |
+| Gensyn AXL | $5,000 | Primary | ✅ Done — AXL inbox, outbound, peer discovery wired |
+| ENS — Best AI Agent Integration | $1,250–$2,500 | Secondary | ⬜ Pending implementation |
+| ENS — Most Creative Use | $1,250–$2,500 | Secondary (same implementation) | ⬜ Pending implementation |
 
-**Hard cap: two bounties maximum.** Three bounties risks incomplete submissions.
+**Hard cap: two bounty tracks maximum.** Gensyn + ENS is the right pair — both are architecturally motivated and serve the same demo.
 
-**Gensyn rationale:** Their "Agent Town" suggested build is exactly CommonOS. AXL is architecturally motivated — not a cosmetic integration. Replaces the need for a central Redis message broker at the VM layer.
+**Gensyn rationale:** AXL replaces the central Redis message broker for inter-agent communication. P2P encrypted messaging across isolated pods — architecturally load-bearing, not cosmetic. ✅ Done.
 
-**Skip:** 0G (integration story is weak relative to the problem), KeeperHub (not load-bearing).
+**ENS rationale:** AI agents are becoming first-class onchain actors. CommonOS gives every agent an isolated runtime and persistent identity. ENS gives that identity a human-readable name and a discoverable onchain profile. Together: deploy a fleet, each agent gets `engineer.product-team.common-os.eth` — visible in any ENS-compatible app, queryable by other agents, updated live as status changes.
 
-**Uniswap note:** the `FEEDBACK.md` file is a hard requirement for eligibility. Must document DX experience: what worked, what didn't, bugs, docs gaps, missing endpoints.
+Two ENS prize tracks, one implementation:
+- **"Best ENS Integration for AI Agents"** — ENS as the identity mechanism: agent subnames, address resolution, agent discovery via ENS lookup
+- **"Most Creative Use of ENS"** — text records as live agent status board + AXL peer discovery via ENS (agents look up each other's multiaddr from on-chain text records, bypassing the control plane entirely)
+
+### ENS integration plan (⬜ to implement)
+
+**Agent naming:** `{role-slug}.{fleet-slug}.common-os.eth`
+- e.g., `engineer.product-team.common-os.eth`
+- Platform owns `common-os.eth`; subnames created per fleet+agent at provision time
+
+**ENS text records per agent:**
+| Key | Value | Purpose |
+|---|---|---|
+| `role` | `backend-engineer` | Agent role — human-readable capability |
+| `status` | `online \| idle \| working \| error` | Live status — updated by daemon |
+| `fleet` | `flt_abc123` | Fleet membership |
+| `axl` | `/ip4/1.2.3.4/tcp/4001/p2p/12D3...` | AXL multiaddr — enables decentralized peer discovery |
+| `commons.agentId` | `agt_commons_...` | Agent Commons identity link |
+| `platform` | `common-os` | Platform tag |
+| `url` | `https://commonos.dev/world?fleet=...` | Deep link to world UI |
+| `description` | truncated system prompt | Agent purpose |
+
+**The creative angle — decentralized peer discovery:**
+Daemon resolves another agent's `axl` text record directly from ENS to get their multiaddr — no control plane lookup needed. Agents can find each other on-chain.
+
+**What to build:**
+1. `packages/ens/` — `@common-os/ens` package: `registerAgentSubname()`, `setAgentTextRecords()`, `resolveAgentByName()`, `lookupAgentAddress()`
+2. Provisioner calls ENS registration async (non-blocking — agent works without ENS)
+3. Daemon updates `status` and `axl` text records when they change
+4. `GET /ens/resolve/:name` API route — resolve ENS name to agent data
+5. `GET /fleets/:id/agents/:agentId/ens` — return agent's ENS name + text records
+
+**Env vars needed:**
+```
+ENS_PRIVATE_KEY     # platform key owning common-os.eth
+ENS_PARENT_NAME     # default: common-os.eth
+ENS_CHAIN           # sepolia | mainnet (default: sepolia)
+```
 
 ---
 
@@ -1799,6 +1836,7 @@ Carried over from Agent Commons with two adaptations.
 - Show the terminal: `commonos agent logs agt_backend` — real output streaming
 - Show the `/workspace` output: actual files written by the agent
 - Show the architecture diagram — explain AXL P2P comms, isolated VMs, Agent Commons as identity layer
+- Show ENS: resolve `engineer.product-team.common-os.eth` → live status, AXL multiaddr, world URL
 
 ### Hackathon submission checklist
 
@@ -1815,10 +1853,12 @@ Carried over from Agent Commons with two adaptations.
 - [ ] Demo shows communication across separate AXL nodes (separate VMs, not in-process)
 - [ ] README section explaining how AXL is integrated and why
 
-**Uniswap requirements (if pursuing):**
-- [ ] `FEEDBACK.md` in repo root — specific, actionable feedback on DX
-- [ ] Working demo of agent swap via Uniswap API
-- [ ] README section explaining Uniswap integration
+**ENS requirements:**
+- [ ] Agent subnames registered at provision time (`{role}.{fleet}.common-os.eth`)
+- [ ] ENS text records updated live by daemon (`status`, `axl` multiaddr)
+- [ ] `GET /ens/resolve/:name` returns agent data from ENS name
+- [ ] Demo shows agent discoverable via ENS (functional, no hard-coded values)
+- [ ] README section explaining ENS integration and the creative use (AXL discovery via ENS text records)
 
 ---
 
@@ -1864,8 +1904,7 @@ Day 6 (Saturday)
 
 Day 7 (Sunday)
 ├── Polish, fix blocking bugs
-├── Uniswap integration (if ahead of schedule)
-├── FEEDBACK.md written (required for Uniswap)
+├── ENS integration — agent subnames + text records + resolve route
 ├── README + architecture diagram
 ├── Demo video recorded
 └── Submission submitted before deadline

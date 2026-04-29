@@ -54,10 +54,17 @@ export class CommonOSClient {
 
 	readonly world = {
 		snapshot: (fleetId: string) => this.get(`/fleets/${fleetId}/world`),
-		// Returns the WebSocket URL for real-time world updates.
-		// Connect with: new WebSocket(streamUrl(fleetId))
 		streamUrl: (fleetId: string): string =>
 			`${this.apiUrl.replace(/^http/, "ws")}/fleets/${fleetId}/stream?token=${this.apiKey}`,
+		peers: (fleetId: string) => this.get(`/fleets/${fleetId}/peers`),
+	};
+
+	readonly messages = {
+		send: (
+			fleetId: string,
+			toAgentId: string,
+			body: { content: string; fromAgentId?: string; axlMessageId?: string },
+		) => this.post(`/fleets/${fleetId}/agents/${toAgentId}/message`, body),
 	};
 
 	readonly auth = {

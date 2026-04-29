@@ -1,5 +1,5 @@
 import { MongoClient, type Collection } from 'mongodb'
-import type { TenantDoc, FleetDoc, AgentDoc, TaskDoc, EventDoc, WorldStateDoc } from '../types.js'
+import type { TenantDoc, FleetDoc, AgentDoc, TaskDoc, EventDoc, WorldStateDoc, MessageDoc } from '../types.js'
 
 let client: MongoClient | null = null
 
@@ -39,6 +39,10 @@ export async function ensureIndexes(): Promise<void> {
       { key: { createdAt: 1 }, expireAfterSeconds: 2592000 },
     ])
     await db.collection('world_states').createIndexes([{ key: { fleetId: 1 }, unique: true }])
+    await db.collection('messages').createIndexes([
+      { key: { fleetId: 1, createdAt: -1 } },
+      { key: { toAgentId: 1 } },
+    ])
     console.log('[mongo] indexes ensured')
   } catch (err) {
     console.warn('[mongo] index setup failed (non-fatal):', err)
@@ -62,4 +66,7 @@ export async function events(): Promise<Collection<EventDoc>> {
 }
 export async function worldStates(): Promise<Collection<WorldStateDoc>> {
   return (await getDb()).collection<WorldStateDoc>('world_states')
+}
+export async function messages(): Promise<Collection<MessageDoc>> {
+  return (await getDb()).collection<MessageDoc>('messages')
 }

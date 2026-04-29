@@ -1,9 +1,11 @@
+import { randomBytes } from "crypto";
 import { Hono } from "hono";
-import { agents, fleets } from "../db/mongo.js";
+import { agents, fleets, messages } from "../db/mongo.js";
+import { broadcastToFleet } from "../db/memory.js";
 import { provisionAgent } from "../services/provisioner.js";
 import { terminateAgentPod, terminateAgentPodEks } from "../services/cloud-init.js";
 import { removeAgentFromWorldState } from "../services/world.js";
-import type { Env } from "../types.js";
+import type { Env, MessageDoc } from "../types.js";
 
 const router = new Hono<Env>();
 
@@ -156,6 +158,92 @@ router.delete("/:id/agents/:agentId", async (c) => {
 		await removeAgentFromWorldState(agent.fleetId, agent._id);
 
 		return c.json({ ok: true });
+	} catch {
+		return c.json({ error: "database error" }, 503);
+	}
+});
+
+// GET /fleets/:id/peers — AXL peer directory for the fleet
+// Used by agent daemons at startup to discover manager multiaddrs.
+router.get("/:id/peers", async (c) => {
+	try {
+		const list = await (await agents())
+			.find(
+				{ fleetId: c.req.param("id"), tenantId: c.get("tenantId") },
+				{ projection: { _id: 1, permissionTier: 1, "axl.peerId": 1, "axl.multiaddr": 1 } },
+			)
+			.toArray();
+
+		return c.json(
+			list.map((a) => ({
+				agentId: a._id,
+				permissionTier: a.permissionTier,
+				peerId: a.axl.peerId,
+				multiaddr: a.axl.multiaddr,
+			})),
+		);
+	} catch {
+		return c.json({ error: "database error" }, 503);
+	}
+});
+
+// POST /fleets/:id/agents/:agentId/message — record an AXL inter-agent message
+// Called by daemon after sending or receiving an AXL P2P message.
+router.post("/:id/agents/:agentId/message", async (c) => {
+	const body = await c.req.json<{
+		toAgentId?: string;
+		fromAgentId?: string;
+		content: string;
+		axlMessageId?: string;
+	}>().catch(() => ({ content: "" })) as {
+		toAgentId?: string;
+		fromAgentId?: string;
+		content: string;
+		axlMessageId?: string;
+	};
+
+	if (!body.content) return c.json({ error: "content is required" }, 400);
+
+	const fleetId = c.req.param("id");
+	const agentId = c.req.param("agentId");
+	const now = new Date();
+	const fromAgentId = body.fromAgentId ?? (c.get("agentId") ?? agentId);
+	const toAgentId = body.toAgentId ?? agentId;
+
+	try {
+		const msgId = `msg_${Date.now().toString(36)}${randomBytes(4).toString("hex")}`;
+		const msg: MessageDoc = {
+			_id: msgId,
+			fromAgentId,
+			toAgentId,
+			fleetId,
+			tenantId: c.get("tenantId"),
+			content: body.content,
+			axlMessageId: body.axlMessageId ?? null,
+			deliveredAt: now,
+			createdAt: now,
+		};
+
+		await (await messages()).insertOne(msg as never);
+
+		broadcastToFleet(fleetId, {
+			type: "agent_message",
+			fromAgentId,
+			toAgentId,
+			preview: body.content.slice(0, 100),
+			ts: now.toISOString(),
+		});
+
+		// Look up recipient's AXL multiaddr so caller can route directly
+		const recipient = await (await agents()).findOne(
+			{ _id: toAgentId, fleetId },
+			{ projection: { "axl.multiaddr": 1, "axl.peerId": 1 } },
+		);
+
+		return c.json({
+			messageId: msgId,
+			axlMultiaddr: recipient?.axl.multiaddr ?? null,
+		}, 201);
 	} catch {
 		return c.json({ error: "database error" }, 503);
 	}
