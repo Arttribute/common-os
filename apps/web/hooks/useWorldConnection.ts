@@ -35,6 +35,8 @@ export function useWorldConnection(fleetId?: string, getToken?: () => Promise<st
   const completeTask = useAgentStore((s) => s.completeTask)
   const setSpeechBubble = useAgentStore((s) => s.setSpeechBubble)
   const setFleet = useWorldStore((s) => s.setFleet)
+  const setObjects = useWorldStore((s) => s.setObjects)
+  const upsertObject = useWorldStore((s) => s.upsertObject)
   const connect = useSocketStore((s) => s.connect)
   const disconnect = useSocketStore((s) => s.disconnect)
 
@@ -90,6 +92,15 @@ export function useWorldConnection(fleetId?: string, getToken?: () => Promise<st
                 status: string
                 world: { room: string; x: number; y: number; facing: string }
               }>
+              objects?: Array<{
+                objectId: string
+                objectType: string
+                room: string
+                x: number
+                y: number
+                label?: string
+                createdByAgentId?: string
+              }>
             }
             for (const entry of snapshot.agents ?? []) {
               upsertAgent({
@@ -105,6 +116,7 @@ export function useWorldConnection(fleetId?: string, getToken?: () => Promise<st
                 },
               })
             }
+            if (snapshot.objects) setObjects(snapshot.objects)
           } else if (data['type'] === 'agent_event') {
             const agentId = data['agentId'] as string
             const event = data['event'] as { type: string; payload?: Record<string, unknown> }
@@ -142,6 +154,19 @@ export function useWorldConnection(fleetId?: string, getToken?: () => Promise<st
               case 'message_recv': {
                 const p = event.payload as { preview: string }
                 scheduleSpeechBubble(agentId, p.preview)
+                break
+              }
+              case 'world_interact': {
+                const p = event.payload as { objectId: string; action: string }
+                setCurrentAction(agentId, p.action)
+                break
+              }
+              case 'world_create_object': {
+                const p = event.payload as {
+                  objectId: string; objectType: string; room: string
+                  x: number; y: number; label?: string
+                }
+                upsertObject({ objectId: p.objectId, objectType: p.objectType, room: p.room, x: p.x, y: p.y, label: p.label, createdByAgentId: agentId })
                 break
               }
             }

@@ -24,6 +24,9 @@ export interface LaunchOptions {
 	openclawGatewayUrl?: string;
 	workspaceDir?: string;
 	runnerUrl?: string;
+	worldRoom?: string;
+	worldX?: number;
+	worldY?: number;
 }
 
 export interface LaunchedService {
@@ -226,6 +229,9 @@ export async function launchAgentPod(
 		{ name: "WORKSPACE_DIR",        value: opts.workspaceDir ?? "/mnt/shared" },
 		{ name: "DOCKER_IMAGE",         value: opts.dockerImage ?? "" },
 		{ name: "RUNNER_URL",           value: opts.runnerUrl ?? process.env.RUNNER_URL ?? "" },
+		{ name: "WORLD_ROOM",           value: opts.worldRoom ?? "dev-room" },
+		{ name: "WORLD_X",              value: String(opts.worldX ?? 2) },
+		{ name: "WORLD_Y",              value: String(opts.worldY ?? 2) },
 	];
 
 	await coreApi.createNamespacedPod({
@@ -436,6 +442,9 @@ export async function launchAgentPodEks(opts: LaunchOptions): Promise<LaunchedSe
 		{ name: "WORKSPACE_DIR",        value: opts.workspaceDir ?? "/mnt/shared" },
 		{ name: "DOCKER_IMAGE",         value: opts.dockerImage ?? "" },
 		{ name: "RUNNER_URL",           value: opts.runnerUrl ?? process.env.RUNNER_URL ?? "" },
+		{ name: "WORLD_ROOM",           value: opts.worldRoom ?? "dev-room" },
+		{ name: "WORLD_X",              value: String(opts.worldX ?? 2) },
+		{ name: "WORLD_Y",              value: String(opts.worldY ?? 2) },
 	];
 
 	// Use EFS CSI for persistent storage when available, otherwise emptyDir

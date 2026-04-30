@@ -7,16 +7,29 @@ export interface Room {
   bounds: { x: number; y: number; w: number; h: number }
 }
 
+export interface WorldObject {
+  objectId: string
+  objectType: string
+  room: string
+  x: number
+  y: number
+  label?: string
+  createdByAgentId?: string
+}
+
 interface WorldStore {
   fleetId: string | null
   fleetName: string
   worldType: string
   rooms: Room[]
+  objects: WorldObject[]
   zoom: number
   initialized: boolean
   theme: ThemeId
   agentStyle: AgentStyle
   setFleet: (fleetId: string, name: string, rooms: Room[], worldType?: string) => void
+  setObjects: (objects: WorldObject[]) => void
+  upsertObject: (obj: WorldObject) => void
   setZoom: (zoom: number) => void
   setTheme: (theme: ThemeId) => void
   setAgentStyle: (style: AgentStyle) => void
@@ -37,6 +50,7 @@ export const useWorldStore = create<WorldStore>((set) => ({
   fleetName: '',
   worldType: 'office',
   rooms: [],
+  objects: [],
   zoom: 1,
   initialized: false,
   theme: readStorage<ThemeId>('cos:theme', 'office'),
@@ -44,6 +58,17 @@ export const useWorldStore = create<WorldStore>((set) => ({
 
   setFleet: (fleetId, name, rooms, worldType = 'office') =>
     set({ fleetId, fleetName: name, rooms, worldType, initialized: true }),
+
+  setObjects: (objects) => set({ objects }),
+
+  upsertObject: (obj) =>
+    set((state) => {
+      const exists = state.objects.find(o => o.objectId === obj.objectId)
+      if (exists) {
+        return { objects: state.objects.map(o => o.objectId === obj.objectId ? obj : o) }
+      }
+      return { objects: [...state.objects, obj] }
+    }),
 
   setZoom: (zoom) => set({ zoom }),
 

@@ -17,9 +17,9 @@ cat > /etc/common-os/config.json << CONFIGEOF
   "dockerImage":        $([ -n "${DOCKER_IMAGE:-}" ] && printf '"%s"' "${DOCKER_IMAGE}" || echo "null"),
   "role":               "${ROLE:-worker}",
   "runnerUrl":          "${RUNNER_URL:-}",
-  "worldRoom":          "dev-room",
-  "worldX":             2,
-  "worldY":             2
+  "worldRoom":          "${WORLD_ROOM:-dev-room}",
+  "worldX":             ${WORLD_X:-2},
+  "worldY":             ${WORLD_Y:-2}
 }
 CONFIGEOF
 

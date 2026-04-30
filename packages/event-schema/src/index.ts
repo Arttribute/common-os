@@ -56,6 +56,29 @@ const WorldMoveEvent = z.object({
   }),
 });
 
+const WorldInteractEvent = z.object({
+  type: z.literal("world_interact"),
+  payload: z.object({
+    objectId: z.string(),
+    action: z.string(),
+    room: z.string(),
+    x: z.number(),
+    y: z.number(),
+  }),
+});
+
+const WorldCreateObjectEvent = z.object({
+  type: z.literal("world_create_object"),
+  payload: z.object({
+    objectId: z.string(),
+    objectType: z.string(),
+    room: z.string(),
+    x: z.number(),
+    y: z.number(),
+    label: z.string().optional(),
+  }),
+});
+
 const FileChangedEvent = z.object({
   type: z.literal("file_changed"),
   payload: z.object({
@@ -84,6 +107,8 @@ export const AgentEventSchema = z.discriminatedUnion("type", [
   MessageSentEvent,
   MessageRecvEvent,
   WorldMoveEvent,
+  WorldInteractEvent,
+  WorldCreateObjectEvent,
   FileChangedEvent,
   ErrorEvent,
   HeartbeatEvent,
@@ -102,3 +127,5 @@ export type WorldMoveEvent = z.infer<typeof WorldMoveEvent>;
 export type FileChangedEvent = z.infer<typeof FileChangedEvent>;
 export type ErrorEvent = z.infer<typeof ErrorEvent>;
 export type HeartbeatEvent = z.infer<typeof HeartbeatEvent>;
+export type WorldInteractEvent = z.infer<typeof WorldInteractEvent>;
+export type WorldCreateObjectEvent = z.infer<typeof WorldCreateObjectEvent>;

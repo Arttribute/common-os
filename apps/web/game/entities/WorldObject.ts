@@ -2,6 +2,158 @@ import Phaser from 'phaser'
 import type { PlacedObject, ThemeId } from '@/game/systems/worldThemes'
 import { isoToScreen, isoDepth } from '@/game/systems/pathfinding'
 
+// Agent-created object types (dynamic, persisted in worldState.objects)
+const DYNAMIC_OBJECT_TYPES = new Set([
+  'desk', 'server-rack', 'plant', 'treadmill', 'machine', 'barrel', 'bookshelf',
+  'whiteboard', 'terminal', 'artifact', 'checkpoint', 'note',
+])
+
+export function drawDynamicObject(
+  gfx: Phaser.GameObjects.Graphics,
+  type: string,
+  x: number,
+  y: number,
+  label?: string,
+): void {
+  switch (type) {
+    case 'whiteboard': drawWhiteboard(gfx, x, y); break
+    case 'terminal':   drawTerminal(gfx, x, y);   break
+    case 'artifact':   drawArtifact(gfx, x, y);   break
+    case 'checkpoint': drawCheckpoint(gfx, x, y); break
+    case 'note':       drawNote(gfx, x, y);       break
+    default:           drawArtifact(gfx, x, y);   break
+  }
+
+  if (label) {
+    // Labels are drawn via text overlay in WorldScene; gfx can't render text
+  }
+}
+
+function drawWhiteboard(gfx: Phaser.GameObjects.Graphics, x: number, y: number): void {
+  gfx.fillStyle(0x000000, 0.2)
+  gfx.fillEllipse(x + 2, y + 4, 44, 10)
+  // Frame
+  gfx.fillStyle(0x334155, 1)
+  gfx.fillRoundedRect(x - 20, y - 28, 40, 32, 2)
+  // Board surface
+  gfx.fillStyle(0xf1f5f9, 1)
+  gfx.fillRect(x - 17, y - 25, 34, 24)
+  // Agent-written content lines
+  gfx.fillStyle(0x3b82f6, 0.8)
+  gfx.fillRect(x - 13, y - 20, 20, 2)
+  gfx.fillRect(x - 13, y - 16, 14, 2)
+  gfx.fillStyle(0x10b981, 0.8)
+  gfx.fillRect(x - 13, y - 12, 18, 2)
+  gfx.fillStyle(0xf59e0b, 0.8)
+  gfx.fillRect(x - 13, y - 8, 10, 2)
+  gfx.fillRect(x - 13, y - 4, 16, 2)
+  // Marker tray
+  gfx.fillStyle(0x1e293b, 1)
+  gfx.fillRect(x - 17, y - 2, 34, 4)
+  // Legs
+  gfx.fillStyle(0x475569, 1)
+  gfx.fillRect(x - 8, y + 2, 3, 8)
+  gfx.fillRect(x + 5, y + 2, 3, 8)
+}
+
+function drawTerminal(gfx: Phaser.GameObjects.Graphics, x: number, y: number): void {
+  gfx.fillStyle(0x000000, 0.25)
+  gfx.fillEllipse(x, y + 4, 38, 10)
+  // Body
+  gfx.fillStyle(0x0f172a, 1)
+  gfx.fillRoundedRect(x - 17, y - 24, 34, 28, 3)
+  // Screen
+  gfx.fillStyle(0x001a00, 1)
+  gfx.fillRect(x - 14, y - 21, 28, 18)
+  // Green terminal text
+  gfx.fillStyle(0x00ff41, 0.9)
+  gfx.fillRect(x - 12, y - 19, 8, 1)
+  gfx.fillRect(x - 12, y - 17, 14, 1)
+  gfx.fillRect(x - 12, y - 15, 10, 1)
+  gfx.fillRect(x - 12, y - 13, 16, 1)
+  gfx.fillRect(x - 12, y - 11, 6, 1)
+  // Cursor blink
+  gfx.fillStyle(0x00ff41, 1)
+  gfx.fillRect(x - 12, y - 8, 4, 2)
+  // Keyboard base
+  gfx.fillStyle(0x1e293b, 1)
+  gfx.fillRoundedRect(x - 15, y + 2, 30, 5, 1)
+}
+
+function drawArtifact(gfx: Phaser.GameObjects.Graphics, x: number, y: number): void {
+  // A glowing data crystal — represents a completed artifact/output
+  gfx.fillStyle(0x000000, 0.15)
+  gfx.fillEllipse(x, y + 6, 24, 8)
+  // Outer glow
+  gfx.fillStyle(0x6366f1, 0.2)
+  gfx.fillCircle(x, y - 6, 16)
+  // Crystal body
+  gfx.fillStyle(0x818cf8, 1)
+  const pts = [
+    { x, y: y - 18 },
+    { x: x + 10, y: y - 4 },
+    { x: x + 6, y: y + 4 },
+    { x: x - 6, y: y + 4 },
+    { x: x - 10, y: y - 4 },
+  ]
+  gfx.fillPoints(pts, true)
+  // Inner facet
+  gfx.fillStyle(0xc7d2fe, 0.6)
+  gfx.fillTriangle(x, y - 16, x + 7, y - 4, x - 7, y - 4)
+  // Shine
+  gfx.fillStyle(0xffffff, 0.4)
+  gfx.fillCircle(x - 3, y - 12, 3)
+}
+
+function drawCheckpoint(gfx: Phaser.GameObjects.Graphics, x: number, y: number): void {
+  // A flag/marker — represents a task checkpoint or milestone
+  gfx.fillStyle(0x000000, 0.2)
+  gfx.fillEllipse(x, y + 4, 16, 6)
+  // Pole
+  gfx.fillStyle(0x64748b, 1)
+  gfx.fillRect(x - 1, y - 20, 2, 24)
+  // Flag
+  gfx.fillStyle(0x10b981, 1)
+  const flag = [
+    { x: x + 1, y: y - 20 },
+    { x: x + 16, y: y - 14 },
+    { x: x + 1, y: y - 8 },
+  ]
+  gfx.fillPoints(flag, true)
+  // Checkmark on flag
+  gfx.lineStyle(1.5, 0xffffff, 1)
+  gfx.beginPath()
+  gfx.moveTo(x + 5, y - 14)
+  gfx.lineTo(x + 8, y - 11)
+  gfx.lineTo(x + 13, y - 18)
+  gfx.strokePath()
+}
+
+function drawNote(gfx: Phaser.GameObjects.Graphics, x: number, y: number): void {
+  // Post-it style note
+  gfx.fillStyle(0x000000, 0.15)
+  gfx.fillEllipse(x, y + 4, 28, 8)
+  // Paper shadow
+  gfx.fillStyle(0xca8a04, 0.3)
+  gfx.fillRect(x - 11, y - 14, 22, 18)
+  // Paper
+  gfx.fillStyle(0xfef08a, 1)
+  gfx.fillRect(x - 12, y - 16, 22, 18)
+  // Lines
+  gfx.fillStyle(0xca8a04, 0.5)
+  gfx.fillRect(x - 9, y - 12, 14, 1)
+  gfx.fillRect(x - 9, y - 9, 10, 1)
+  gfx.fillRect(x - 9, y - 6, 12, 1)
+  gfx.fillRect(x - 9, y - 3, 8, 1)
+  // Fold corner
+  gfx.fillStyle(0xfde047, 1)
+  gfx.fillTriangle(x + 4, y + 2, x + 10, y + 2, x + 10, y - 4)
+  gfx.fillStyle(0xca8a04, 0.3)
+  gfx.fillTriangle(x + 4, y + 2, x + 10, y + 2, x + 10, y - 4)
+}
+
+void DYNAMIC_OBJECT_TYPES
+
 const TILE_W = 64
 const TILE_H = 32
 

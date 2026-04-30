@@ -1,4 +1,5 @@
 import { watch } from "chokidar";
+import { randomBytes } from "crypto";
 import { loadConfig } from "./config.js";
 import { CommonOSAgentClient } from "@common-os/sdk";
 
@@ -18,6 +19,15 @@ const WORKSPACE_DIR  = process.env.COMMONOS_WORKSPACE ?? config.workspaceDir;
 const RUNNER_URL     = process.env.RUNNER_URL ?? config.runnerUrl ?? "";
 // AXL runs on localhost:4001 inside the same pod/container
 const AXL_API_URL    = process.env.AXL_API_URL ?? "http://localhost:4001";
+
+// ─── World state ──────────────────────────────────────────────────────────
+// Tracks the agent's current position in the world so world tools have context.
+
+const worldPos = {
+  room: config.worldRoom ?? "dev-room",
+  x: config.worldX ?? 2,
+  y: config.worldY ?? 2,
+};
 
 // ─── Main ──────────────────────────────────────────────────────────────────
 
@@ -250,6 +260,62 @@ async function pollAxlInbox(): Promise<void> {
   }
 }
 
+// ─── World tools ──────────────────────────────────────────────────────────
+// These let the agent move and interact with the world while executing tasks.
+// Each emits an event that the control plane broadcasts to all WebSocket clients,
+// making the World UI reflect real agent activity in real time.
+
+async function worldMove(room: string, x: number, y: number): Promise<void> {
+  worldPos.room = room;
+  worldPos.x = x;
+  worldPos.y = y;
+  await agent
+    .emit({ type: "world_move", payload: { room, x, y } })
+    .catch((err) => console.warn("[world] move emit failed:", err));
+}
+
+async function worldInteract(
+  objectId: string,
+  action: string,
+  room: string,
+  x: number,
+  y: number,
+): Promise<void> {
+  await agent
+    .emit({
+      type: "world_interact",
+      payload: { objectId, action, room, x, y },
+    })
+    .catch((err) => console.warn("[world] interact emit failed:", err));
+  console.log(`[world] interact  obj=${objectId}  action=${action}`);
+}
+
+async function worldCreateObject(
+  objectType: string,
+  room: string,
+  x: number,
+  y: number,
+  label?: string,
+): Promise<string> {
+  const objectId = `obj_${Date.now().toString(36)}${randomBytes(3).toString("hex")}`;
+  await agent
+    .emit({
+      type: "world_create_object",
+      payload: { objectId, objectType, room, x, y, label },
+    })
+    .catch((err) => console.warn("[world] create_object emit failed:", err));
+  console.log(`[world] created object  type=${objectType}  id=${objectId}  label=${label ?? ""}`);
+  return objectId;
+}
+
+// Pick a sensible work position for this agent's role.
+function workPosition(): { room: string; x: number; y: number } {
+  const role = (config.role ?? "").toLowerCase();
+  if (role.includes("manager")) return { room: "meeting-room", x: 2, y: 2 };
+  if (role.includes("design")) return { room: "design-room", x: 2, y: 2 };
+  return { room: "dev-room", x: 3, y: 2 };
+}
+
 // ─── AXL outbound ──────────────────────────────────────────────────────────
 // Sends a message to a peer agent via the local AXL node (direct P2P — no
 // control-plane relay).  Emits a message_sent event so the world UI
@@ -312,8 +378,25 @@ async function handleTask(task: { id: string; description: string }) {
     payload: { label: truncate(task.description, 50) },
   });
 
+  // Move to work position and interact with the relevant object
+  const pos = workPosition();
+  await worldMove(pos.room, pos.x, pos.y);
+
+  // Interact with the closest work surface (desk/terminal)
+  const workObjectId = `${pos.room}-workstation`;
+  await worldInteract(workObjectId, truncate(task.description, 40), pos.room, pos.x, pos.y);
+
   try {
     const output = await executeTask(task.description);
+
+    // Create an artifact in the world representing the completed work
+    await worldCreateObject(
+      "artifact",
+      pos.room,
+      pos.x + 1,
+      pos.y,
+      truncate(task.description, 24),
+    );
 
     await agent.completeTask(task.id, output);
     await agent.emit({
@@ -335,6 +418,8 @@ async function handleTask(task: { id: string; description: string }) {
     await agent.emit({ type: "error", payload: { message: msg } });
     console.error(`[daemon] task ${task.id} failed:`, err);
   } finally {
+    // Return to idle home position
+    await worldMove(worldPos.room, 2, 2).catch(() => {});
     await agent.emit({ type: "state_change", payload: { status: "idle" } });
     await agent.emit({ type: "action", payload: { label: "" } });
   }

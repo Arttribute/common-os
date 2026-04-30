@@ -125,6 +125,17 @@ export interface EventDoc {
   createdAt: Date
 }
 
+export interface WorldObject {
+  objectId: string
+  objectType: string
+  room: string
+  x: number
+  y: number
+  label?: string
+  createdByAgentId?: string
+  properties?: Record<string, unknown>
+}
+
 export interface WorldStateDoc {
   _id: string
   fleetId: string
@@ -136,6 +147,7 @@ export interface WorldStateDoc {
     status: string
     world: { room: string; x: number; y: number; facing: string }
   }>
+  objects: WorldObject[]
   updatedAt: Date
 }
 

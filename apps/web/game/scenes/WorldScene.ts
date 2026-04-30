@@ -1,9 +1,10 @@
 import Phaser from 'phaser'
 import { useAgentStore } from '@/store/agentStore'
 import { useWorldStore } from '@/store/worldStore'
+import type { WorldObject } from '@/store/worldStore'
 import { AgentSprite } from '@/game/entities/AgentSprite'
-import { spawnWorldObjects } from '@/game/entities/WorldObject'
-import { isoToScreen } from '@/game/systems/pathfinding'
+import { spawnWorldObjects, drawDynamicObject } from '@/game/entities/WorldObject'
+import { isoToScreen, isoDepth } from '@/game/systems/pathfinding'
 import { THEMES } from '@/game/systems/worldThemes'
 import type { ThemeId, AgentStyle } from '@/game/systems/worldThemes'
 
@@ -30,6 +31,12 @@ export class WorldScene extends Phaser.Scene {
   private bgGraphics!: Phaser.GameObjects.Graphics
   private labelGroup!: Phaser.GameObjects.Group
   private objectGfxList: Phaser.GameObjects.Graphics[] = []
+
+  // Dynamic objects created by agents at runtime
+  private dynamicObjectGfx = new Map<string, Phaser.GameObjects.Graphics>()
+  private prevObjectIds: Set<string> = new Set()
+  // Interaction flash graphics (auto-destroy after animation)
+  private interactionFlashes = new Map<string, Phaser.GameObjects.Graphics>()
 
   constructor() {
     super({ key: 'WorldScene' })
@@ -87,6 +94,25 @@ export class WorldScene extends Phaser.Scene {
       if (selectedAgentId) this.sprites.get(selectedAgentId)?.setSelected(true)
       this.prevSelectedId = selectedAgentId
     }
+
+    // Sync dynamic world objects (agent-created)
+    const { objects } = useWorldStore.getState()
+    const currentIds = new Set(objects.map(o => o.objectId))
+    // Remove destroyed objects
+    for (const [id, gfx] of this.dynamicObjectGfx) {
+      const baseId = id.endsWith('_lbl') ? id.slice(0, -4) : id
+      if (!currentIds.has(baseId)) {
+        gfx.destroy()
+        this.dynamicObjectGfx.delete(id)
+      }
+    }
+    // Add new objects
+    for (const obj of objects) {
+      if (!this.dynamicObjectGfx.has(obj.objectId)) {
+        this.spawnDynamicObject(obj, rooms)
+      }
+    }
+    this.prevObjectIds = currentIds
 
     // Spawn new sprites or sync existing
     for (const agent of Object.values(agents)) {
@@ -254,6 +280,63 @@ export class WorldScene extends Phaser.Scene {
         this.sprites.set(agent.agentId, sprite)
       }
     }
+  }
+
+  // ─── Dynamic objects ──────────────────────────────────────────────────────
+
+  private spawnDynamicObject(obj: WorldObject, rooms: RoomDef[]): void {
+    const room = rooms.find(r => r.id === obj.room)
+    if (!room) return
+
+    const tileX = room.bounds.x + obj.x
+    const tileY = room.bounds.y + obj.y
+    const pos = isoToScreen(tileX, tileY, this.originX, this.originY, TILE_W, TILE_H)
+    const gfx = this.add.graphics()
+    gfx.setDepth(isoDepth(tileX, tileY) + 20)
+
+    drawDynamicObject(gfx, obj.objectType, pos.x, pos.y)
+
+    if (obj.label) {
+      const lbl = this.add.text(pos.x, pos.y + 12, obj.label, {
+        fontSize: '9px',
+        color: '#a5f3fc',
+        fontFamily: 'monospace',
+        stroke: '#00000088',
+        strokeThickness: 2,
+      }).setOrigin(0.5, 0).setDepth(isoDepth(tileX, tileY) + 21).setAlpha(0.85)
+      // Store label ref alongside graphics using same key (suffix)
+      this.dynamicObjectGfx.set(`${obj.objectId}_lbl`, lbl as unknown as Phaser.GameObjects.Graphics)
+    }
+
+    // Spawn-in flash
+    this.flashAt(pos.x, pos.y, 0x00ff88, 0.6)
+
+    this.dynamicObjectGfx.set(obj.objectId, gfx)
+  }
+
+  flashInteractionAt(room: string, x: number, y: number, rooms: RoomDef[]): void {
+    const roomDef = rooms.find(r => r.id === room)
+    if (!roomDef) return
+    const tileX = roomDef.bounds.x + x
+    const tileY = roomDef.bounds.y + y
+    const pos = isoToScreen(tileX, tileY, this.originX, this.originY, TILE_W, TILE_H)
+    this.flashAt(pos.x, pos.y, 0xfbbf24, 0.7)
+  }
+
+  private flashAt(x: number, y: number, color: number, alpha: number): void {
+    const flash = this.add.graphics()
+    flash.fillStyle(color, alpha)
+    flash.fillCircle(x, y, 18)
+    flash.setDepth(999)
+    this.tweens.add({
+      targets: flash,
+      alpha: 0,
+      scaleX: 2.5,
+      scaleY: 2.5,
+      duration: 500,
+      ease: 'Power2',
+      onComplete: () => flash.destroy(),
+    })
   }
 
   // ─── Camera ───────────────────────────────────────────────────────────────

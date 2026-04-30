@@ -18,6 +18,21 @@ const WorldStateSchema = new Schema<WorldStateDoc>(
         { _id: false },
       ),
     ],
+    objects: [
+      new Schema(
+        {
+          objectId: { type: String, required: true },
+          objectType: { type: String, required: true },
+          room: { type: String, required: true },
+          x: { type: Number, required: true },
+          y: { type: Number, required: true },
+          label: { type: String },
+          createdByAgentId: { type: String },
+          properties: { type: Schema.Types.Mixed },
+        },
+        { _id: false },
+      ),
+    ],
     updatedAt: { type: Date, required: true },
   },
   { versionKey: false },

@@ -85,6 +85,27 @@ router.post("/", async (c) => {
 				{ fleetId: agentDoc.fleetId, "agents.agentId": agentId },
 				{ $set: { "agents.$.status": agentStatus, updatedAt: now } },
 			);
+		} else if (event.type === "world_interact") {
+			// Log the interaction — no state mutation needed (object state is ephemeral)
+		} else if (event.type === "world_create_object") {
+			const { objectId, objectType, room, x, y, label } = event.payload;
+			await (await worldStates()).updateOne(
+				{ fleetId: agentDoc.fleetId },
+				{
+					$push: {
+						objects: {
+							objectId,
+							objectType,
+							room,
+							x,
+							y,
+							label: label ?? null,
+							createdByAgentId: agentId,
+						} as never,
+					},
+					$set: { updatedAt: now },
+				},
+			);
 		} else if (event.type === "heartbeat") {
 			await agentCol.updateOne(
 				{ _id: agentId },

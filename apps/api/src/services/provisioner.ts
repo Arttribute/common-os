@@ -161,6 +161,9 @@ async function launchCloudInstance(
 				commonsApiKey: commonsApiKey ?? "",
 				commonsAgentId: agentDoc.commons.agentId ?? "",
 				runnerUrl: process.env.RUNNER_URL,
+				worldRoom: agentDoc.world.room,
+				worldX: agentDoc.world.x,
+				worldY: agentDoc.world.y,
 			});
 
 			await (await agents()).updateOne(
@@ -186,6 +189,9 @@ async function launchCloudInstance(
 				commonsApiKey: commonsApiKey ?? "",
 				commonsAgentId: agentDoc.commons.agentId ?? "",
 				runnerUrl: process.env.RUNNER_URL,
+				worldRoom: agentDoc.world.room,
+				worldX: agentDoc.world.x,
+				worldY: agentDoc.world.y,
 			});
 
 			await (await agents()).updateOne(
