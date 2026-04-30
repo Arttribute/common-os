@@ -245,6 +245,12 @@ export default function DashboardPage() {
         <span style={{ marginLeft: 'auto' }} />
         <UserEmail />
         <button
+          onClick={() => router.push('/settings')}
+          style={ghostBtn}
+        >
+          settings
+        </button>
+        <button
           onClick={() => void logout()}
           style={ghostBtn}
         >

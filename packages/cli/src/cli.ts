@@ -200,8 +200,8 @@ agentCmd.addCommand(
 );
 
 agentCmd.addCommand(
-  new Command("stop")
-    .description("Terminate an agent VM")
+  new Command("terminate")
+    .description("Permanently terminate an agent and delete its pod")
     .argument("<agent-id>", "Agent ID")
     .requiredOption("--fleet <fleet-id>", "Fleet ID")
     .action(async (agentId: string, opts: { fleet: string }) => {

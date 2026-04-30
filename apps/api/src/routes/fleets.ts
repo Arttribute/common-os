@@ -44,6 +44,7 @@ router.post('/', async (c) => {
       fleetId,
       tenantId: fleet.tenantId,
       agents: [],
+      objects: [],
       updatedAt: now,
     } as never)
     return c.json(fleet, 201)
