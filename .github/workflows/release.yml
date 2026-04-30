@@ -80,19 +80,19 @@ jobs:
 
           FRONTMATTER=""
           if echo "$CHANGED_FILES" | grep -q "^packages/sdk/"; then
-            FRONTMATTER="${FRONTMATTER}'@commonos/sdk': patch"$'\n'
+            FRONTMATTER="${FRONTMATTER}'@common-os/sdk': patch"$'\n'
           fi
           if echo "$CHANGED_FILES" | grep -q "^packages/cli/"; then
-            FRONTMATTER="${FRONTMATTER}'@commonos/cli': patch"$'\n'
+            FRONTMATTER="${FRONTMATTER}'@common-os/cli': patch"$'\n'
           fi
           if echo "$CHANGED_FILES" | grep -q "^packages/cloud/"; then
-            FRONTMATTER="${FRONTMATTER}'@commonos/cloud': patch"$'\n'
+            FRONTMATTER="${FRONTMATTER}'@common-os/cloud': patch"$'\n'
           fi
           if echo "$CHANGED_FILES" | grep -q "^packages/event-schema/"; then
-            FRONTMATTER="${FRONTMATTER}'@commonos/events': patch"$'\n'
+            FRONTMATTER="${FRONTMATTER}'@common-os/events': patch"$'\n'
           fi
           if echo "$CHANGED_FILES" | grep -q "^packages/daemon/"; then
-            FRONTMATTER="${FRONTMATTER}'@commonos/daemon': patch"$'\n'
+            FRONTMATTER="${FRONTMATTER}'@common-os/daemon': patch"$'\n'
           fi
 
           if [ -z "$FRONTMATTER" ]; then

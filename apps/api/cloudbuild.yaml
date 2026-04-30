@@ -1,0 +1,37 @@
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - build
+      - -t
+      - "europe-west1-docker.pkg.dev/$PROJECT_ID/common-os/api:$SHORT_SHA"
+      - -f
+      - apps/api/Dockerfile
+      - "."
+
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - tag
+      - "europe-west1-docker.pkg.dev/$PROJECT_ID/common-os/api:$SHORT_SHA"
+      - "europe-west1-docker.pkg.dev/$PROJECT_ID/common-os/api:latest"
+
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - push
+      - "europe-west1-docker.pkg.dev/$PROJECT_ID/common-os/api"
+      - --all-tags
+
+  - name: "gcr.io/cloud-builders/gcloud"
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - common-os-api-prod
+      - --region=europe-west1
+      - --platform=managed
+      - --image=europe-west1-docker.pkg.dev/$PROJECT_ID/common-os/api:latest
+      - --allow-unauthenticated
+      - --port=3001
+      - --min-instances=1
+      - --memory=512Mi
+
+timeout: 1800s
