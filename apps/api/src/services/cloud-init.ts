@@ -66,6 +66,13 @@ async function ensureAgentStorage(
 const GKE_POLL_MS = 5_000;
 const GKE_MAX_POLLS = 120;
 
+// Cache kubeconfig per cluster key; GKE access tokens last ~1 hour so we refresh at 55 min
+interface KubeConfigCache {
+	kc: k8s.KubeConfig;
+	expiresAt: number;
+}
+const kubeConfigCache = new Map<string, KubeConfigCache>();
+
 async function waitForGkeOperation(
 	gkeClient: ClusterManagerClient,
 	operationName: string,
@@ -87,6 +94,12 @@ async function getKubeConfig(
 	region: string,
 	clusterName: string,
 ): Promise<k8s.KubeConfig> {
+	const cacheKey = `${projectId}/${region}/${clusterName}`;
+	const cached = kubeConfigCache.get(cacheKey);
+	if (cached && Date.now() < cached.expiresAt) {
+		return cached.kc;
+	}
+
 	const gkeClient = new ClusterManagerClient();
 	const parent = `projects/${projectId}/locations/${region}`;
 
@@ -163,6 +176,7 @@ async function getKubeConfig(
 		currentContext: "gke-context",
 	});
 
+	kubeConfigCache.set(cacheKey, { kc, expiresAt: Date.now() + 55 * 60 * 1000 });
 	return kc;
 }
 
@@ -190,11 +204,13 @@ export async function launchAgentPod(
 	const namespace = `agent-${opts.agentId}`;
 	const podName = `agent-${opts.agentId}`;
 
-	console.log(`[cloud-init] ensuring agent storage for ${opts.agentId}...`);
-	await ensureAgentStorage(projectId, bucketName, opts.agentId, sessionId);
-	console.log(`[cloud-init] storage ready, getting kubeconfig...`);
+	console.log(`[cloud-init] ensuring agent storage + kubeconfig for ${opts.agentId}...`);
+	const [kc] = await Promise.all([
+		getKubeConfig(projectId, region, clusterName),
+		ensureAgentStorage(projectId, bucketName, opts.agentId, sessionId),
+	]);
+	console.log(`[cloud-init] storage ready, kubeconfig obtained`);
 
-	const kc = await getKubeConfig(projectId, region, clusterName);
 	const coreApi = kc.makeApiClient(k8s.CoreV1Api);
 
 	// Namespace per agent — provides isolation boundary
@@ -255,7 +271,7 @@ export async function launchAgentPod(
 					{
 						name: "agent",
 						image: imageUrl,
-						imagePullPolicy: "Always",
+						imagePullPolicy: "IfNotPresent",
 						env: envVars,
 						resources: {
 							requests: { cpu: "250m", memory: "256Mi" },

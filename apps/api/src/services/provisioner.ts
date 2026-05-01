@@ -160,7 +160,7 @@ async function launchCloudInstance(
 	};
 
 	const deadline = new Promise<never>((_, reject) =>
-		setTimeout(() => reject(new Error("pod launch timed out after 3m")), 3 * 60 * 1000),
+		setTimeout(() => reject(new Error("pod launch timed out after 10m")), 10 * 60 * 1000),
 	);
 
 	try {
