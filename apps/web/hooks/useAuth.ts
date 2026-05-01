@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { usePrivy } from '@privy-io/react-auth'
 import { useAuthStore } from '@/store/authStore'
 
@@ -56,7 +56,7 @@ export function useAuth() {
     user,
     logout,
     // Helper: call any API endpoint with the current Privy JWT
-    apiFetch: async (path: string, init?: RequestInit) => {
+    apiFetch: useCallback(async (path: string, init?: RequestInit) => {
       if (!apiUrl) throw new Error('NEXT_PUBLIC_API_URL not set')
       const token = await getAccessToken()
       return fetch(`${apiUrl}${path}`, {
@@ -67,6 +67,6 @@ export function useAuth() {
           ...init?.headers,
         },
       })
-    },
+    }, [apiUrl, getAccessToken]),
   }
 }
