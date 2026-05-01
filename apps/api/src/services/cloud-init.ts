@@ -129,14 +129,12 @@ async function getKubeConfig(
 						"https://www.googleapis.com/auth/monitoring",
 						"https://www.googleapis.com/auth/cloud-platform",
 					],
-					// Allow workload identity for GCS FUSE access
 					workloadMetadataConfig: { mode: "GKE_METADATA" },
 				},
 				workloadIdentityConfig: {
 					workloadPool: `${projectId}.svc.id.goog`,
 				},
 				addonsConfig: {
-					// Enable GCS FUSE CSI driver
 					gcsFuseCsiDriverConfig: { enabled: true },
 				},
 			},

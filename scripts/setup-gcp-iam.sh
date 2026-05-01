@@ -5,6 +5,13 @@
 #   bash scripts/setup-gcp-iam.sh
 #
 # Safe to re-run — all operations are idempotent.
+#
+# Security model:
+#   Authorization is enforced by GCP IAM — only the common-os-api service account
+#   has container.admin, so no external service can provision GKE resources regardless
+#   of network access. Master authorized networks is opened to 0.0.0.0/0 so Cloud Run
+#   (which uses dynamic egress IPs) can reach the GKE control plane; the SA credential
+#   is what actually gates access.
 
 set -euo pipefail
 
@@ -12,7 +19,7 @@ PROJECT_ID="${GCP_PROJECT_ID:-common-os-prod}"
 REGION="${GCP_REGION:-europe-west1}"
 GKE_CLUSTER="${GKE_CLUSTER:-common-os-agents}"
 GCS_BUCKET="${GCS_BUCKET_NAME:-agent-session-state-bucket}"
-AR_REPO="common-os"   # Artifact Registry repository name
+AR_REPO="common-os"
 
 echo "=== CommonOS GCP IAM Setup ==="
 echo "Project : $PROJECT_ID"
@@ -24,9 +31,6 @@ PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format="value(projectN
 echo "Project number: $PROJECT_NUMBER"
 
 # ── Service account names ──────────────────────────────────────────────────
-# common-os-api  → Cloud Run runtime SA for both API and runner services
-# default compute SA → GKE node pool (image pulls, GCS FUSE pod mounts)
-# Cloud Build SA → builds images and deploys Cloud Run revisions
 API_SA="common-os-api@${PROJECT_ID}.iam.gserviceaccount.com"
 COMPUTE_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
 CLOUDBUILD_SA="${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com"
@@ -84,14 +88,6 @@ for ROLE in \
 done
 
 # ── 4. Grant roles to default compute SA (GKE node pool) ──────────────────
-# GKE nodes use this SA to pull agent container images from Artifact Registry
-# and to mount GCS buckets via the GCS FUSE CSI driver (node-level auth).
-#
-#  storage.objectAdmin      — GCS FUSE CSI driver: read/write agent session
-#                             data in agent-session-state-bucket
-#  artifactregistry.reader  — pull europe-west1-docker.pkg.dev/.../agent:latest
-#                             on every pod scheduled to a GKE node
-#  logging.logWriter        — write pod logs to Cloud Logging
 echo ""
 echo "4/5  Granting roles to $COMPUTE_SA (GKE node pool)..."
 for ROLE in \
@@ -107,12 +103,6 @@ for ROLE in \
 done
 
 # ── 5. Grant roles to Cloud Build SA ─────────────────────────────────────
-# Cloud Build pushes images to Artifact Registry and deploys Cloud Run
-# revisions via cloudbuild.yaml triggers.
-#
-#  run.admin                — deploy / update Cloud Run services
-#  artifactregistry.writer  — push built Docker images
-#  iam.serviceAccountUser   — act-as common-os-api SA when deploying Cloud Run
 echo ""
 echo "5/5  Granting roles to $CLOUDBUILD_SA (Cloud Build)..."
 for ROLE in \
@@ -126,6 +116,25 @@ for ROLE in \
     --quiet
   echo "     ✓ $ROLE"
 done
+
+# ── GKE master authorized networks ────────────────────────────────────────
+# Cloud Run uses dynamic egress IPs, so we open the GKE control plane endpoint
+# to all IPs. Authorization is enforced by IAM — the SA credential is the actual
+# gate, not the network. Anyone reaching the endpoint without a valid token gets 401.
+echo ""
+echo "Unlocking GKE master authorized networks..."
+if gcloud container clusters describe "$GKE_CLUSTER" \
+    --region="$REGION" --project="$PROJECT_ID" --quiet 2>/dev/null; then
+  gcloud container clusters update "$GKE_CLUSTER" \
+    --region="$REGION" \
+    --project="$PROJECT_ID" \
+    --enable-master-authorized-networks \
+    --master-authorized-networks=0.0.0.0/0 \
+    --quiet
+  echo "     ✓ Master authorized networks set to 0.0.0.0/0"
+else
+  echo "     GKE cluster $GKE_CLUSTER not found — skipping (cluster created on first agent provision)"
+fi
 
 # ── Summary ────────────────────────────────────────────────────────────────
 echo ""
