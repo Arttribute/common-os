@@ -159,3 +159,15 @@ export interface MessageDoc {
   deliveredAt: Date | null
   createdAt: Date
 }
+
+export interface HumanMessageDoc {
+  _id: string
+  agentId: string
+  fleetId: string
+  tenantId: string
+  content: string
+  status: 'pending' | 'processing' | 'responded'
+  response: string | null
+  respondedAt: Date | null
+  createdAt: Date
+}

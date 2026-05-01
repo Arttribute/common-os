@@ -10,6 +10,7 @@ import { authRouter } from './routes/auth.js'
 import { fleetsRouter } from './routes/fleets.js'
 import { agentsRouter } from './routes/agents.js'
 import { tasksRouter } from './routes/tasks.js'
+import { messagesRouter } from './routes/messages.js'
 import { eventsRouter } from './routes/events.js'
 import { agentRuntimeRouter } from './routes/agentRuntime.js'
 import { streamRouter } from './routes/stream.js'
@@ -37,6 +38,7 @@ app.use('/events', authMiddleware)
 app.route('/fleets', fleetsRouter)
 app.route('/fleets', agentsRouter)
 app.route('/fleets', tasksRouter)
+app.route('/fleets', messagesRouter)
 app.route('/fleets', streamRouter)
 app.route('/agents', agentRuntimeRouter)
 app.route('/events', eventsRouter)

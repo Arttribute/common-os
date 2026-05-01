@@ -103,12 +103,32 @@ export async function registerWithAgentCommons(
 		return { agentId: null, apiKey: null, walletAddress: null };
 	}
 
-	const headers = {
+	// SDK uses Authorization: Bearer + x-initiator (wallet address of the platform user)
+	const baseHeaders = {
 		"Authorization": `Bearer ${platformKey}`,
 		"Content-Type": "application/json",
 	};
 
 	try {
+		// Resolve our platform principal (wallet address) so agents are owned correctly
+		let owner: string | null = null;
+		try {
+			const meRes = await fetch("https://api.agentcommons.io/v1/auth/me", {
+				headers: baseHeaders,
+				signal: AbortSignal.timeout(8_000),
+			});
+			if (meRes.ok) {
+				const me = (await meRes.json()) as { principalId?: string | null };
+				owner = me.principalId ?? null;
+			}
+		} catch {
+			// Non-fatal — owner is optional
+		}
+
+		const headers = owner
+			? { ...baseHeaders, "x-initiator": owner }
+			: baseHeaders;
+
 		// Step 1: create the agent
 		const agentRes = await fetch("https://api.agentcommons.io/v1/agents", {
 			method: "POST",
@@ -116,14 +136,20 @@ export async function registerWithAgentCommons(
 			body: JSON.stringify({
 				name: `${role}-${agentId}`,
 				instructions: systemPrompt,
+				modelProvider: "openai",
+				modelId: "gpt-4o",
+				...(owner && { owner }),
 			}),
+			signal: AbortSignal.timeout(15_000),
 		});
 		if (!agentRes.ok) {
-			console.error(`[provisioner] Agent Commons create agent failed: ${agentRes.status}`);
+			const body = await agentRes.text().catch(() => '')
+			console.error(`[provisioner] Agent Commons create agent failed: ${agentRes.status} ${body}`);
 			return { agentId: null, apiKey: null, walletAddress: null };
 		}
-		const agentData = (await agentRes.json()) as { agentId?: string };
-		const commonsAgentId = agentData.agentId ?? null;
+		const agentData = (await agentRes.json()) as { agentId?: string; data?: { agentId?: string } };
+		const commonsAgentId = agentData.agentId ?? agentData.data?.agentId ?? null;
+		console.log(`[provisioner] Agent Commons agent created: ${commonsAgentId}`);
 		if (!commonsAgentId) return { agentId: null, apiKey: null, walletAddress: null };
 
 		// Step 2: create an API key for the agent (plaintext key returned once only)
@@ -135,16 +161,20 @@ export async function registerWithAgentCommons(
 				principalType: "agent",
 				label: `commonos-${agentId}`,
 			}),
+			signal: AbortSignal.timeout(10_000),
 		});
 		if (!keyRes.ok) {
-			console.error(`[provisioner] Agent Commons create API key failed: ${keyRes.status}`);
+			const body = await keyRes.text().catch(() => '')
+			console.error(`[provisioner] Agent Commons create API key failed: ${keyRes.status} ${body}`);
 			return { agentId: commonsAgentId, apiKey: null, walletAddress: null };
 		}
-		const keyData = (await keyRes.json()) as { key?: string };
+		const keyData = (await keyRes.json()) as { key?: string; data?: { key?: string } };
+		const apiKey = keyData.key ?? (keyData.data as any)?.key ?? null;
+		console.log(`[provisioner] Agent Commons API key created for ${commonsAgentId}: ${apiKey ? 'ok' : 'missing key field'}`);
 
 		return {
 			agentId: commonsAgentId,
-			apiKey: keyData.key ?? null,
+			apiKey,
 			walletAddress: null,
 		};
 	} catch (err) {

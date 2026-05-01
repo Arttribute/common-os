@@ -38,38 +38,36 @@ export function CommandBar() {
   async function handleSend() {
     if (!input.trim() || !selectedId) return
     setSending(true)
-    const description = input.trim()
+    const content = input.trim()
     setInput('')
 
     if (isLive && activeFleetId) {
       try {
         const token = await resolveToken()
-        await fetch(`${apiUrl}/fleets/${activeFleetId}/agents/${selectedId}/task`, {
+        await fetch(`${apiUrl}/fleets/${activeFleetId}/agents/${selectedId}/message`, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ description }),
+          body: JSON.stringify({ content }),
         })
-        // Store update will come via WebSocket broadcast from the server
+        // Agent response will arrive via WebSocket broadcast
       } catch {
-        // Fallback to optimistic local update on network error
-        fallbackLocalUpdate(selectedId, description)
+        fallbackLocalUpdate(selectedId, content)
       }
     } else {
-      // Demo mode — write directly to store
-      fallbackLocalUpdate(selectedId, description)
+      fallbackLocalUpdate(selectedId, content)
     }
 
     setSending(false)
   }
 
-  function fallbackLocalUpdate(agentId: string, description: string) {
+  function fallbackLocalUpdate(agentId: string, content: string) {
     const taskId = `tsk_${Date.now()}`
-    setCurrentTask(agentId, { taskId, description })
+    setCurrentTask(agentId, { taskId, description: content })
     updateStatus(agentId, 'working')
-    setCurrentAction(agentId, description.slice(0, 40))
+    setCurrentAction(agentId, content.slice(0, 40))
   }
 
   return (
@@ -100,7 +98,7 @@ export function CommandBar() {
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && void handleSend()}
-        placeholder={selected ? `Assign task to ${shortRole}...` : 'Click an agent to select'}
+        placeholder={selected ? `Message ${shortRole}...` : 'Click an agent to select'}
         disabled={!selectedId}
         style={{
           flex: 1,

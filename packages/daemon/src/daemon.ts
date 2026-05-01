@@ -13,6 +13,7 @@ const agent = new CommonOSAgentClient({
 
 const HEARTBEAT_MS   = 30_000;
 const POLL_MS        = 5_000;
+const MSG_POLL_MS    = 3_000;
 const HEALTH_MS      = 10_000;
 const AXL_INBOX_MS   = 5_000;
 const WORKSPACE_DIR  = process.env.COMMONOS_WORKSPACE ?? config.workspaceDir;
@@ -98,6 +99,8 @@ async function main() {
   startHealthMonitor();
   // AXL inbox runs concurrently — does not block task polling
   void startAxlInboxLoop();
+  // Message loop runs concurrently with task polling
+  void pollMessages();
   await pollTasks();
 }
 
@@ -391,6 +394,65 @@ async function sendAxlMessage(
     .catch(() => {});
 
   console.log(`[daemon] AXL message sent → ${toAgentId}  "${content.slice(0, 60)}"`);
+}
+
+// ─── Human message polling loop ───────────────────────────────────────────
+// Polls for messages sent by humans via the web UI CommandBar.
+// Each message is processed conversationally via agc run, then the response
+// is posted back and broadcast to all connected WebSocket clients.
+
+async function pollMessages(): Promise<void> {
+  console.log("[daemon] message loop started");
+  while (true) {
+    try {
+      const res = await fetch(
+        `${config.apiUrl}/agents/${config.agentId}/messages/next`,
+        {
+          headers: { Authorization: `Bearer ${config.agentToken}` },
+          signal: AbortSignal.timeout(10_000),
+        },
+      );
+
+      if (res.status === 200) {
+        const msg = await res.json() as { id: string; content: string };
+        if (msg?.id && msg?.content) {
+          await handleMessage(msg);
+        }
+      }
+    } catch (err) {
+      console.warn("[daemon] message poll error:", err instanceof Error ? err.message : err);
+    }
+    await sleep(MSG_POLL_MS);
+  }
+}
+
+async function handleMessage(msg: { id: string; content: string }): Promise<void> {
+  console.log(`[daemon] message ${msg.id}: ${msg.content.slice(0, 80)}`);
+
+  await agent.emit({ type: "state_change", payload: { status: "working" } });
+
+  try {
+    const response = await executeTask(msg.content);
+
+    await fetch(
+      `${config.apiUrl}/agents/${config.agentId}/messages/${msg.id}/respond`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${config.agentToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ response }),
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
+
+    console.log(`[daemon] message ${msg.id} responded`);
+  } catch (err) {
+    console.error(`[daemon] message ${msg.id} error:`, err);
+  } finally {
+    await agent.emit({ type: "state_change", payload: { status: "idle" } });
+  }
 }
 
 // ─── Task polling loop ─────────────────────────────────────────────────────

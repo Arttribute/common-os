@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
-import { agents, tasks } from '../db/mongo.js'
-import { dequeueTask, broadcastToFleet } from '../db/memory.js'
+import { agents, tasks, humanMessages } from '../db/mongo.js'
+import { dequeueTask, dequeueHumanMessage, broadcastToFleet } from '../db/memory.js'
 import { registerWithAgentCommons } from '../services/provisioner.js'
 import type { Env } from '../types.js'
 
@@ -16,11 +16,29 @@ router.get('/:agentId/tasks/next', async (c) => {
     return c.json({ error: 'forbidden' }, 403)
   }
 
-  const taskId = dequeueTask(agentId)
-  if (!taskId) return c.body(null, 204)
+  let taskId = dequeueTask(agentId)
+
+  if (!taskId) {
+    // In-memory queue is empty (e.g. after API restart) — atomically claim from MongoDB
+    try {
+      const claimed = await (await tasks()).findOneAndUpdate(
+        { agentId, status: 'queued' },
+        { $set: { status: 'running', startedAt: new Date() } },
+        { sort: { createdAt: 1 }, new: false },
+      ).lean()
+      if (!claimed) return c.body(null, 204)
+      return c.json({ id: claimed._id, description: claimed.description })
+    } catch {
+      return c.json({ error: 'database error' }, 503)
+    }
+  }
 
   try {
-    const task = await (await tasks()).findOne({ _id: taskId, agentId }).lean()
+    const task = await (await tasks()).findOneAndUpdate(
+      { _id: taskId, agentId, status: 'queued' },
+      { $set: { status: 'running', startedAt: new Date() } },
+      { new: true },
+    ).lean()
     if (!task) return c.body(null, 204)
     return c.json({ id: task._id, description: task.description })
   } catch {
@@ -61,6 +79,82 @@ router.post('/:agentId/tasks/:taskId/complete', async (c) => {
       taskId,
       status,
       output: body.output,
+      ts: now.toISOString(),
+    })
+
+    return c.json({ ok: true })
+  } catch {
+    return c.json({ error: 'database error' }, 503)
+  }
+})
+
+// GET /agents/:agentId/messages/next — daemon polls for next pending human message
+router.get('/:agentId/messages/next', async (c) => {
+  if (c.get('authType') !== 'agent') {
+    return c.json({ error: 'agent authorization required' }, 403)
+  }
+  const agentId = c.req.param('agentId')
+  if (c.get('agentId') !== agentId) {
+    return c.json({ error: 'forbidden' }, 403)
+  }
+
+  let msgId = dequeueHumanMessage(agentId)
+
+  if (!msgId) {
+    // Fall back to MongoDB if in-memory queue is empty (after API restart)
+    try {
+      const claimed = await (await humanMessages()).findOneAndUpdate(
+        { agentId, status: 'pending' },
+        { $set: { status: 'processing' } },
+        { sort: { createdAt: 1 }, new: false },
+      ).lean()
+      if (!claimed) return c.body(null, 204)
+      return c.json({ id: claimed._id, content: claimed.content })
+    } catch {
+      return c.json({ error: 'database error' }, 503)
+    }
+  }
+
+  try {
+    const msg = await (await humanMessages()).findOneAndUpdate(
+      { _id: msgId, agentId, status: 'pending' },
+      { $set: { status: 'processing' } },
+      { new: true },
+    ).lean()
+    if (!msg) return c.body(null, 204)
+    return c.json({ id: msg._id, content: msg.content })
+  } catch {
+    return c.json({ error: 'database error' }, 503)
+  }
+})
+
+// POST /agents/:agentId/messages/:msgId/respond — daemon posts agent's response
+router.post('/:agentId/messages/:msgId/respond', async (c) => {
+  if (c.get('authType') !== 'agent') {
+    return c.json({ error: 'agent authorization required' }, 403)
+  }
+  const agentId = c.req.param('agentId')
+  if (c.get('agentId') !== agentId) {
+    return c.json({ error: 'forbidden' }, 403)
+  }
+
+  const body = await c.req.json<{ response: string }>().catch(() => ({ response: '' }))
+  const msgId = c.req.param('msgId')
+  const now = new Date()
+
+  try {
+    const msg = await (await humanMessages()).findOneAndUpdate(
+      { _id: msgId, agentId },
+      { $set: { status: 'responded', response: body.response, respondedAt: now } },
+      { new: true },
+    ).lean()
+    if (!msg) return c.json({ error: 'message not found' }, 404)
+
+    broadcastToFleet(msg.fleetId, {
+      type: 'agent_response',
+      agentId,
+      msgId,
+      response: body.response,
       ts: now.toISOString(),
     })
 

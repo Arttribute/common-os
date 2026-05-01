@@ -7,6 +7,7 @@ import {
   EventModel,
   WorldStateModel,
   MessageModel,
+  HumanMessageModel,
 } from './models/index.js'
 
 let connectionPromise: Promise<void> | null = null
@@ -53,6 +54,7 @@ export async function ensureIndexes(): Promise<void> {
       EventModel.syncIndexes(),
       WorldStateModel.syncIndexes(),
       MessageModel.syncIndexes(),
+      HumanMessageModel.syncIndexes(),
     ])
     console.log('[mongo] indexes synced')
   } catch (err) {
@@ -72,3 +74,4 @@ export async function tasks()   { await connect(); return TaskModel   }
 export async function events()  { await connect(); return EventModel  }
 export async function worldStates() { await connect(); return WorldStateModel }
 export async function messages()    { await connect(); return MessageModel    }
+export async function humanMessages() { await connect(); return HumanMessageModel }

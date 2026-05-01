@@ -178,6 +178,15 @@ export function useWorldConnection(fleetId?: string, getToken?: () => Promise<st
             updateStatus(agentId, 'working')
           } else if (data['type'] === 'task_complete') {
             completeTask(data['agentId'] as string)
+          } else if (data['type'] === 'human_message') {
+            // Human sent a message — show agent as "thinking"
+            updateStatus(data['agentId'] as string, 'working')
+          } else if (data['type'] === 'agent_response') {
+            // Agent responded — show response as speech bubble
+            const agentId = data['agentId'] as string
+            const response = data['response'] as string
+            updateStatus(agentId, 'idle')
+            scheduleSpeechBubble(agentId, response)
           }
         })
       } catch {

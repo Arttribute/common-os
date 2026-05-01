@@ -40,3 +40,17 @@ export function dequeueTask(agentId: string): string | null {
   if (!queue || queue.length === 0) return null
   return queue.shift()!
 }
+
+// Agent ID → FIFO human message queue of message IDs
+const humanMessageQueues = new Map<string, string[]>()
+
+export function enqueueHumanMessage(agentId: string, msgId: string): void {
+  if (!humanMessageQueues.has(agentId)) humanMessageQueues.set(agentId, [])
+  humanMessageQueues.get(agentId)!.push(msgId)
+}
+
+export function dequeueHumanMessage(agentId: string): string | null {
+  const queue = humanMessageQueues.get(agentId)
+  if (!queue || queue.length === 0) return null
+  return queue.shift()!
+}
