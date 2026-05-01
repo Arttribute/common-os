@@ -121,6 +121,8 @@ async function getKubeConfig(
 			cluster: {
 				name: clusterName,
 				initialNodeCount: 1,
+				// Avoid europe-west1-c which has recurring e2 stockouts
+				locations: ["europe-west1-b", "europe-west1-d"],
 				nodeConfig: {
 					machineType: "e2-standard-2",
 					oauthScopes: [
@@ -136,6 +138,10 @@ async function getKubeConfig(
 				},
 				addonsConfig: {
 					gcsFuseCsiDriverConfig: { enabled: true },
+				},
+				masterAuthorizedNetworksConfig: {
+					enabled: true,
+					cidrBlocks: [{ cidrBlock: "0.0.0.0/0", displayName: "all" }],
 				},
 			},
 		});
