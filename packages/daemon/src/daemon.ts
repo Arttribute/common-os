@@ -28,11 +28,60 @@ const worldPos = {
   y: config.worldY ?? 2,
 };
 
+// ─── First-time setup ──────────────────────────────────────────────────────
+// Runs once at boot before the agent announces itself online.
+// Ensures the workspace directory exists and Agent Commons credentials are
+// available so agc can execute tasks immediately on the first task receipt.
+
+async function firstTimeSetup(): Promise<void> {
+  const { mkdirSync } = await import("fs");
+  try {
+    mkdirSync(WORKSPACE_DIR, { recursive: true });
+    console.log(`[daemon] workspace ready at ${WORKSPACE_DIR}`);
+  } catch {}
+
+  if (config.integrationPath === "native" && !config.commonsApiKey) {
+    await bootstrapCommons();
+  }
+}
+
+async function bootstrapCommons(): Promise<void> {
+  console.log("[daemon] bootstrapping Agent Commons credentials...");
+  try {
+    const res = await fetch(
+      `${config.apiUrl}/agents/${config.agentId}/bootstrap`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${config.agentToken}` },
+        signal: AbortSignal.timeout(15_000),
+      },
+    );
+    if (!res.ok) {
+      console.warn(`[daemon] bootstrap: API returned ${res.status}`);
+      return;
+    }
+    const data = await res.json() as {
+      commonsAgentId?: string | null;
+      commonsApiKey?: string | null;
+    };
+    if (data.commonsApiKey) {
+      config.commonsApiKey = data.commonsApiKey;
+      config.commonsAgentId = data.commonsAgentId ?? config.agentId;
+      console.log(`[daemon] Agent Commons ready  agentId=${config.commonsAgentId}`);
+    } else {
+      console.warn("[daemon] bootstrap: no Agent Commons credentials returned — AGENTCOMMONS_API_KEY may not be configured");
+    }
+  } catch (err) {
+    console.warn("[daemon] bootstrap failed:", err instanceof Error ? err.message : err);
+  }
+}
+
 // ─── Main ──────────────────────────────────────────────────────────────────
 
 async function main() {
   console.log(`[daemon] starting  agent=${config.agentId}  role=${config.role}  fleet=${config.fleetId}`);
 
+  await firstTimeSetup();
   await agent.emit({ type: "state_change", payload: { status: "online" } });
   console.log("[daemon] online");
 

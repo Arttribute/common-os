@@ -93,7 +93,7 @@ export async function provisionAgent(
 	return { ...agentDoc, agentToken };
 }
 
-async function registerWithAgentCommons(
+export async function registerWithAgentCommons(
 	agentId: string,
 	role: string,
 	systemPrompt: string,
