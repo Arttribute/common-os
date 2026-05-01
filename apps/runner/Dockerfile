@@ -5,9 +5,9 @@ FROM base AS builder
 
 WORKDIR /workspace
 
-COPY package.json .
-COPY tsconfig.json .
-COPY src src
+COPY /apps/runner/package.json .
+COPY /apps/runner/tsconfig.json .
+COPY /apps/runner/src src
 
 RUN bun install
 RUN bun run build
