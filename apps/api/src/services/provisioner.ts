@@ -20,7 +20,7 @@ export async function provisionAgent(
 	opts: ProvisionAgentOptions,
 ): Promise<AgentDoc & { agentToken: string }> {
 	const agentId = `agt_${Date.now().toString(36)}${randomBytes(4).toString("hex")}`;
-	const agentToken = `c_os_agent_${randomBytes(24).toString("hex")}`;
+	const agentToken = `cos_agent_${randomBytes(24).toString("hex")}`;
 	const agentTokenHash = createHash("sha256").update(agentToken).digest("hex");
 	const now = new Date();
 
