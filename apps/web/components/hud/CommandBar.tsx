@@ -1,6 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { useSearchParams } from 'next/navigation'
+import { usePrivy } from '@privy-io/react-auth'
 import { useAgentStore } from '@/store/agentStore'
 import { useWorldStore } from '@/store/worldStore'
 import { useAuthStore } from '@/store/authStore'
@@ -20,14 +21,19 @@ export function CommandBar() {
   const selected = selectedId ? agents[selectedId] : null
   const shortRole = selected?.role.replace(/-/g, ' ') ?? 'an agent'
 
+  const { getAccessToken, authenticated } = usePrivy()
   const apiUrl = process.env.NEXT_PUBLIC_API_URL
   // URL param takes priority; store value is fallback (set from snapshot)
   const urlFleet = searchParams.get('fleet')
   const activeFleetId = urlFleet ?? storeFleetId
-  // Prefer the tenant key stored after login; fall back to static env var (demo/CLI mode)
-  const apiKey = storedApiKey ?? process.env.NEXT_PUBLIC_API_KEY
+  // Live if we have an API URL + fleet + any auth (stored key, env key, or Privy session)
+  const isLive = Boolean(apiUrl && activeFleetId && (storedApiKey ?? process.env.NEXT_PUBLIC_API_KEY ?? authenticated))
 
-  const isLive = Boolean(apiUrl && apiKey && activeFleetId)
+  async function resolveToken(): Promise<string | null> {
+    if (storedApiKey) return storedApiKey
+    if (process.env.NEXT_PUBLIC_API_KEY) return process.env.NEXT_PUBLIC_API_KEY
+    try { return await getAccessToken() } catch { return null }
+  }
 
   async function handleSend() {
     if (!input.trim() || !selectedId) return
@@ -37,10 +43,11 @@ export function CommandBar() {
 
     if (isLive && activeFleetId) {
       try {
+        const token = await resolveToken()
         await fetch(`${apiUrl}/fleets/${activeFleetId}/agents/${selectedId}/task`, {
           method: 'POST',
           headers: {
-            Authorization: `Bearer ${apiKey}`,
+            Authorization: `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ description }),

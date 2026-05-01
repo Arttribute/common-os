@@ -3,9 +3,9 @@ import { Hono } from 'hono'
 import { logger } from 'hono/logger'
 import { cors } from 'hono/cors'
 import { WebSocketServer } from 'ws'
-import { createHash } from 'crypto'
 import { authMiddleware } from './middleware/auth.js'
 import { rateLimitMiddleware } from './middleware/ratelimit.js'
+import { resolveToken } from './utils/resolveToken.js'
 import { authRouter } from './routes/auth.js'
 import { fleetsRouter } from './routes/fleets.js'
 import { agentsRouter } from './routes/agents.js'
@@ -13,7 +13,7 @@ import { tasksRouter } from './routes/tasks.js'
 import { eventsRouter } from './routes/events.js'
 import { agentRuntimeRouter } from './routes/agentRuntime.js'
 import { streamRouter } from './routes/stream.js'
-import { tenants, agents, worldStates, ensureIndexes } from './db/mongo.js'
+import { worldStates, ensureIndexes } from './db/mongo.js'
 import { subscribeToFleet, unsubscribeFromFleet } from './db/memory.js'
 import type { Env } from './types.js'
 
@@ -65,18 +65,11 @@ server.on('upgrade', (req, socket, head) => {
 
   wss.handleUpgrade(req, socket, head, (ws) => {
     void (async () => {
-      // Auth: resolve tenantId from token
+      // Auth: resolve tenantId from any supported token (cos_live_*, cos_agent_*, Privy JWT)
       let tenantId: string | null = null
       try {
-        if (token.startsWith('cos_live_')) {
-          const hash = createHash('sha256').update(token).digest('hex')
-          const tenant = await (await tenants()).findOne({ apiKeyHash: hash }).lean()
-          tenantId = tenant?._id ?? null
-        } else if (token.startsWith('cos_agent_')) {
-          const hash = createHash('sha256').update(token).digest('hex')
-          const agent = await (await agents()).findOne({ agentTokenHash: hash }).lean()
-          tenantId = agent?.tenantId ?? null
-        }
+        const resolved = await resolveToken(token)
+        tenantId = resolved?.tenantId ?? null
       } catch { /* db not ready */ }
 
       if (!tenantId) {
