@@ -310,7 +310,7 @@ export async function launchAgentPod(
 				{
 					name: "agent",
 					image: imageUrl,
-					imagePullPolicy: "IfNotPresent",
+					imagePullPolicy: "Always",
 					env: envVars,
 					resources: {
 						requests: { cpu: "250m", memory: "256Mi" },
