@@ -5,7 +5,7 @@
 	"description": "CommonOS fleet runner — agent runner",
 	"scripts": {
 		"build": "tsc",
-		"dev": "tsx watch src/index.ts",
+		"dev": "bun --watch src/index.ts",
 		"start": "node dist/index.mjs",
 		"test": "jest --passWithNoTests"
 	},
@@ -16,7 +16,9 @@
 		"hono": "^4.12.14"
 	},
 	"devDependencies": {
+		"@agent-commons/cli": "^0.1.17",
 		"@types/bun": "^1.3.13",
+		"bun": "^1.3.13",
 		"typescript": "^5.7.3"
 	}
 }

@@ -23,8 +23,9 @@ app.post("/run", async (c) => {
 	}
 
 	try {
-		const args = ["run", "--agent-id", body.agentId, "--prompt", body.prompt];
-		if (body.sessionId) args.push("--session-id", body.sessionId);
+		const args = ["run", "--agent", body.agentId, body.prompt, "--no-stream"];
+		if (body.sessionId) args.push("--session", body.sessionId);
+		console.log("Command: agc", args.join(" "));
 		const result = await Bun.$`agc ${args}`;
 		const output = await result.text();
 		return c.json({
@@ -33,6 +34,7 @@ app.post("/run", async (c) => {
 			output,
 		});
 	} catch (error) {
+		console.error("Error: ", error);
 		const message = error instanceof Error ? error.message : String(error);
 		return c.json({ error: "Command execution failed", details: message }, 500);
 	}
