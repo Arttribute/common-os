@@ -35,5 +35,3 @@ app.post("/run", async (c) => {
 const port = Number(process.env.PORT ?? 3002);
 Bun.serve({ port, fetch: app.fetch });
 console.log(`Runner listening on http://localhost:${port}`);
-
-export default app;

@@ -13,7 +13,7 @@ import { tasksRouter } from './routes/tasks.js'
 import { eventsRouter } from './routes/events.js'
 import { agentRuntimeRouter } from './routes/agentRuntime.js'
 import { streamRouter } from './routes/stream.js'
-import { tenants, agents, worldStates } from './db/mongo.js'
+import { tenants, agents, worldStates, ensureIndexes } from './db/mongo.js'
 import { subscribeToFleet, unsubscribeFromFleet } from './db/memory.js'
 import type { Env } from './types.js'
 
@@ -45,6 +45,8 @@ const port = Number(process.env.PORT ?? 3001)
 const server = serve({ fetch: app.fetch, port }, () => {
   console.log(`CommonOS API running on http://localhost:${port}`)
 })
+
+void ensureIndexes()
 
 // WebSocket server attached to the same HTTP server
 // GET /fleets/:id/stream?token=<api-key-or-agent-token>

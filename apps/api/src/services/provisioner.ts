@@ -207,5 +207,9 @@ async function launchCloudInstance(
 		}
 	} catch (err) {
 		console.error(`[provisioner] cloud launch failed for ${agentDoc._id}:`, err);
+		await (await agents()).updateOne(
+			{ _id: agentDoc._id },
+			{ $set: { status: "failed", updatedAt: new Date() } },
+		);
 	}
 }
