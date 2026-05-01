@@ -30,7 +30,7 @@ export interface LaunchOptions {
 }
 
 export interface LaunchedService {
-	/** Kubernetes namespace name — used as instanceId in agent.vm */
+	/** Kubernetes namespace name — stored as namespaceId in agent.pod */
 	serviceId: string;
 	sessionId: string;
 }

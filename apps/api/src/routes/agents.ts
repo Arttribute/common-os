@@ -30,7 +30,6 @@ router.post("/:id/agents", async (c) => {
 			plugins?: string[];
 			dmPolicy?: "pairing" | "allowlist" | "open" | "disabled";
 		};
-		instanceType?: string;
 	}>();
 	if (!body.role) return c.json({ error: "role is required" }, 400);
 
@@ -60,7 +59,6 @@ router.post("/:id/agents", async (c) => {
 						dmPolicy: body.openclawConfig.dmPolicy ?? "pairing",
 					}
 				: null,
-			instanceType: body.instanceType ?? "t3.medium",
 		});
 		return c.json(agent, 201);
 	} catch (err) {
@@ -138,12 +136,12 @@ router.delete("/:id/agents/:agentId", async (c) => {
 		}).lean();
 		if (!agent) return c.json({ error: "agent not found" }, 404);
 
-		if (agent.vm.instanceId) {
+		if (agent.pod.namespaceId) {
 			try {
-				if (agent.vm.provider === "gcp") {
-					await terminateAgentPod(agent.vm.instanceId);
+				if (agent.pod.provider === "gcp") {
+					await terminateAgentPod(agent.pod.namespaceId);
 				} else {
-					await terminateAgentPodEks(agent.vm.instanceId);
+					await terminateAgentPodEks(agent.pod.namespaceId);
 				}
 			} catch {
 				// Don't block if cloud call fails

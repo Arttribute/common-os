@@ -26,13 +26,25 @@ async function connect(): Promise<void> {
 export async function ensureIndexes(): Promise<void> {
   try {
     await connect()
-    // Drop the vm.instanceId index unconditionally so syncIndexes recreates it
-    // with sparse:true — without the drop, Mongoose won't update an existing
-    // index whose options differ from the schema definition.
-    try {
-      await AgentModel.collection.dropIndex('vm.instanceId_1')
-      console.log('[mongo] dropped stale vm.instanceId_1 index')
-    } catch { /* index already absent or already correct — ignore */ }
+
+    // One-time migration: rename vm → pod for any documents still using the
+    // old schema. Uses an aggregation pipeline update so it's atomic per doc.
+    const migrated = await AgentModel.collection.updateMany(
+      { vm: { $exists: true }, pod: { $exists: false } },
+      [
+        { $set: { pod: { namespaceId: '$vm.instanceId', provider: '$vm.provider', region: '$vm.region' } } },
+        { $unset: 'vm' },
+      ],
+    )
+    if (migrated.modifiedCount > 0) {
+      console.log(`[mongo] migrated ${migrated.modifiedCount} agents from vm → pod`)
+    }
+
+    // Drop legacy indexes so syncIndexes recreates them correctly.
+    for (const name of ['vm.instanceId_1', 'pod.namespaceId_1']) {
+      try { await AgentModel.collection.dropIndex(name) } catch { /* absent — ok */ }
+    }
+
     await Promise.all([
       TenantModel.syncIndexes(),
       FleetModel.syncIndexes(),

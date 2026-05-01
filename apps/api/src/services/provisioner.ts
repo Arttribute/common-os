@@ -14,7 +14,6 @@ interface ProvisionAgentOptions {
 	integrationPath: "native" | "openclaw" | "guest";
 	dockerImage: string | null;
 	openclawConfig: AgentDoc["config"]["openclawConfig"];
-	instanceType: string;
 }
 
 export async function provisionAgent(
@@ -29,8 +28,8 @@ export async function provisionAgent(
 	const startX = roomDef ? roomDef.bounds.x + 2 : 2;
 	const startY = roomDef ? roomDef.bounds.y + 2 : 2;
 
-	const provider = (process.env.CLOUD_PROVIDER as "aws" | "gcp") ?? "aws";
-	const region = process.env.CLOUD_REGION ?? "us-east-1";
+	const provider = (process.env.CLOUD_PROVIDER as "gcp" | "aws") ?? "gcp";
+	const region = process.env.GCP_REGION ?? process.env.CLOUD_REGION ?? "europe-west1";
 
 	const commons =
 		opts.integrationPath === "openclaw"
@@ -42,14 +41,10 @@ export async function provisionAgent(
 		fleetId: opts.fleetId,
 		tenantId: opts.tenantId,
 		commons,
-		vm: {
-			instanceId: null,
+		pod: {
+			namespaceId: null,
 			provider,
 			region,
-			instanceType: opts.instanceType,
-			publicIp: null,
-			privateIp: null,
-			diskGb: 20,
 		},
 		agentTokenHash,
 		status: "provisioning",
@@ -148,7 +143,7 @@ async function launchCloudInstance(
 	const apiUrl = process.env.API_URL ?? "http://localhost:3001";
 
 	try {
-		if (agentDoc.vm.provider === "gcp") {
+		if (agentDoc.pod.provider === "gcp") {
 			const result = await launchAgentPod({
 				agentId: agentDoc._id,
 				agentToken,
@@ -170,7 +165,7 @@ async function launchCloudInstance(
 				{ _id: agentDoc._id },
 				{
 					$set: {
-						"vm.instanceId": result.serviceId,
+						"pod.namespaceId": result.serviceId,
 						status: "starting",
 						updatedAt: new Date(),
 					},
@@ -198,7 +193,7 @@ async function launchCloudInstance(
 				{ _id: agentDoc._id },
 				{
 					$set: {
-						"vm.instanceId": result.serviceId,
+						"pod.namespaceId": result.serviceId,
 						status: "starting",
 						updatedAt: new Date(),
 					},

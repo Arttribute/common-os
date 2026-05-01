@@ -15,6 +15,7 @@ export type AgentStatus =
   | 'stopping'
   | 'stopped'
   | 'terminated'
+  | 'failed'
   | 'error'
 
 export interface TenantDoc {
@@ -57,14 +58,10 @@ export interface AgentDoc {
     apiKey: string | null
     walletAddress: string | null
   }
-  vm: {
-    instanceId: string | null
-    provider: 'aws' | 'gcp'
+  pod: {
+    namespaceId: string | null
+    provider: 'gcp' | 'aws'
     region: string
-    instanceType: string
-    publicIp: string | null
-    privateIp: string | null
-    diskGb: number
   }
   agentTokenHash: string
   status: AgentStatus

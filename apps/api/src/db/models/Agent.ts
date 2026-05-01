@@ -11,14 +11,10 @@ const AgentSchema = new Schema<AgentDoc>(
       apiKey: String,
       walletAddress: String,
     },
-    vm: {
-      instanceId: String,
+    pod: {
+      namespaceId: String,
       provider: String,
       region: String,
-      instanceType: String,
-      publicIp: String,
-      privateIp: String,
-      diskGb: Number,
     },
     agentTokenHash: { type: String, required: true },
     status: String,
@@ -44,6 +40,6 @@ const AgentSchema = new Schema<AgentDoc>(
 AgentSchema.index({ tenantId: 1, status: 1 })
 AgentSchema.index({ fleetId: 1 })
 AgentSchema.index({ agentTokenHash: 1 }, { unique: true })
-AgentSchema.index({ 'vm.instanceId': 1 }, { unique: true, sparse: true })
+AgentSchema.index({ 'pod.namespaceId': 1 }, { unique: true, sparse: true })
 
 export default mongoose.models.Agent || mongoose.model<AgentDoc>('Agent', AgentSchema)
