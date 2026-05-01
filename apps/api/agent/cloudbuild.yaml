@@ -36,3 +36,6 @@ steps:
       - --all-tags
 
 timeout: 1800s
+
+options:
+  logging: CLOUD_LOGGING_ONLY

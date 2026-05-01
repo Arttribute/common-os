@@ -51,5 +51,5 @@ steps:
 
     timeout: 1800s
 
-# options:
-#   machineType: "E2_MEDIUM"
+options:
+  logging: CLOUD_LOGGING_ONLY
