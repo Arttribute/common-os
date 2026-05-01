@@ -262,12 +262,9 @@ export async function launchAgentPod(
 	const namespace = `agent-${k8sId}`;
 	const podName = `agent-${k8sId}`;
 
-	console.log(`[cloud-init] ensuring agent storage + kubeconfig for ${opts.agentId}...`);
-	await Promise.all([
-		getKubeConfig(projectId, region, clusterName),
-		ensureAgentStorage(projectId, bucketName, opts.agentId, sessionId),
-	]);
-	console.log(`[cloud-init] storage ready, kubeconfig obtained`);
+	console.log(`[cloud-init] getting kubeconfig for ${opts.agentId}...`);
+	await getKubeConfig(projectId, region, clusterName);
+	console.log(`[cloud-init] kubeconfig obtained`);
 
 	// Namespace per agent — provides isolation boundary
 	console.log(`[cloud-init] creating namespace ${namespace}...`);
@@ -306,7 +303,6 @@ export async function launchAgentPod(
 				"managed-by": "common-os",
 				"agent-id": opts.agentId,
 			},
-			annotations: { "gke-gcsfuse/volumes": "true" },
 		},
 		spec: {
 			restartPolicy: "Always",
@@ -329,16 +325,9 @@ export async function launchAgentPod(
 				},
 			],
 			volumes: [
-				{
-					name: "agent-storage",
-					csi: {
-						driver: "gcsfuse.csi.storage.gke.io",
-						volumeAttributes: {
-							bucketName,
-							mountOptions: `only-dir=agents/${opts.agentId}/sessions/${sessionId}`,
-						},
-					},
-				},
+				// emptyDir for now — avoids GCS FUSE Workload Identity setup.
+				// Swap back to gcsfuse.csi.storage.gke.io once WI is wired up.
+				{ name: "agent-storage", emptyDir: {} },
 			],
 		},
 	};
