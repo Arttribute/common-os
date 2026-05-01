@@ -26,6 +26,13 @@ async function connect(): Promise<void> {
 export async function ensureIndexes(): Promise<void> {
   try {
     await connect()
+    // Drop the vm.instanceId index unconditionally so syncIndexes recreates it
+    // with sparse:true — without the drop, Mongoose won't update an existing
+    // index whose options differ from the schema definition.
+    try {
+      await AgentModel.collection.dropIndex('vm.instanceId_1')
+      console.log('[mongo] dropped stale vm.instanceId_1 index')
+    } catch { /* index already absent or already correct — ignore */ }
     await Promise.all([
       TenantModel.syncIndexes(),
       FleetModel.syncIndexes(),
