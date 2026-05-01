@@ -142,64 +142,44 @@ async function launchCloudInstance(
 ): Promise<void> {
 	const apiUrl = process.env.API_URL ?? "http://localhost:3001";
 
+	const podOpts = {
+		agentId: agentDoc._id,
+		agentToken,
+		fleetId: agentDoc.fleetId,
+		tenantId: agentDoc.tenantId,
+		apiUrl,
+		role: opts.role,
+		integrationPath: opts.integrationPath,
+		dockerImage: opts.dockerImage,
+		commonsApiKey: commonsApiKey ?? "",
+		commonsAgentId: agentDoc.commons.agentId ?? "",
+		runnerUrl: process.env.RUNNER_URL,
+		worldRoom: agentDoc.world.room,
+		worldX: agentDoc.world.x,
+		worldY: agentDoc.world.y,
+	};
+
+	const deadline = new Promise<never>((_, reject) =>
+		setTimeout(() => reject(new Error("pod launch timed out after 3m")), 3 * 60 * 1000),
+	);
+
 	try {
-		if (agentDoc.pod.provider === "gcp") {
-			const result = await launchAgentPod({
-				agentId: agentDoc._id,
-				agentToken,
-				fleetId: agentDoc.fleetId,
-				tenantId: agentDoc.tenantId,
-				apiUrl,
-				role: opts.role,
-				integrationPath: opts.integrationPath,
-				dockerImage: opts.dockerImage,
-				commonsApiKey: commonsApiKey ?? "",
-				commonsAgentId: agentDoc.commons.agentId ?? "",
-				runnerUrl: process.env.RUNNER_URL,
-				worldRoom: agentDoc.world.room,
-				worldX: agentDoc.world.x,
-				worldY: agentDoc.world.y,
-			});
+		const launch = agentDoc.pod.provider === "gcp"
+			? launchAgentPod(podOpts)
+			: launchAgentPodEks(podOpts);
 
-			await (await agents()).updateOne(
-				{ _id: agentDoc._id },
-				{
-					$set: {
-						"pod.namespaceId": result.serviceId,
-						status: "starting",
-						updatedAt: new Date(),
-					},
-				},
-			);
-		} else {
-			const result = await launchAgentPodEks({
-				agentId: agentDoc._id,
-				agentToken,
-				fleetId: agentDoc.fleetId,
-				tenantId: agentDoc.tenantId,
-				apiUrl,
-				role: opts.role,
-				integrationPath: opts.integrationPath,
-				dockerImage: opts.dockerImage,
-				commonsApiKey: commonsApiKey ?? "",
-				commonsAgentId: agentDoc.commons.agentId ?? "",
-				runnerUrl: process.env.RUNNER_URL,
-				worldRoom: agentDoc.world.room,
-				worldX: agentDoc.world.x,
-				worldY: agentDoc.world.y,
-			});
+		const result = await Promise.race([launch, deadline]);
 
-			await (await agents()).updateOne(
-				{ _id: agentDoc._id },
-				{
-					$set: {
-						"pod.namespaceId": result.serviceId,
-						status: "starting",
-						updatedAt: new Date(),
-					},
+		await (await agents()).updateOne(
+			{ _id: agentDoc._id },
+			{
+				$set: {
+					"pod.namespaceId": result.serviceId,
+					status: "starting",
+					updatedAt: new Date(),
 				},
-			);
-		}
+			},
+		);
 	} catch (err) {
 		console.error(`[provisioner] cloud launch failed for ${agentDoc._id}:`, err);
 		await (await agents()).updateOne(

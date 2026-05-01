@@ -99,7 +99,7 @@ async function getKubeConfig(
 		});
 		endpoint = cluster.endpoint ?? "";
 		caCert = cluster.masterAuth?.clusterCaCertificate ?? undefined;
-		console.log(`[cloud-init] GKE cluster "${clusterName}" found`);
+		console.log(`[cloud-init] GKE cluster "${clusterName}" found (endpoint: ${endpoint})`);
 	} catch {
 		// Cluster doesn't exist — create it
 		console.log(`[cloud-init] creating GKE cluster "${clusterName}"...`);
@@ -139,10 +139,12 @@ async function getKubeConfig(
 		console.log(`[cloud-init] GKE cluster "${clusterName}" created`);
 	}
 
+	console.log(`[cloud-init] fetching GKE access token...`);
 	const auth = new GoogleAuth({
 		scopes: ["https://www.googleapis.com/auth/cloud-platform"],
 	});
 	const accessToken = await auth.getAccessToken();
+	console.log(`[cloud-init] GKE access token obtained`);
 
 	const kc = new k8s.KubeConfig();
 	kc.loadFromOptions({
@@ -191,12 +193,15 @@ export async function launchAgentPod(
 	const namespace = `agent-${opts.agentId}`;
 	const podName = `agent-${opts.agentId}`;
 
+	console.log(`[cloud-init] ensuring agent storage for ${opts.agentId}...`);
 	await ensureAgentStorage(projectId, bucketName, opts.agentId, sessionId);
+	console.log(`[cloud-init] storage ready, getting kubeconfig...`);
 
 	const kc = await getKubeConfig(projectId, region, clusterName);
 	const coreApi = kc.makeApiClient(k8s.CoreV1Api);
 
 	// Namespace per agent — provides isolation boundary
+	console.log(`[cloud-init] creating namespace ${namespace}...`);
 	try {
 		await coreApi.createNamespace({
 			body: {
@@ -214,6 +219,7 @@ export async function launchAgentPod(
 	} catch {
 		// Already exists — reuse
 	}
+	console.log(`[cloud-init] namespace ready, creating pod ${podName}...`);
 
 	const envVars: k8s.V1EnvVar[] = [
 		{ name: "AGENT_ID",             value: opts.agentId },
@@ -244,12 +250,10 @@ export async function launchAgentPod(
 					"managed-by": "common-os",
 					"agent-id": opts.agentId,
 				},
-				// Required for GCS FUSE CSI driver
 				annotations: { "gke-gcsfuse/volumes": "true" },
 			},
 			spec: {
 				restartPolicy: "Always",
-				// Workload Identity SA — needs storage.objectAdmin on the bucket
 				serviceAccountName: agentSa,
 				containers: [
 					{
