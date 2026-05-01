@@ -7,5 +7,5 @@
 	"access": "public",
 	"baseBranch": "main",
 	"updateInternalDependencies": "patch",
-	"ignore": ["common-os-api", "common-os-web"]
+	"ignore": ["@common-os/api", "@common-os/web"]
 }
