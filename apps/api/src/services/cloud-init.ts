@@ -185,9 +185,6 @@ export async function launchAgentPod(
 		process.env.AGENT_IMAGE_URL ??
 		`${region}-docker.pkg.dev/${projectId}/common-os/agent:latest`;
 	const bucketName = process.env.GCS_BUCKET_NAME ?? "agent-session-state-bucket";
-	const agentSa =
-		process.env.GKE_AGENT_SERVICE_ACCOUNT ??
-		`common-os-agent@${projectId}.iam.gserviceaccount.com`;
 
 	const sessionId = uuidv4();
 	const namespace = `agent-${opts.agentId}`;
@@ -254,7 +251,6 @@ export async function launchAgentPod(
 			},
 			spec: {
 				restartPolicy: "Always",
-				serviceAccountName: agentSa,
 				containers: [
 					{
 						name: "agent",

@@ -38,9 +38,7 @@ steps:
       ]
 
   - name: "gcr.io/cloud-builders/gcloud"
-
     entrypoint: gcloud
-
     args:
       - run
       - deploy
@@ -48,7 +46,7 @@ steps:
       - --region=europe-west1
       - --platform=managed
       - --image=europe-west1-docker.pkg.dev/$PROJECT_ID/common-os/runner:prod
-
+      - --service-account=common-os-api@$PROJECT_ID.iam.gserviceaccount.com
     timeout: 1800s
 
 options:
