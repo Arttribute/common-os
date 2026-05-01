@@ -23,10 +23,11 @@ app.post("/run", async (c) => {
 	}
 
 	try {
-		const args = ["run", "--agent-id", body.agentId, "--prompt", body.prompt];
-		if (body.sessionId) args.push("--session-id", body.sessionId);
+		const args = ["run", "--agent", body.agentId, body.prompt, "--json"];
+		if (body.sessionId) args.push("--session", body.sessionId);
+		console.log("Command: agc", args.join(" "));
 		const result = await Bun.$`agc ${args}`;
-		const output = await result.text();
+		const output = await result.json();
 		return c.json({
 			agentId: body.agentId,
 			sessionId: body.sessionId ?? null,
