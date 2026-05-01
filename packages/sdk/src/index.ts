@@ -75,6 +75,7 @@ export class CommonOSClient {
 		const res = await fetch(`${this.apiUrl}${path}`, {
 			headers: { Authorization: `Bearer ${this.apiKey}` },
 		});
+		if (!res.ok) throw new Error(`GET ${path} failed: ${res.status} ${res.statusText}`);
 		return res.json();
 	}
 
@@ -87,6 +88,7 @@ export class CommonOSClient {
 			},
 			body: JSON.stringify(body),
 		});
+		if (!res.ok) throw new Error(`POST ${path} failed: ${res.status} ${res.statusText}`);
 		return res.json();
 	}
 
@@ -99,6 +101,7 @@ export class CommonOSClient {
 			},
 			body: JSON.stringify(body),
 		});
+		if (!res.ok) throw new Error(`PATCH ${path} failed: ${res.status} ${res.statusText}`);
 		return res.json();
 	}
 
@@ -107,6 +110,7 @@ export class CommonOSClient {
 			method: "DELETE",
 			headers: { Authorization: `Bearer ${this.apiKey}` },
 		});
+		if (!res.ok) throw new Error(`DELETE ${path} failed: ${res.status} ${res.statusText}`);
 		return res.json();
 	}
 }

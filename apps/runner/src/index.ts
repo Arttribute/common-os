@@ -21,7 +21,9 @@ app.post("/run", async (c) => {
 	}
 
 	try {
-		const result = await Bun.$`agent-commons run --agent-id ${{ raw: body.agentId }}${body.sessionId ? ` --session-id ${{ raw: body.sessionId }}` : ""} --prompt ${{ raw: body.prompt }}`;
+		const args = ["run", "--agent-id", body.agentId, "--prompt", body.prompt];
+		if (body.sessionId) args.push("--session-id", body.sessionId);
+		const result = await Bun.$`agent-commons ${args}`;
 		const output = await result.text();
 		return c.json({ agentId: body.agentId, sessionId: body.sessionId ?? null, output });
 	} catch (error) {

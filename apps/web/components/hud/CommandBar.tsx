@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { useAgentStore } from '@/store/agentStore'
 import { useWorldStore } from '@/store/worldStore'
+import { useAuthStore } from '@/store/authStore'
 
 export function CommandBar() {
   const [input, setInput] = useState('')
@@ -12,16 +13,19 @@ export function CommandBar() {
   const setCurrentTask = useAgentStore((s) => s.setCurrentTask)
   const updateStatus = useAgentStore((s) => s.updateStatus)
   const setCurrentAction = useAgentStore((s) => s.setCurrentAction)
-  const fleetId = useWorldStore((s) => s.fleetId)
+  const storeFleetId = useWorldStore((s) => s.fleetId)
+  const storedApiKey = useAuthStore((s) => s.apiKey)
   const searchParams = useSearchParams()
 
   const selected = selectedId ? agents[selectedId] : null
   const shortRole = selected?.role.replace(/-/g, ' ') ?? 'an agent'
 
   const apiUrl = process.env.NEXT_PUBLIC_API_URL
-  const apiKey = process.env.NEXT_PUBLIC_API_KEY
+  // URL param takes priority; store value is fallback (set from snapshot)
   const urlFleet = searchParams.get('fleet')
-  const activeFleetId = fleetId ?? urlFleet
+  const activeFleetId = urlFleet ?? storeFleetId
+  // Prefer the tenant key stored after login; fall back to static env var (demo/CLI mode)
+  const apiKey = storedApiKey ?? process.env.NEXT_PUBLIC_API_KEY
 
   const isLive = Boolean(apiUrl && apiKey && activeFleetId)
 

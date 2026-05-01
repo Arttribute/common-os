@@ -27,8 +27,18 @@ export interface DaemonConfig {
 }
 
 export function loadConfig(path = "/etc/common-os/config.json"): DaemonConfig {
-  const raw = readFileSync(path, "utf-8");
-  const cfg = JSON.parse(raw) as DaemonConfig;
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf-8");
+  } catch (err) {
+    throw new Error(`daemon: could not read config file at ${path}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  let cfg: DaemonConfig;
+  try {
+    cfg = JSON.parse(raw) as DaemonConfig;
+  } catch (err) {
+    throw new Error(`daemon: config file at ${path} contains invalid JSON: ${err instanceof Error ? err.message : String(err)}`);
+  }
   cfg.openclawGatewayUrl ??= "http://localhost:18789";
   cfg.workspaceDir ??= "/mnt/shared";
   return cfg;

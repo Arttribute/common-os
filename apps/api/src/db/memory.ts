@@ -11,7 +11,10 @@ export function subscribeToFleet(fleetId: string, ws: WebSocket): void {
 }
 
 export function unsubscribeFromFleet(fleetId: string, ws: WebSocket): void {
-  fleetSockets.get(fleetId)?.delete(ws)
+  const sockets = fleetSockets.get(fleetId)
+  if (!sockets) return
+  sockets.delete(ws)
+  if (sockets.size === 0) fleetSockets.delete(fleetId)
 }
 
 export function broadcastToFleet(fleetId: string, data: unknown): void {

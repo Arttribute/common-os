@@ -37,7 +37,7 @@ export class GCPProvider implements CloudProvider {
 				],
 				networkInterfaces: [{ accessConfigs: [{ type: "ONE_TO_ONE_NAT" }] }],
 				metadata: {
-					items: [{ key: "user-data", value: config.startupScript }],
+					items: [{ key: "startup-script", value: config.startupScript }],
 				},
 				labels: config.tags,
 			},

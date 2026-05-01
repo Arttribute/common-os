@@ -194,7 +194,11 @@ export default function DashboardPage() {
   }
 
   const terminateAgent = async (fleetId: string, agentId: string) => {
-    await apiFetch(`/fleets/${fleetId}/agents/${agentId}`, { method: 'DELETE' })
+    const res = await apiFetch(`/fleets/${fleetId}/agents/${agentId}`, { method: 'DELETE' })
+    if (!res.ok) {
+      setError(`could not terminate agent (${res.status})`)
+      return
+    }
     setAgentsByFleet((prev) => ({
       ...prev,
       [fleetId]: (prev[fleetId] ?? []).filter((a) => a._id !== agentId),
