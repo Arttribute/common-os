@@ -103,33 +103,52 @@ export async function registerWithAgentCommons(
 		return { agentId: null, apiKey: null, walletAddress: null };
 	}
 
+	const headers = {
+		"Authorization": `Bearer ${platformKey}`,
+		"Content-Type": "application/json",
+	};
+
 	try {
-		const res = await fetch("https://api.agentcommons.io/v1/agents", {
+		// Step 1: create the agent
+		const agentRes = await fetch("https://api.agentcommons.io/v1/agents", {
 			method: "POST",
-			headers: {
-				"x-api-key": platformKey,
-				"Content-Type": "application/json",
-			},
+			headers,
 			body: JSON.stringify({
 				name: `${role}-${agentId}`,
 				instructions: systemPrompt,
 			}),
 		});
+		if (!agentRes.ok) {
+			console.error(`[provisioner] Agent Commons create agent failed: ${agentRes.status}`);
+			return { agentId: null, apiKey: null, walletAddress: null };
+		}
+		const agentData = (await agentRes.json()) as { agentId?: string };
+		const commonsAgentId = agentData.agentId ?? null;
+		if (!commonsAgentId) return { agentId: null, apiKey: null, walletAddress: null };
 
-		if (!res.ok) return { agentId: null, apiKey: null, walletAddress: null };
-
-		const data = (await res.json()) as {
-			id?: string;
-			apiKey?: string;
-			walletAddress?: string;
-		};
+		// Step 2: create an API key for the agent (plaintext key returned once only)
+		const keyRes = await fetch("https://api.agentcommons.io/v1/auth/api-keys", {
+			method: "POST",
+			headers,
+			body: JSON.stringify({
+				principalId: commonsAgentId,
+				principalType: "agent",
+				label: `commonos-${agentId}`,
+			}),
+		});
+		if (!keyRes.ok) {
+			console.error(`[provisioner] Agent Commons create API key failed: ${keyRes.status}`);
+			return { agentId: commonsAgentId, apiKey: null, walletAddress: null };
+		}
+		const keyData = (await keyRes.json()) as { key?: string };
 
 		return {
-			agentId: data.id ?? null,
-			apiKey: data.apiKey ?? null,
-			walletAddress: data.walletAddress ?? null,
+			agentId: commonsAgentId,
+			apiKey: keyData.key ?? null,
+			walletAddress: null,
 		};
-	} catch {
+	} catch (err) {
+		console.error("[provisioner] Agent Commons registration error:", err);
 		return { agentId: null, apiKey: null, walletAddress: null };
 	}
 }

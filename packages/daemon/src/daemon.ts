@@ -493,15 +493,15 @@ async function executeTask(description: string): Promise<string> {
 
 async function runViaNative(description: string): Promise<string> {
   const agentId = config.commonsAgentId || config.agentId;
-  // Run agc directly in this pod — the agent's tools execute here, in its own
-  // filesystem and process space, not on a shared Cloud Run instance.
   const proc = Bun.spawn(
-    ["agc", "run", "--agent-id", agentId, "--prompt", description],
+    // agc run <prompt> --agent <id> --no-stream
+    // AGC_API_KEY is the agent-specific key returned by Agent Commons at registration
+    ["agc", "run", "--agent", agentId, "--no-stream", description],
     {
       cwd: WORKSPACE_DIR,
       env: {
         ...process.env,
-        COMMONS_API_KEY: config.commonsApiKey,
+        AGC_API_KEY: config.commonsApiKey,
       },
       stdout: "pipe",
       stderr: "pipe",
