@@ -180,6 +180,58 @@ async function getKubeConfig(
 	return kc;
 }
 
+// ─── Retry helpers ────────────────────────────────────────────────────────
+
+async function ensureNamespaceWithRetry(
+	projectId: string,
+	region: string,
+	clusterName: string,
+	namespace: string,
+	labels: Record<string, string>,
+	maxAttempts = 4,
+): Promise<void> {
+	const cacheKey = `${projectId}/${region}/${clusterName}`;
+	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+		try {
+			const kc = await getKubeConfig(projectId, region, clusterName);
+			const coreApi = kc.makeApiClient(k8s.CoreV1Api);
+			await coreApi.createNamespace({ body: { metadata: { name: namespace, labels } } });
+			return;
+		} catch (err: unknown) {
+			const code = (err as { statusCode?: number })?.statusCode;
+			if (code === 409) return; // Already exists — success
+			if (attempt === maxAttempts) throw err;
+			console.log(`[cloud-init] namespace creation attempt ${attempt} failed (${String(err)}), retrying with fresh client...`);
+			kubeConfigCache.delete(cacheKey);
+		}
+	}
+}
+
+async function ensurePodWithRetry(
+	projectId: string,
+	region: string,
+	clusterName: string,
+	namespace: string,
+	podBody: k8s.V1Pod,
+	maxAttempts = 4,
+): Promise<void> {
+	const cacheKey = `${projectId}/${region}/${clusterName}`;
+	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+		try {
+			const kc = await getKubeConfig(projectId, region, clusterName);
+			const coreApi = kc.makeApiClient(k8s.CoreV1Api);
+			await coreApi.createNamespacedPod({ namespace, body: podBody });
+			return;
+		} catch (err: unknown) {
+			const code = (err as { statusCode?: number })?.statusCode;
+			if (code === 409) return; // Already exists — success
+			if (attempt === maxAttempts) throw err;
+			console.log(`[cloud-init] pod creation attempt ${attempt} failed (${String(err)}), retrying with fresh client...`);
+			kubeConfigCache.delete(cacheKey);
+		}
+	}
+}
+
 // ─── Per-agent GKE pod ────────────────────────────────────────────────────
 
 /**
@@ -205,33 +257,20 @@ export async function launchAgentPod(
 	const podName = `agent-${opts.agentId}`;
 
 	console.log(`[cloud-init] ensuring agent storage + kubeconfig for ${opts.agentId}...`);
-	const [kc] = await Promise.all([
+	await Promise.all([
 		getKubeConfig(projectId, region, clusterName),
 		ensureAgentStorage(projectId, bucketName, opts.agentId, sessionId),
 	]);
 	console.log(`[cloud-init] storage ready, kubeconfig obtained`);
 
-	const coreApi = kc.makeApiClient(k8s.CoreV1Api);
-
 	// Namespace per agent — provides isolation boundary
 	console.log(`[cloud-init] creating namespace ${namespace}...`);
-	try {
-		await coreApi.createNamespace({
-			body: {
-				metadata: {
-					name: namespace,
-					labels: {
-						"managed-by": "common-os",
-						"agent-id": opts.agentId,
-						"fleet-id": opts.fleetId,
-						"tenant-id": opts.tenantId,
-					},
-				},
-			},
-		});
-	} catch {
-		// Already exists — reuse
-	}
+	await ensureNamespaceWithRetry(projectId, region, clusterName, namespace, {
+		"managed-by": "common-os",
+		"agent-id": opts.agentId,
+		"fleet-id": opts.fleetId,
+		"tenant-id": opts.tenantId,
+	});
 	console.log(`[cloud-init] namespace ready, creating pod ${podName}...`);
 
 	const envVars: k8s.V1EnvVar[] = [
@@ -253,53 +292,52 @@ export async function launchAgentPod(
 		{ name: "WORLD_Y",              value: String(opts.worldY ?? 2) },
 	];
 
-	await coreApi.createNamespacedPod({
-		namespace,
-		body: {
-			metadata: {
-				name: podName,
-				namespace,
-				labels: {
-					"managed-by": "common-os",
-					"agent-id": opts.agentId,
-				},
-				annotations: { "gke-gcsfuse/volumes": "true" },
+	const podBody: k8s.V1Pod = {
+		metadata: {
+			name: podName,
+			namespace,
+			labels: {
+				"managed-by": "common-os",
+				"agent-id": opts.agentId,
 			},
-			spec: {
-				restartPolicy: "Always",
-				containers: [
-					{
-						name: "agent",
-						image: imageUrl,
-						imagePullPolicy: "IfNotPresent",
-						env: envVars,
-						resources: {
-							requests: { cpu: "250m", memory: "256Mi" },
-							limits:   { cpu: "1",    memory: "1Gi"  },
-						},
-						volumeMounts: [
-							{
-								name:      "agent-storage",
-								mountPath: "/mnt/shared",
-							},
-						],
-					},
-				],
-				volumes: [
-					{
-						name: "agent-storage",
-						csi: {
-							driver: "gcsfuse.csi.storage.gke.io",
-							volumeAttributes: {
-								bucketName,
-								mountOptions: `only-dir=agents/${opts.agentId}/sessions/${sessionId}`,
-							},
-						},
-					},
-				],
-			},
+			annotations: { "gke-gcsfuse/volumes": "true" },
 		},
-	});
+		spec: {
+			restartPolicy: "Always",
+			containers: [
+				{
+					name: "agent",
+					image: imageUrl,
+					imagePullPolicy: "IfNotPresent",
+					env: envVars,
+					resources: {
+						requests: { cpu: "250m", memory: "256Mi" },
+						limits:   { cpu: "1",    memory: "1Gi"  },
+					},
+					volumeMounts: [
+						{
+							name:      "agent-storage",
+							mountPath: "/mnt/shared",
+						},
+					],
+				},
+			],
+			volumes: [
+				{
+					name: "agent-storage",
+					csi: {
+						driver: "gcsfuse.csi.storage.gke.io",
+						volumeAttributes: {
+							bucketName,
+							mountOptions: `only-dir=agents/${opts.agentId}/sessions/${sessionId}`,
+						},
+					},
+				},
+			],
+		},
+	};
+
+	await ensurePodWithRetry(projectId, region, clusterName, namespace, podBody);
 
 	console.log(`[cloud-init] pod ${podName} created in namespace ${namespace}`);
 	return { serviceId: namespace, sessionId };
