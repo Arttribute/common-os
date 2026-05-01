@@ -257,8 +257,10 @@ export async function launchAgentPod(
 	const bucketName = process.env.GCS_BUCKET_NAME ?? "agent-session-state-bucket";
 
 	const sessionId = uuidv4();
-	const namespace = `agent-${opts.agentId}`;
-	const podName = `agent-${opts.agentId}`;
+	// Kubernetes names must be RFC 1123: lowercase alphanumeric + '-' only
+	const k8sId = opts.agentId.replace(/_/g, "-");
+	const namespace = `agent-${k8sId}`;
+	const podName = `agent-${k8sId}`;
 
 	console.log(`[cloud-init] ensuring agent storage + kubeconfig for ${opts.agentId}...`);
 	await Promise.all([
@@ -462,8 +464,9 @@ export async function launchAgentPodEks(opts: LaunchOptions): Promise<LaunchedSe
 	const efsId       = process.env.EFS_FILE_SYSTEM_ID ?? "";
 
 	const sessionId = uuidv4();
-	const namespace = `agent-${opts.agentId}`;
-	const podName   = `agent-${opts.agentId}`;
+	const k8sId = opts.agentId.replace(/_/g, "-");
+	const namespace = `agent-${k8sId}`;
+	const podName   = `agent-${k8sId}`;
 
 	const kc = await getEksKubeConfig(region, clusterName);
 	const coreApi = kc.makeApiClient(k8s.CoreV1Api);
