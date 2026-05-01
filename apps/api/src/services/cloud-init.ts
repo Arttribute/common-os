@@ -3,7 +3,24 @@ import { Storage } from "@google-cloud/storage";
 import { GoogleAuth } from "google-auth-library";
 import * as k8s from "@kubernetes/client-node";
 import { v4 as uuidv4 } from "uuid";
+import {
+	DescribeNetworkInterfacesCommand,
+	EC2Client,
+} from "@aws-sdk/client-ec2";
+import {
+	CreateServiceCommand,
+	DescribeServicesCommand,
+	DescribeTasksCommand,
+	ECSClient,
+	ListTasksCommand,
+	RegisterTaskDefinitionCommand,
+} from "@aws-sdk/client-ecs";
 import { EKSClient, DescribeClusterCommand } from "@aws-sdk/client-eks";
+import {
+	DescribeLoadBalancersCommand,
+	DescribeTargetGroupsCommand,
+	ElasticLoadBalancingV2Client,
+} from "@aws-sdk/client-elastic-load-balancing-v2";
 import { defaultProvider } from "@aws-sdk/credential-provider-node";
 import { SignatureV4 } from "@smithy/signature-v4";
 import { createHash, createHmac } from "crypto";
@@ -33,6 +50,55 @@ export interface LaunchedService {
 	/** Kubernetes namespace name — stored as namespaceId in agent.pod */
 	serviceId: string;
 	sessionId: string;
+}
+
+export interface DeployAgentOptions {
+	cluster: string;
+	containerUrl: string;
+	containerPort?: number;
+	serviceName?: string;
+	taskFamily?: string;
+	containerName?: string;
+	region?: string;
+	cpu?: number | string;
+	memory?: number | string;
+	desiredCount?: number;
+	subnetIds: string[];
+	securityGroupIds: string[];
+	assignPublicIp?: boolean;
+	executionRoleArn?: string;
+	taskRoleArn?: string;
+	command?: string[];
+	entryPoint?: string[];
+	environment?: Record<string, string>;
+	healthCheckGracePeriodSeconds?: number;
+	loadBalancer?: {
+		targetGroupArn: string;
+		listenerPort?: number;
+		protocol?: "http" | "https";
+	};
+}
+
+export interface DeployAgentAccessDetails {
+	mode: "load-balancer" | "public-ip" | "private-network";
+	url: string | null;
+	hostname: string | null;
+	publicIp: string | null;
+	privateIp: string | null;
+	port: number;
+	instructions: string;
+}
+
+export interface DeployAgentResult {
+	region: string;
+	cluster: string;
+	serviceName: string;
+	serviceArn: string;
+	taskDefinitionArn: string;
+	taskArn: string | null;
+	containerName: string;
+	containerUrl: string;
+	access: DeployAgentAccessDetails;
 }
 
 // ─── GCS storage bootstrap ────────────────────────────────────────────────
@@ -65,6 +131,8 @@ async function ensureAgentStorage(
 
 const GKE_POLL_MS = 5_000;
 const GKE_MAX_POLLS = 120;
+const ECS_POLL_MS = 5_000;
+const ECS_MAX_POLLS = 120;
 
 // Cache kubeconfig per cluster key; GKE access tokens last ~1 hour so we refresh at 55 min
 interface KubeConfigCache {
@@ -555,6 +623,333 @@ export async function terminateAgentPodEks(namespace: string): Promise<void> {
 	} catch (err) {
 		console.warn(`[cloud-init] could not delete EKS namespace ${namespace}:`, err);
 	}
+}
+
+function sanitizeAwsName(value: string): string {
+	const cleaned = value
+		.toLowerCase()
+		.replace(/[^a-z0-9-]/g, "-")
+		.replace(/-+/g, "-")
+		.replace(/^-|-$/g, "")
+		.slice(0, 255);
+
+	return cleaned || `agent-${uuidv4().slice(0, 8)}`;
+}
+
+function buildAccessUrl(
+	hostname: string,
+	port: number,
+	protocol: "http" | "https",
+): string {
+	const isDefaultPort =
+		(protocol === "http" && port === 80) ||
+		(protocol === "https" && port === 443);
+
+	return `${protocol}://${hostname}${isDefaultPort ? "" : `:${port}`}`;
+}
+
+async function waitForEcsServiceStable(
+	ecsClient: ECSClient,
+	cluster: string,
+	serviceName: string,
+): Promise<{ serviceArn: string }> {
+	for (let i = 0; i < ECS_MAX_POLLS; i++) {
+		const { failures, services } = await ecsClient.send(
+			new DescribeServicesCommand({ cluster, services: [serviceName] }),
+		);
+
+		if (failures?.length) {
+			const failure = failures[0];
+			throw new Error(
+				`ECS service lookup failed: ${failure.reason ?? failure.arn ?? "unknown error"}`,
+			);
+		}
+
+		const service = services?.[0];
+		if (!service?.serviceArn) {
+			throw new Error(`ECS service "${serviceName}" was not created`);
+		}
+
+		const desiredCount = service.desiredCount ?? 0;
+		const runningCount = service.runningCount ?? 0;
+		const pendingCount = service.pendingCount ?? 0;
+		const stable =
+			service.status === "ACTIVE" &&
+			runningCount === desiredCount &&
+			pendingCount === 0 &&
+			(service.deployments?.length ?? 0) <= 1;
+
+		if (stable) {
+			return { serviceArn: service.serviceArn };
+		}
+
+		await new Promise((resolve) => setTimeout(resolve, ECS_POLL_MS));
+	}
+
+	throw new Error(`Timed out waiting for ECS service ${serviceName} to stabilize`);
+}
+
+interface EcsTaskAttachment {
+	details?: Array<{ name?: string; value?: string }>;
+}
+
+interface EcsTaskShape {
+	taskArn?: string;
+	attachments?: EcsTaskAttachment[];
+}
+
+async function getServiceTask(
+	ecsClient: ECSClient,
+	cluster: string,
+	serviceName: string,
+): Promise<EcsTaskShape | null> {
+	for (let i = 0; i < ECS_MAX_POLLS; i++) {
+		const { taskArns } = await ecsClient.send(
+			new ListTasksCommand({ cluster, serviceName }),
+		);
+
+		if (taskArns?.length) {
+			const { tasks } = await ecsClient.send(
+				new DescribeTasksCommand({ cluster, tasks: taskArns }),
+			);
+			const task = tasks?.find((entry) => entry.lastStatus === "RUNNING") ?? tasks?.[0];
+			if (task) return task;
+		}
+
+		await new Promise((resolve) => setTimeout(resolve, ECS_POLL_MS));
+	}
+
+	return null;
+}
+
+async function resolveTaskNetworkAccess(
+	region: string,
+	task: EcsTaskShape,
+	port: number,
+): Promise<DeployAgentAccessDetails> {
+	const eniId = task.attachments
+		?.flatMap((attachment) => attachment.details ?? [])
+		.find((detail) => detail.name === "networkInterfaceId")
+		?.value;
+
+	if (!eniId) {
+		return {
+			mode: "private-network",
+			url: null,
+			hostname: null,
+			publicIp: null,
+			privateIp: null,
+			port,
+			instructions: `The ECS service is running, but the task network interface could not be resolved. Check the service in ECS and connect on port ${port}.`,
+		};
+	}
+
+	const ec2Client = new EC2Client({ region });
+	const { NetworkInterfaces } = await ec2Client.send(
+		new DescribeNetworkInterfacesCommand({ NetworkInterfaceIds: [eniId] }),
+	);
+	const networkInterface = NetworkInterfaces?.[0];
+	const publicIp = networkInterface?.Association?.PublicIp ?? null;
+	const privateIp = networkInterface?.PrivateIpAddress ?? null;
+
+	if (!publicIp) {
+		return {
+			mode: "private-network",
+			url: null,
+			hostname: null,
+			publicIp: null,
+			privateIp,
+			port,
+			instructions: `The service is reachable on the task's private network address ${privateIp ?? "<unknown>"}:${port}. It is not publicly exposed.`,
+		};
+	}
+
+	const url = buildAccessUrl(publicIp, port, "http");
+	return {
+		mode: "public-ip",
+		url,
+		hostname: publicIp,
+		publicIp,
+		privateIp,
+		port,
+		instructions: `Access the service at ${url}.`,
+	};
+}
+
+async function resolveLoadBalancerAccess(
+	region: string,
+	port: number,
+	loadBalancer: NonNullable<DeployAgentOptions["loadBalancer"]>,
+): Promise<DeployAgentAccessDetails> {
+	const elbClient = new ElasticLoadBalancingV2Client({ region });
+	const { TargetGroups } = await elbClient.send(
+		new DescribeTargetGroupsCommand({
+			TargetGroupArns: [loadBalancer.targetGroupArn],
+		}),
+	);
+	const targetGroup = TargetGroups?.[0];
+	const loadBalancerArn = targetGroup?.LoadBalancerArns?.[0];
+
+	if (!loadBalancerArn) {
+		return {
+			mode: "private-network",
+			url: null,
+			hostname: null,
+			publicIp: null,
+			privateIp: null,
+			port,
+			instructions: `The ECS service was attached to target group ${loadBalancer.targetGroupArn}, but no load balancer DNS name could be resolved.`,
+		};
+	}
+
+	const { LoadBalancers } = await elbClient.send(
+		new DescribeLoadBalancersCommand({
+			LoadBalancerArns: [loadBalancerArn],
+		}),
+	);
+	const dnsName = LoadBalancers?.[0]?.DNSName ?? null;
+	const listenerPort = loadBalancer.listenerPort ?? port;
+	const protocol = loadBalancer.protocol ?? "http";
+	const url = dnsName ? buildAccessUrl(dnsName, listenerPort, protocol) : null;
+
+	return {
+		mode: "load-balancer",
+		url,
+		hostname: dnsName,
+		publicIp: null,
+		privateIp: null,
+		port: listenerPort,
+		instructions: url
+			? `Access the service through the load balancer at ${url}.`
+			: `The service is attached to load balancer ${loadBalancerArn}. Resolve its DNS name in AWS before connecting.`,
+	};
+}
+
+/**
+ * Deploys a single-container ECS/Fargate service and returns how to reach it.
+ * The caller provides the cluster and networking so the helper can be reused
+ * across VPC layouts without assuming a default public topology.
+ */
+export async function deployAgent(
+	opts: DeployAgentOptions,
+): Promise<DeployAgentResult> {
+	if (!opts.cluster) throw new Error("cluster is required");
+	if (!opts.containerUrl) throw new Error("containerUrl is required");
+	if (!opts.subnetIds.length) throw new Error("at least one subnetId is required");
+	if (!opts.securityGroupIds.length) {
+		throw new Error("at least one securityGroupId is required");
+	}
+
+	const region = opts.region ?? process.env.AWS_REGION ?? "us-east-1";
+	const containerPort = opts.containerPort ?? 80;
+	const serviceName = sanitizeAwsName(
+		opts.serviceName ?? `agent-${uuidv4().slice(0, 8)}`,
+	);
+	const taskFamily = sanitizeAwsName(opts.taskFamily ?? serviceName);
+	const containerName = sanitizeAwsName(opts.containerName ?? "agent");
+	const assignPublicIp = opts.assignPublicIp ?? !opts.loadBalancer;
+	const ecsClient = new ECSClient({ region });
+
+	console.log(`[cloud-init] registering ECS task definition ${taskFamily}...`);
+	const { taskDefinition } = await ecsClient.send(
+		new RegisterTaskDefinitionCommand({
+			family: taskFamily,
+			requiresCompatibilities: ["FARGATE"],
+			networkMode: "awsvpc",
+			cpu: String(opts.cpu ?? 256),
+			memory: String(opts.memory ?? 512),
+			executionRoleArn:
+				opts.executionRoleArn ?? process.env.AWS_ECS_TASK_EXECUTION_ROLE_ARN,
+			taskRoleArn: opts.taskRoleArn ?? process.env.AWS_ECS_TASK_ROLE_ARN,
+			containerDefinitions: [
+				{
+					name: containerName,
+					image: opts.containerUrl,
+					essential: true,
+					entryPoint: opts.entryPoint,
+					command: opts.command,
+					environment: Object.entries(opts.environment ?? {}).map(
+						([name, value]) => ({ name, value }),
+					),
+					portMappings: [
+						{
+							containerPort,
+							hostPort: containerPort,
+							protocol: "tcp",
+						},
+					],
+				},
+			],
+		}),
+	);
+
+	const taskDefinitionArn = taskDefinition?.taskDefinitionArn;
+	if (!taskDefinitionArn) {
+		throw new Error(`Task definition registration failed for ${taskFamily}`);
+	}
+
+	console.log(`[cloud-init] creating ECS service ${serviceName} on ${opts.cluster}...`);
+	await ecsClient.send(
+		new CreateServiceCommand({
+			cluster: opts.cluster,
+			serviceName,
+			taskDefinition: taskDefinitionArn,
+			desiredCount: opts.desiredCount ?? 1,
+			launchType: "FARGATE",
+			networkConfiguration: {
+				awsvpcConfiguration: {
+					subnets: opts.subnetIds,
+					securityGroups: opts.securityGroupIds,
+					assignPublicIp: assignPublicIp ? "ENABLED" : "DISABLED",
+				},
+			},
+			loadBalancers: opts.loadBalancer
+				? [
+						{
+							targetGroupArn: opts.loadBalancer.targetGroupArn,
+							containerName,
+							containerPort,
+						},
+					]
+				: undefined,
+			healthCheckGracePeriodSeconds: opts.loadBalancer
+				? opts.healthCheckGracePeriodSeconds ?? 60
+				: undefined,
+		}),
+	);
+
+	const { serviceArn } = await waitForEcsServiceStable(
+		ecsClient,
+		opts.cluster,
+		serviceName,
+	);
+	const task = await getServiceTask(ecsClient, opts.cluster, serviceName);
+
+	const access: DeployAgentAccessDetails = opts.loadBalancer
+		? await resolveLoadBalancerAccess(region, containerPort, opts.loadBalancer)
+		: task
+			? await resolveTaskNetworkAccess(region, task, containerPort)
+			: {
+				mode: assignPublicIp ? "public-ip" : "private-network",
+				url: null,
+				hostname: null,
+				publicIp: null,
+				privateIp: null,
+				port: containerPort,
+				instructions: `The ECS service is running, but the task address could not be resolved yet. Check the service ${serviceName} in cluster ${opts.cluster}.`,
+			};
+
+	return {
+		region,
+		cluster: opts.cluster,
+		serviceName,
+		serviceArn,
+		taskDefinitionArn,
+		taskArn: task?.taskArn ?? null,
+		containerName,
+		containerUrl: opts.containerUrl,
+		access,
+	};
 }
 
 // ─── AWS EC2 startup script ────────────────────────────────────────────────

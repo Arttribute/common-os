@@ -13,6 +13,7 @@ import { tasksRouter } from './routes/tasks.js'
 import { eventsRouter } from './routes/events.js'
 import { agentRuntimeRouter } from './routes/agentRuntime.js'
 import { streamRouter } from './routes/stream.js'
+import { testRouter } from './routes/test.js'
 import { tenants, agents, worldStates, ensureIndexes } from './db/mongo.js'
 import { subscribeToFleet, unsubscribeFromFleet } from './db/memory.js'
 import type { Env } from './types.js'
@@ -32,6 +33,7 @@ app.route('/auth', authRouter)
 // All other routes require authentication
 app.use('/fleets/*', authMiddleware)
 app.use('/agents/*', authMiddleware)
+app.use('/test/*', authMiddleware)
 app.use('/events', authMiddleware)
 
 app.route('/fleets', fleetsRouter)
@@ -39,6 +41,7 @@ app.route('/fleets', agentsRouter)
 app.route('/fleets', tasksRouter)
 app.route('/fleets', streamRouter)
 app.route('/agents', agentRuntimeRouter)
+app.route('/test', testRouter)
 app.route('/events', eventsRouter)
 
 const port = Number(process.env.PORT ?? 3001)
