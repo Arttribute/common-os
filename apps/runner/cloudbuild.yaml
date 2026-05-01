@@ -46,6 +46,7 @@ steps:
       - --region=europe-west1
       - --platform=managed
       - --image=europe-west1-docker.pkg.dev/$PROJECT_ID/common-os/runner:prod
+      - --no-cpu-throttling
       - --service-account=common-os-api@$PROJECT_ID.iam.gserviceaccount.com
     timeout: 1800s
 

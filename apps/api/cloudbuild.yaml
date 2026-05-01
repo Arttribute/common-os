@@ -33,6 +33,7 @@ steps:
       - --port=3001
       - --min-instances=1
       - --memory=512Mi
+      - --no-cpu-throttling
       - --service-account=common-os-api@$PROJECT_ID.iam.gserviceaccount.com
 
 timeout: 1800s

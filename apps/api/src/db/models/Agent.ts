@@ -40,6 +40,6 @@ const AgentSchema = new Schema<AgentDoc>(
 AgentSchema.index({ tenantId: 1, status: 1 })
 AgentSchema.index({ fleetId: 1 })
 AgentSchema.index({ agentTokenHash: 1 }, { unique: true })
-AgentSchema.index({ 'pod.namespaceId': 1 }, { unique: true, sparse: true })
+AgentSchema.index({ 'pod.namespaceId': 1 }, { sparse: true })
 
 export default mongoose.models.Agent || mongoose.model<AgentDoc>('Agent', AgentSchema)
