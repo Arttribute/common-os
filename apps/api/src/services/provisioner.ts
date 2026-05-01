@@ -152,29 +152,12 @@ export async function registerWithAgentCommons(
 		console.log(`[provisioner] Agent Commons agent created: ${commonsAgentId}`);
 		if (!commonsAgentId) return { agentId: null, apiKey: null, walletAddress: null };
 
-		// Step 2: create an API key for the agent (plaintext key returned once only)
-		const keyRes = await fetch("https://api.agentcommons.io/v1/auth/api-keys", {
-			method: "POST",
-			headers,
-			body: JSON.stringify({
-				principalId: commonsAgentId,
-				principalType: "agent",
-				label: `commonos-${agentId}`,
-			}),
-			signal: AbortSignal.timeout(10_000),
-		});
-		if (!keyRes.ok) {
-			const body = await keyRes.text().catch(() => '')
-			console.error(`[provisioner] Agent Commons create API key failed: ${keyRes.status} ${body}`);
-			return { agentId: commonsAgentId, apiKey: null, walletAddress: null };
-		}
-		const keyData = (await keyRes.json()) as { key?: string; data?: { key?: string } };
-		const apiKey = keyData.key ?? (keyData.data as any)?.key ?? null;
-		console.log(`[provisioner] Agent Commons API key created for ${commonsAgentId}: ${apiKey ? 'ok' : 'missing key field'}`);
-
+		// Agent Commons only allows creating API keys for yourself, so per-agent keys
+		// aren't possible. The platform key is returned so the daemon can run this agent.
+		// We do NOT store the platform key in MongoDB — bootstrap always injects it from env.
 		return {
 			agentId: commonsAgentId,
-			apiKey,
+			apiKey: null,  // intentionally null in DB; bootstrap provides the platform key at runtime
 			walletAddress: null,
 		};
 	} catch (err) {

@@ -181,32 +181,35 @@ router.post('/:agentId/bootstrap', async (c) => {
     const agent = await col.findOne({ _id: agentId }).lean()
     if (!agent) return c.json({ error: 'agent not found' }, 404)
 
-    // Already registered — return existing credentials immediately
-    if (agent.commons.apiKey) {
+    // The platform key is used by daemons to run agents (never stored in DB)
+    const platformKey = process.env.AGENTCOMMONS_API_KEY ?? null
+
+    // Agent already registered in Agent Commons — just return the platform key
+    if (agent.commons.agentId) {
       return c.json({
         commonsAgentId: agent.commons.agentId,
-        commonsApiKey: agent.commons.apiKey,
+        commonsApiKey: platformKey,
         walletAddress: agent.commons.walletAddress,
       })
     }
 
-    // First boot — register with Agent Commons now
+    // First boot — register with Agent Commons to get a commonsAgentId
     const commons = await registerWithAgentCommons(
       agentId,
       agent.config.role,
       agent.config.systemPrompt,
     )
 
-    if (commons.apiKey) {
+    if (commons.agentId) {
       await col.updateOne(
         { _id: agentId },
-        { $set: { commons, updatedAt: new Date() } },
+        { $set: { 'commons.agentId': commons.agentId, updatedAt: new Date() } },
       )
     }
 
     return c.json({
       commonsAgentId: commons.agentId,
-      commonsApiKey: commons.apiKey,
+      commonsApiKey: platformKey,
       walletAddress: commons.walletAddress,
     })
   } catch {
