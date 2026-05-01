@@ -146,7 +146,10 @@ export class CommonOSAgentClient {
 			{ headers: { Authorization: `Bearer ${this.agentToken}` } },
 		);
 		if (res.status === 204) return null;
-		return res.json();
+		if (!res.ok) return null;
+		const data = await res.json() as { id?: string; description?: string };
+		if (!data.id || !data.description) return null;
+		return data as { id: string; description: string };
 	}
 
 	async completeTask(taskId: string, output?: string): Promise<void> {

@@ -366,6 +366,10 @@ async function pollTasks() {
 }
 
 async function handleTask(task: { id: string; description: string }) {
+  if (!task?.id || !task?.description) {
+    console.warn(`[daemon] skipping malformed task:`, task);
+    return;
+  }
   console.log(`[daemon] task ${task.id} — ${task.description}`);
 
   await agent.emit({ type: "state_change", payload: { status: "working" } });
