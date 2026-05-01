@@ -16,7 +16,6 @@ const POLL_MS        = 5_000;
 const HEALTH_MS      = 10_000;
 const AXL_INBOX_MS   = 5_000;
 const WORKSPACE_DIR  = process.env.COMMONOS_WORKSPACE ?? config.workspaceDir;
-const RUNNER_URL     = process.env.RUNNER_URL ?? config.runnerUrl ?? "";
 // AXL runs on localhost:4001 inside the same pod/container
 const AXL_API_URL    = process.env.AXL_API_URL ?? "http://localhost:4001";
 
@@ -84,15 +83,13 @@ function emitFileChange(path: string, op: "create" | "modify" | "delete") {
 let runtimeHealthy = true;
 
 function startHealthMonitor() {
-  if (!RUNNER_URL && config.integrationPath !== "openclaw") {
-    // No runtime endpoint to probe — skip
+  // Only probe an external endpoint for the openclaw path.
+  // Native path runs agc locally — no external service to probe.
+  if (config.integrationPath !== "openclaw") {
     return;
   }
 
-  const probeUrl =
-    config.integrationPath === "openclaw"
-      ? `${config.openclawGatewayUrl}/health`
-      : `${RUNNER_URL}/health`;
+  const probeUrl = `${config.openclawGatewayUrl}/health`;
 
   setInterval(async () => {
     try {
@@ -446,26 +443,30 @@ async function executeTask(description: string): Promise<string> {
 }
 
 async function runViaNative(description: string): Promise<string> {
-  if (!RUNNER_URL) {
-    throw new Error("RUNNER_URL not configured for native path");
+  const agentId = config.commonsAgentId || config.agentId;
+  // Run agc directly in this pod — the agent's tools execute here, in its own
+  // filesystem and process space, not on a shared Cloud Run instance.
+  const proc = Bun.spawn(
+    ["agc", "run", "--agent-id", agentId, "--prompt", description],
+    {
+      cwd: WORKSPACE_DIR,
+      env: {
+        ...process.env,
+        COMMONS_API_KEY: config.commonsApiKey,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
+  const [stdout, stderr] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+  const exit = await proc.exited;
+  if (exit !== 0) {
+    throw new Error(`agc exited ${exit}: ${stderr.trim() || stdout.trim()}`);
   }
-
-  const res = await fetch(`${RUNNER_URL}/run`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      agentId: config.commonsAgentId || config.agentId,
-      prompt: description,
-    }),
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => res.status.toString());
-    throw new Error(`runner error: ${text}`);
-  }
-
-  const data = await res.json() as { output?: string; result?: string };
-  return data.output ?? data.result ?? "done";
+  return stdout.trim() || "done";
 }
 
 async function runViaOpenClaw(description: string): Promise<string> {
