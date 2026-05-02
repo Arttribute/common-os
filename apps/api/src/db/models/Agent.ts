@@ -46,5 +46,6 @@ AgentSchema.index({ tenantId: 1, status: 1 })
 AgentSchema.index({ fleetId: 1 })
 AgentSchema.index({ agentTokenHash: 1 }, { unique: true })
 AgentSchema.index({ 'pod.namespaceId': 1 }, { sparse: true })
+AgentSchema.index({ 'axl.peerId': 1 }, { sparse: true })
 
 export default mongoose.models.Agent || mongoose.model<AgentDoc>('Agent', AgentSchema)

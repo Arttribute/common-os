@@ -6,6 +6,57 @@ import type { Env } from '../types.js'
 
 const router = new Hono<Env>()
 
+// GET /agents/resolve/:name
+// Resolves an agent by agentId or AXL peerId to their network address.
+// No fleet scoping — any authenticated agent can discover cross-fleet peers.
+// Resolution order: DB by agentId → DB by axl.peerId → ENS (when implemented).
+router.get('/resolve/:name', async (c) => {
+  if (c.get('authType') !== 'agent') {
+    return c.json({ error: 'agent authorization required' }, 403)
+  }
+
+  const name = c.req.param('name')
+  const col = await agents()
+
+  try {
+    // peerId format: legacy base58 multihash (Qm...) or newer base36 (12D3...)
+    const looksLikePeerId = /^(Qm[1-9A-HJ-NP-Za-km-z]{40,}|12D3[a-zA-Z0-9]{40,})/.test(name)
+    const looksLikeEnsName = name.includes('.')
+
+    let agent: Awaited<ReturnType<typeof col.findOne>> = null
+
+    if (looksLikePeerId) {
+      agent = await col.findOne(
+        { 'axl.peerId': name },
+        { _id: 1, axl: 1, config: 1, fleetId: 1 },
+      ).lean()
+    } else if (!looksLikeEnsName) {
+      // agentId lookup (e.g. agt_abc123)
+      agent = await col.findOne(
+        { _id: name },
+        { _id: 1, axl: 1, config: 1, fleetId: 1 },
+      ).lean()
+    } else {
+      // ENS name (e.g. agent-agt-abc123.agents.commonos.eth)
+      // TODO: call lookupAgentENS(name) — implemented as part of ENS integration
+      return c.json({ error: 'agent not found' }, 404)
+    }
+
+    if (!agent) return c.json({ error: 'agent not found' }, 404)
+
+    return c.json({
+      agentId: agent._id,
+      multiaddr: agent.axl?.multiaddr ?? null,
+      peerId: agent.axl?.peerId ?? null,
+      role: agent.config?.role ?? null,
+      fleetId: agent.fleetId,
+      source: 'db',
+    })
+  } catch {
+    return c.json({ error: 'database error' }, 503)
+  }
+})
+
 // GET /agents/:agentId/tasks/next
 router.get('/:agentId/tasks/next', async (c) => {
   if (c.get('authType') !== 'agent') {
