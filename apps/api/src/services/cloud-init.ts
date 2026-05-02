@@ -89,6 +89,32 @@ async function waitForGkeOperation(
 	throw new Error(`Timed out waiting for GKE operation ${operationName}`);
 }
 
+async function ensureNodePoolAutoscaling(
+	gkeClient: ClusterManagerClient,
+	projectId: string,
+	region: string,
+	clusterName: string,
+	poolName = "default-pool",
+): Promise<void> {
+	const poolPath = `projects/${projectId}/locations/${region}/clusters/${clusterName}/nodePools/${poolName}`;
+	try {
+		const [pool] = await gkeClient.getNodePool({ name: poolPath });
+		if (pool.autoscaling?.enabled) {
+			console.log(`[cloud-init] node pool autoscaling already enabled (min=${pool.autoscaling.minNodeCount}, max=${pool.autoscaling.maxNodeCount})`);
+			return;
+		}
+		console.log("[cloud-init] enabling node pool autoscaling...");
+		const [op] = await gkeClient.setNodePoolAutoscaling({
+			name: poolPath,
+			autoscaling: { enabled: true, minNodeCount: 1, maxNodeCount: 10 },
+		});
+		if (op.name) await waitForGkeOperation(gkeClient, op.name);
+		console.log("[cloud-init] node pool autoscaling enabled (min=1, max=10)");
+	} catch (err) {
+		console.warn("[cloud-init] could not configure node pool autoscaling:", err instanceof Error ? err.message : err);
+	}
+}
+
 async function getKubeConfig(
 	projectId: string,
 	region: string,
@@ -113,26 +139,43 @@ async function getKubeConfig(
 		endpoint = cluster.endpoint ?? "";
 		caCert = cluster.masterAuth?.clusterCaCertificate ?? undefined;
 		console.log(`[cloud-init] GKE cluster "${clusterName}" found (endpoint: ${endpoint})`);
-	} catch {
-		// Cluster doesn't exist — create it
+		// Ensure autoscaling is on for the existing cluster's node pool
+		await ensureNodePoolAutoscaling(gkeClient, projectId, region, clusterName);
+	} catch (err: unknown) {
+		const isNotFound = err instanceof Error && (err.message.includes("NOT_FOUND") || err.message.includes("not found"));
+		if (!isNotFound) throw err;
+
+		// Cluster doesn't exist — create it with autoscaling from the start
 		console.log(`[cloud-init] creating GKE cluster "${clusterName}"...`);
 		const [operation] = await gkeClient.createCluster({
 			parent,
 			cluster: {
 				name: clusterName,
-				initialNodeCount: 1,
 				// Avoid europe-west1-c which has recurring e2 stockouts
 				locations: ["europe-west1-b", "europe-west1-d"],
-				nodeConfig: {
-					machineType: "e2-standard-2",
-					oauthScopes: [
-						"https://www.googleapis.com/auth/devstorage.read_write",
-						"https://www.googleapis.com/auth/logging.write",
-						"https://www.googleapis.com/auth/monitoring",
-						"https://www.googleapis.com/auth/cloud-platform",
-					],
-					workloadMetadataConfig: { mode: "GKE_METADATA" },
-				},
+				nodePools: [{
+					name: "default-pool",
+					initialNodeCount: 1,
+					config: {
+						machineType: "e2-standard-2",
+						oauthScopes: [
+							"https://www.googleapis.com/auth/devstorage.read_write",
+							"https://www.googleapis.com/auth/logging.write",
+							"https://www.googleapis.com/auth/monitoring",
+							"https://www.googleapis.com/auth/cloud-platform",
+						],
+						workloadMetadataConfig: { mode: "GKE_METADATA" },
+					},
+					autoscaling: {
+						enabled: true,
+						minNodeCount: 1,
+						maxNodeCount: 10,
+					},
+					management: {
+						autoUpgrade: true,
+						autoRepair: true,
+					},
+				}],
 				workloadIdentityConfig: {
 					workloadPool: `${projectId}.svc.id.goog`,
 				},
@@ -148,12 +191,12 @@ async function getKubeConfig(
 		if (operation.name) {
 			await waitForGkeOperation(gkeClient, operation.name);
 		}
-		const [cluster] = await gkeClient.getCluster({
+		const [created] = await gkeClient.getCluster({
 			name: `${parent}/clusters/${clusterName}`,
 		});
-		endpoint = cluster.endpoint ?? "";
-		caCert = cluster.masterAuth?.clusterCaCertificate ?? undefined;
-		console.log(`[cloud-init] GKE cluster "${clusterName}" created`);
+		endpoint = created.endpoint ?? "";
+		caCert = created.masterAuth?.clusterCaCertificate ?? undefined;
+		console.log(`[cloud-init] GKE cluster "${clusterName}" created with autoscaling (min=1, max=10)`);
 	}
 
 	console.log(`[cloud-init] fetching GKE access token...`);
