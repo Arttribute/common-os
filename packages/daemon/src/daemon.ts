@@ -739,9 +739,18 @@ ${snapshot}
 | \`cli_write_file\` | Write or overwrite a file |
 | \`cli_search_files\` | Find files matching a pattern |
 | \`cli_run_command\` | Run a short command and return its output |
+| \`cli_start_process\` | Start a long-running command in the background; returns a processId immediately |
+| \`cli_wait_for_process\` | Block up to N seconds for a background process, then return current output |
+| \`cli_process_status\` | Instant non-blocking check on a background process |
+| \`cli_kill_process\` | Kill a running background process |
+| \`cli_list_processes\` | List all background processes started this session |
 
 ### run_command options
 - \`timeout_seconds\` (default 120, max 300)
+
+### Choosing between run_command and start_process
+- Use \`cli_run_command\` when the command should finish in under about 30 seconds.
+- Use \`cli_start_process\` plus \`cli_wait_for_process\` for long-running commands like installs, builds, and dev servers.
 
 All paths are restricted to the session root. Chain tool calls across turns to accomplish complex tasks.`;
 }
@@ -863,6 +872,133 @@ async function toolSearchFiles(args: { pattern: string; path?: string; directory
   }
 }
 
+type ManagedProcess = {
+  id: string;
+  command: string;
+  status: "running" | "done" | "error" | "killed";
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  startedAt: Date;
+  endedAt: Date | null;
+  child: ReturnType<typeof Bun.spawn>;
+};
+
+const managedProcesses = new Map<string, ManagedProcess>();
+
+function capBuffer(current: string, next: string, max: number): string {
+  const combined = current + next;
+  return combined.length > max ? combined.slice(combined.length - max) : combined;
+}
+
+function processSnapshot(proc: ManagedProcess): string {
+  const elapsedSec = Math.round((Date.now() - proc.startedAt.getTime()) / 1000);
+  const stdout = proc.stdout.length > 4000
+    ? `...(earlier output truncated)\n${proc.stdout.slice(-4000)}`
+    : proc.stdout;
+  return JSON.stringify({
+    processId: proc.id,
+    command: proc.command,
+    status: proc.status,
+    exitCode: proc.exitCode,
+    elapsedSec,
+    stdout: stdout || "(no output yet)",
+    stderr: proc.stderr.slice(-1000) || undefined,
+  });
+}
+
+async function toolStartProcess(args: {
+  command: string;
+  args?: Array<string | number | boolean>;
+  cwd?: string;
+}): Promise<string> {
+  try {
+    if (!args.command) return JSON.stringify({ error: 'start_process requires a "command" string' });
+    const cwd = args.cwd ? assertInWorkspace(args.cwd) : WORKSPACE_DIR;
+    const cmdArgs = Array.isArray(args.args) ? args.args.map(String) : [];
+    const command = [args.command, ...cmdArgs];
+    const id = `proc_${Date.now().toString(36)}${randomBytes(3).toString("hex")}`;
+    const child = Bun.spawn(command, {
+      cwd,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const proc: ManagedProcess = {
+      id,
+      command: command.join(" "),
+      status: "running",
+      exitCode: null,
+      stdout: "",
+      stderr: "",
+      startedAt: new Date(),
+      endedAt: null,
+      child,
+    };
+    managedProcesses.set(id, proc);
+
+    void new Response(child.stdout).text().then((out) => {
+      proc.stdout = capBuffer(proc.stdout, out, 200_000);
+    }).catch(() => {});
+    void new Response(child.stderr).text().then((err) => {
+      proc.stderr = capBuffer(proc.stderr, err, 50_000);
+    }).catch(() => {});
+    void child.exited.then((code) => {
+      if (proc.status === "running") proc.status = code === 0 ? "done" : "error";
+      proc.exitCode = code;
+      proc.endedAt = new Date();
+    }).catch((err) => {
+      proc.status = "error";
+      proc.endedAt = new Date();
+      proc.stderr = capBuffer(proc.stderr, `\nSpawn error: ${err instanceof Error ? err.message : String(err)}`, 50_000);
+    });
+
+    return JSON.stringify({ processId: id, status: "running", command: proc.command });
+  } catch (err) {
+    return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+async function toolProcessStatus(args: { processId: string }): Promise<string> {
+  if (!args.processId) return JSON.stringify({ error: 'process_status requires a "processId" argument' });
+  const proc = managedProcesses.get(args.processId);
+  return proc ? processSnapshot(proc) : JSON.stringify({ error: `No process found with id "${args.processId}"` });
+}
+
+async function toolWaitForProcess(args: { processId: string; wait_seconds?: number }): Promise<string> {
+  if (!args.processId) return JSON.stringify({ error: 'wait_for_process requires a "processId" argument' });
+  const proc = managedProcesses.get(args.processId);
+  if (!proc) return JSON.stringify({ error: `No process found with id "${args.processId}"` });
+  if (proc.status !== "running") return processSnapshot(proc);
+  const waitMs = Math.min(Math.max(args.wait_seconds ?? 60, 1), 120) * 1000;
+  const deadline = Date.now() + waitMs;
+  while (proc.status === "running" && Date.now() < deadline) {
+    await sleep(500);
+  }
+  return processSnapshot(proc);
+}
+
+async function toolKillProcess(args: { processId: string }): Promise<string> {
+  if (!args.processId) return JSON.stringify({ error: 'kill_process requires a "processId" argument' });
+  const proc = managedProcesses.get(args.processId);
+  if (!proc) return JSON.stringify({ error: `No process found with id "${args.processId}"` });
+  if (proc.status !== "running") return JSON.stringify({ error: `Process "${args.processId}" is not running (status: ${proc.status})` });
+  proc.child.kill("SIGTERM");
+  proc.status = "killed";
+  proc.endedAt = new Date();
+  return JSON.stringify({ processId: args.processId, status: "killed" });
+}
+
+async function toolListProcesses(): Promise<string> {
+  if (managedProcesses.size === 0) return JSON.stringify([]);
+  return JSON.stringify([...managedProcesses.values()].map((proc) => ({
+    processId: proc.id,
+    command: proc.command,
+    status: proc.status,
+    elapsedSec: Math.round((Date.now() - proc.startedAt.getTime()) / 1000),
+  })));
+}
+
 async function executeTool(call: { tool: string; args: Record<string, unknown> }): Promise<string> {
   const tool = call.tool.replace(/^cli_/, ""); // strip optional cli_ prefix
   const args = call.args ?? {};
@@ -878,8 +1014,18 @@ async function executeTool(call: { tool: string; args: Record<string, unknown> }
       return await toolRunCommand(args as { command: string; args?: Array<string | number | boolean>; cwd?: string; timeout_seconds?: number });
     case "search_files":
       return await toolSearchFiles(args as { pattern: string; path?: string; directory?: string });
+    case "start_process":
+      return await toolStartProcess(args as { command: string; args?: Array<string | number | boolean>; cwd?: string });
+    case "process_status":
+      return await toolProcessStatus(args as { processId: string });
+    case "wait_for_process":
+      return await toolWaitForProcess(args as { processId: string; wait_seconds?: number });
+    case "kill_process":
+      return await toolKillProcess(args as { processId: string });
+    case "list_processes":
+      return await toolListProcesses();
     default:
-      return `[error: unknown tool "${tool}". Available: read_file, write_file, list_directory, run_command, search_files]`;
+      return `[error: unknown tool "${tool}". Available: read_file, write_file, list_directory, run_command, search_files, start_process, process_status, wait_for_process, kill_process, list_processes]`;
   }
 }
 
@@ -974,7 +1120,7 @@ async function runViaNative(description: string, agcSessionId?: string, messages
             console.warn("[daemon] cli-tool-result post failed:", err instanceof Error ? err.message : err),
           );
 
-        } else if (type === "final") {
+        } else if (type === "final" || type === "completed") {
           finalContent = (event.content as string) ?? tokens;
           console.log(`[daemon] AGC stream done  tokens=${tokens.length}  final=${finalContent.length}`);
           break outer;
