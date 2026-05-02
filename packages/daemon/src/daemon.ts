@@ -25,7 +25,7 @@ const MSG_POLL_MS    = 3_000;
 const HEALTH_MS      = 10_000;
 const AXL_INBOX_MS   = 5_000;
 const WORKSPACE_DIR  = process.env.COMMONOS_WORKSPACE ?? config.workspaceDir;
-const AXL_API_URL    = process.env.AXL_API_URL ?? "http://localhost:4001";
+const AXL_API_URL    = process.env.AXL_API_URL ?? "http://localhost:9002";
 const ETH_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 
 type AgcMessage = { role: "user" | "assistant"; content: string };
@@ -343,16 +343,16 @@ function startHealthMonitor() {
 async function registerAxlPeer(): Promise<void> {
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
-      const res = await fetch(`${AXL_API_URL}/peer`, {
+      const res = await fetch(`${AXL_API_URL}/topology`, {
         signal: AbortSignal.timeout(3_000),
       });
-      if (!res.ok) throw new Error(`AXL peer endpoint returned ${res.status}`);
+      if (!res.ok) throw new Error(`AXL topology endpoint returned ${res.status}`);
 
-      const data = await res.json() as { peerId?: string; multiaddr?: string; addrs?: string[] };
-      const peerId    = data.peerId ?? null;
-      const multiaddr = data.multiaddr ?? data.addrs?.[0] ?? null;
+      const data = await res.json() as { our_public_key?: string; our_ipv6?: string };
+      const peerId    = data.our_public_key ?? null;
+      const multiaddr = data.our_ipv6 ?? null;
 
-      if (!peerId && !multiaddr) throw new Error("AXL returned no peer info");
+      if (!peerId) throw new Error("AXL returned no public key");
 
       await fetch(`${config.apiUrl}/fleets/${config.fleetId}/agents/${config.agentId}`, {
         method: "PATCH",
@@ -363,7 +363,7 @@ async function registerAxlPeer(): Promise<void> {
         body: JSON.stringify({ "axl.peerId": peerId, "axl.multiaddr": multiaddr }),
       });
 
-      console.log(`[daemon] AXL peer registered  peerId=${peerId}  multiaddr=${multiaddr}`);
+      console.log(`[daemon] AXL peer registered  peerId=${peerId.slice(0, 16)}…  ipv6=${multiaddr}`);
       return;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -403,14 +403,14 @@ async function discoverFleetPeers(): Promise<void> {
     console.log(`[daemon] fleet peer map updated  ${peerIdToAgentId.size} peer(s)`);
 
     const manager = peers.find(
-      (p) => p.permissionTier === "manager" && p.agentId !== config.agentId && p.multiaddr,
+      (p) => p.permissionTier === "manager" && p.agentId !== config.agentId && p.peerId,
     );
 
     if (manager) {
       config.managerAgentId = manager.agentId;
-      config.managerMultiaddr = manager.multiaddr!;
+      config.managerPeerId = manager.peerId!;
       console.log(
-        `[daemon] manager peer cached  agentId=${manager.agentId}  multiaddr=${manager.multiaddr}`,
+        `[daemon] manager peer cached  agentId=${manager.agentId}  peerId=${manager.peerId?.slice(0, 16)}…`,
       );
     }
   } catch {
@@ -420,7 +420,6 @@ async function discoverFleetPeers(): Promise<void> {
 
 // ─── AXL inbox loop ────────────────────────────────────────────────────────
 
-let lastSeenAxlMessageTs = 0;
 const peerIdToAgentId = new Map<string, string>();
 
 async function startAxlInboxLoop(): Promise<void> {
@@ -436,30 +435,20 @@ async function startAxlInboxLoop(): Promise<void> {
 }
 
 async function pollAxlInbox(): Promise<void> {
-  const res = await fetch(`${AXL_API_URL}/messages`, {
-    signal: AbortSignal.timeout(5_000),
-  });
-  if (!res.ok) return;
+  // AXL /recv returns one message per call (204 when queue is empty).
+  // Drain all queued messages in a single poll cycle.
+  while (true) {
+    const res = await fetch(`${AXL_API_URL}/recv`, {
+      signal: AbortSignal.timeout(5_000),
+    });
 
-  const messages = (await res.json()) as Array<{
-    id?: string;
-    from?: string;
-    fromPeerId?: string;
-    data?: string;
-    content?: string;
-    timestamp?: number;
-  }>;
-  if (!Array.isArray(messages) || messages.length === 0) return;
+    if (res.status === 204) break; // queue empty
+    if (!res.ok) break;
 
-  for (const msg of messages) {
-    const ts = msg.timestamp ?? 0;
-    if (ts <= lastSeenAxlMessageTs) continue;
+    const content = await res.text();
+    const fromPeerId = res.headers.get("x-from-peer-id") ?? "unknown";
 
-    const content = msg.data ?? msg.content ?? "";
-    const fromPeerId = msg.from ?? msg.fromPeerId ?? "unknown";
-
-    // Resolve peerId → agentId: fleet cache first, then API (which falls back to ENS for
-    // cross-fleet agents). Result is cached so repeat messages from the same peer are free.
+    // Resolve peerId (hex public key) → agentId: fleet cache first, then API.
     let resolvedAgentId = peerIdToAgentId.get(fromPeerId);
     if (!resolvedAgentId && fromPeerId !== "unknown") {
       const resolved = await resolveAgentByName(fromPeerId).catch(() => null);
@@ -468,7 +457,7 @@ async function pollAxlInbox(): Promise<void> {
         peerIdToAgentId.set(fromPeerId, resolved.agentId);
       }
     }
-    const senderLabel = resolvedAgentId ?? fromPeerId;
+    const senderLabel = resolvedAgentId ?? fromPeerId.slice(0, 16);
 
     console.log(`[daemon] AXL message from ${senderLabel}: ${content.slice(0, 80)}`);
 
@@ -483,8 +472,6 @@ async function pollAxlInbox(): Promise<void> {
       const taskDescription = `[AXL from ${senderLabel}]\n${content}`;
       void handleTask({ id: `axl_${Date.now()}`, description: taskDescription }).catch(() => {});
     }
-
-    if (ts > lastSeenAxlMessageTs) lastSeenAxlMessageTs = ts;
   }
 }
 
@@ -537,14 +524,14 @@ function workPosition(): { room: string; x: number; y: number } {
 // ─── AXL outbound ──────────────────────────────────────────────────────────
 
 async function sendAxlMessage(
-  toMultiaddr: string,
+  toPeerId: string,  // recipient's ed25519 public key (hex), used as X-Destination-Peer-Id
   toAgentId: string,
   content: string,
 ): Promise<void> {
   const res = await fetch(`${AXL_API_URL}/send`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ to: toMultiaddr, data: content }),
+    headers: { "X-Destination-Peer-Id": toPeerId },
+    body: content,
     signal: AbortSignal.timeout(10_000),
   });
 

@@ -23,7 +23,7 @@ export interface DaemonConfig {
   worldY: number;
   // AXL peer routing — populated at runtime via discoverFleetPeers()
   managerAgentId?: string;
-  managerMultiaddr?: string;
+  managerPeerId?: string;  // ed25519 public key (hex) used as X-Destination-Peer-Id
 }
 
 export function loadConfig(path = "/etc/common-os/config.json"): DaemonConfig {
