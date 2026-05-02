@@ -31,6 +31,7 @@ export class WorldScene extends Phaser.Scene {
   private bgGraphics!: Phaser.GameObjects.Graphics
   private labelGroup!: Phaser.GameObjects.Group
   private objectGfxList: Phaser.GameObjects.Graphics[] = []
+  private heldKeys = new Set<string>()
 
   // Dynamic objects created by agents at runtime
   private dynamicObjectGfx = new Map<string, Phaser.GameObjects.Graphics>()
@@ -74,6 +75,7 @@ export class WorldScene extends Phaser.Scene {
 
   update(_time: number, delta: number): void {
     if (!this.isInputFocused()) this.controls.update(delta)
+    this._applyWasdPan(delta)
 
     const { theme, agentStyle, rooms } = useWorldStore.getState()
     const agentState = useAgentStore.getState()
@@ -352,25 +354,21 @@ export class WorldScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor(THEMES[themeId].bgColor)
 
     const keyboard = this.input.keyboard!
-    // Stop Phaser calling preventDefault() on key events so characters reach
-    // DOM input fields normally. Camera control is gated in update() instead.
+    // Prevent Phaser calling preventDefault() on any key — characters must
+    // reach DOM inputs unblocked. Only arrow keys stay in Phaser (not typeable).
     keyboard.disableGlobalCapture()
-    const cursors = keyboard.createCursorKeys()
-    const wasd = keyboard.addKeys({
-      up:    Phaser.Input.Keyboard.KeyCodes.W,
-      down:  Phaser.Input.Keyboard.KeyCodes.S,
-      left:  Phaser.Input.Keyboard.KeyCodes.A,
-      right: Phaser.Input.Keyboard.KeyCodes.D,
-    }) as Phaser.Types.Input.Keyboard.CursorKeys
+
+    const arrowUp    = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.UP)
+    const arrowDown  = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN)
+    const arrowLeft  = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT)
+    const arrowRight = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT)
 
     this.controls = new Phaser.Cameras.Controls.SmoothedKeyControl({
       camera:       this.cameras.main,
-      left:         cursors.left,
-      right:        cursors.right,
-      up:           cursors.up,
-      down:         cursors.down,
-      zoomIn:       keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.Q),
-      zoomOut:      keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E),
+      left:         arrowLeft,
+      right:        arrowRight,
+      up:           arrowUp,
+      down:         arrowDown,
       acceleration: 0.06,
       drag:         0.003,
       maxSpeed:     0.5,
@@ -382,7 +380,41 @@ export class WorldScene extends Phaser.Scene {
       this.cameras.main.setZoom(zoom)
     })
 
-    // WASD also works
-    void wasd
+    // All letter-key camera controls go through DOM listeners so they are
+    // never intercepted while the user is typing in an input field.
+    const PAN_SPEED = 6
+    const ZOOM_STEP = 0.1
+    const PAN_KEYS = new Set(['w', 'a', 's', 'd'])
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (this.isInputFocused()) return
+      const k = e.key.toLowerCase()
+      if (PAN_KEYS.has(k)) this.heldKeys.add(k)
+      if (k === 'q') this.cameras.main.setZoom(Phaser.Math.Clamp(this.cameras.main.zoom + ZOOM_STEP, 0.35, 2.2))
+      if (k === 'e') this.cameras.main.setZoom(Phaser.Math.Clamp(this.cameras.main.zoom - ZOOM_STEP, 0.35, 2.2))
+    }
+    const onKeyUp = (e: KeyboardEvent) => {
+      this.heldKeys.delete(e.key.toLowerCase())
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    this.events.once('shutdown', () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+    })
+
+    // Apply WASD pan each frame (called from update)
+    this._applyWasdPan = (delta: number) => {
+      if (this.isInputFocused() || this.heldKeys.size === 0) return
+      const cam = this.cameras.main
+      const speed = PAN_SPEED * (delta / 16.67)
+      if (this.heldKeys.has('w')) cam.scrollY -= speed
+      if (this.heldKeys.has('s')) cam.scrollY += speed
+      if (this.heldKeys.has('a')) cam.scrollX -= speed
+      if (this.heldKeys.has('d')) cam.scrollX += speed
+    }
   }
+
+  private _applyWasdPan: (delta: number) => void = () => {}
 }
