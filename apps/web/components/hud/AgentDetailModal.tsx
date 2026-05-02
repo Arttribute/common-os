@@ -26,6 +26,16 @@ interface SessionEntry {
   respondedAt?: string | null
 }
 
+interface AgentSession {
+  _id: string
+  title: string
+  isDefault: boolean
+  messageCount: number
+  lastMessageAt: string | null
+  createdAt: string
+  agcSessionId: string | null
+}
+
 interface FsNode {
   name: string
   isDir: boolean
@@ -105,7 +115,70 @@ function statusColor(status: string): string {
 
 // ─── Sessions view ──────────────────────────────────────────────────────────
 
-function SessionsView({ sessions, loading }: { sessions: SessionEntry[]; loading: boolean }) {
+function SessionsView({
+  sessions,
+  loading,
+  activeSessionId,
+  sessionMessages,
+  messagesLoading,
+  onSelectSession,
+  onBack,
+  onNewSession,
+  creating,
+}: {
+  sessions: AgentSession[]
+  loading: boolean
+  activeSessionId: string | null
+  sessionMessages: SessionEntry[]
+  messagesLoading: boolean
+  onSelectSession: (id: string) => void
+  onBack: () => void
+  onNewSession: () => void
+  creating: boolean
+}) {
+  if (activeSessionId) {
+    // Show messages within the selected session
+    const session = sessions.find(s => s._id === activeSessionId)
+    return (
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        {/* Back button + session title */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '8px 16px',
+          borderBottom: '1px solid rgba(255,255,255,0.04)',
+          flexShrink: 0,
+        }}>
+          <button onClick={onBack} style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: '#475569', fontSize: 10, fontFamily: 'monospace', padding: '2px 6px',
+          }}>← back</button>
+          <span style={{ fontSize: 10, color: '#94a3b8', fontFamily: 'monospace', flex: 1 }}>
+            {session?.title ?? 'Session'}
+          </span>
+          {session?.agcSessionId && (
+            <span style={{ fontSize: 7, color: '#1e3a5f', fontFamily: 'monospace' }}>
+              {session.agcSessionId.slice(0, 12)}…
+            </span>
+          )}
+        </div>
+        {messagesLoading ? (
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ fontSize: 10, color: '#334155', fontFamily: 'monospace' }}>loading…</div>
+          </div>
+        ) : sessionMessages.length === 0 ? (
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ fontSize: 10, color: '#334155', fontFamily: 'monospace' }}>no messages yet</div>
+          </div>
+        ) : (
+          <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {sessionMessages.map(entry => <SessionCard key={entry.id} entry={entry} />)}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // Show sessions list
   if (loading) {
     return (
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -114,20 +187,87 @@ function SessionsView({ sessions, loading }: { sessions: SessionEntry[]; loading
     )
   }
 
-  if (sessions.length === 0) {
-    return (
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-        <div style={{ fontSize: 20 }}>📭</div>
-        <div style={{ fontSize: 10, color: '#334155', fontFamily: 'monospace' }}>no sessions yet</div>
-      </div>
-    )
-  }
-
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {sessions.map((entry) => (
-        <SessionCard key={entry.id} entry={entry} />
-      ))}
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      {/* Toolbar */}
+      <div style={{
+        padding: '8px 16px',
+        borderBottom: '1px solid rgba(255,255,255,0.04)',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        flexShrink: 0,
+      }}>
+        <span style={{ fontSize: 9, color: '#334155', fontFamily: 'monospace' }}>
+          {sessions.length} session{sessions.length !== 1 ? 's' : ''}
+        </span>
+        <button
+          onClick={onNewSession}
+          disabled={creating}
+          style={{
+            background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.2)',
+            borderRadius: 4, color: '#93c5fd', cursor: 'pointer',
+            fontSize: 9, fontFamily: 'monospace', padding: '3px 10px',
+            opacity: creating ? 0.5 : 1,
+          }}
+        >
+          {creating ? '…' : '+ new session'}
+        </button>
+      </div>
+
+      {sessions.length === 0 ? (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+          <div style={{ fontSize: 20 }}>📭</div>
+          <div style={{ fontSize: 10, color: '#334155', fontFamily: 'monospace' }}>no sessions yet</div>
+          <div style={{ fontSize: 9, color: '#1e3a5f', fontFamily: 'monospace' }}>sessions appear when the agent processes its first message</div>
+        </div>
+      ) : (
+        <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
+          {sessions.map(sess => (
+            <SessionRow key={sess._id} session={sess} onClick={() => onSelectSession(sess._id)} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function SessionRow({ session, onClick }: { session: AgentSession; onClick: () => void }) {
+  const [hovered, setHovered] = useState(false)
+  return (
+    <div
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        padding: '10px 16px',
+        cursor: 'pointer',
+        background: hovered ? 'rgba(59,130,246,0.06)' : 'transparent',
+        borderLeft: session.isDefault ? '2px solid #3b82f6' : '2px solid transparent',
+        display: 'flex', flexDirection: 'column', gap: 3,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ fontSize: 10, color: session.isDefault ? '#93c5fd' : '#94a3b8', fontFamily: 'monospace', flex: 1 }}>
+          {session.title}
+        </span>
+        {session.isDefault && (
+          <span style={{ fontSize: 7, color: '#3b82f6', fontFamily: 'monospace', background: 'rgba(59,130,246,0.1)', padding: '1px 5px', borderRadius: 3 }}>
+            active
+          </span>
+        )}
+        <span style={{ fontSize: 8, color: '#1e3a5f', fontFamily: 'monospace' }}>
+          {relativeTime(session.lastMessageAt ?? session.createdAt)}
+        </span>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: 8, color: '#334155', fontFamily: 'monospace' }}>
+          {session.messageCount} message{session.messageCount !== 1 ? 's' : ''}
+        </span>
+        {session.agcSessionId && (
+          <span style={{ fontSize: 7, color: '#1e293b', fontFamily: 'monospace' }}>
+            {session.agcSessionId.slice(0, 10)}…
+          </span>
+        )}
+      </div>
     </div>
   )
 }
@@ -614,10 +754,14 @@ export function AgentDetailModal() {
   const { getAccessToken, authenticated } = usePrivy()
 
   const [tab, setTab] = useState<'sessions' | 'computer'>('sessions')
-  const [sessions, setSessions]   = useState<SessionEntry[]>([])
+  const [sessions, setSessions]   = useState<AgentSession[]>([])
   const [snapshot, setSnapshot]   = useState<string | null>(null)
   const [sessLoading, setSessLoading] = useState(false)
   const [snapLoading, setSnapLoading] = useState(false)
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
+  const [sessionMessages, setSessionMessages] = useState<SessionEntry[]>([])
+  const [msgsLoading, setMsgsLoading] = useState(false)
+  const [creating, setCreating] = useState(false)
 
   const agent = selectedId ? agents[selectedId] : null
   const urlFleet = searchParams.get('fleet')
@@ -640,11 +784,44 @@ export function AgentDetailModal() {
       const res = await fetch(`${apiUrl}/fleets/${fleetId}/agents/${selectedId}/sessions`, {
         headers: { Authorization: `Bearer ${token}` },
       })
-      if (res.ok) setSessions(await res.json() as SessionEntry[])
+      if (res.ok) setSessions(await res.json() as AgentSession[])
     } catch { /* ignore */ }
     finally { setSessLoading(false) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLive, selectedId, fleetId])
+
+  const fetchSessionMessages = useCallback(async (sessionId: string) => {
+    if (!isLive || !selectedId || !fleetId) return
+    setMsgsLoading(true)
+    try {
+      const token = await resolveToken()
+      const res = await fetch(`${apiUrl}/fleets/${fleetId}/agents/${selectedId}/sessions/${sessionId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (res.ok) {
+        const data = await res.json() as { messages?: SessionEntry[] }
+        setSessionMessages(data.messages ?? [])
+      }
+    } catch { /* ignore */ }
+    finally { setMsgsLoading(false) }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLive, selectedId, fleetId])
+
+  const createSession = useCallback(async () => {
+    if (!isLive || !selectedId || !fleetId) return
+    setCreating(true)
+    try {
+      const token = await resolveToken()
+      await fetch(`${apiUrl}/fleets/${fleetId}/agents/${selectedId}/sessions`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      await fetchSessions()
+    } catch { /* ignore */ }
+    finally { setCreating(false) }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLive, selectedId, fleetId, fetchSessions])
 
   const fetchWorkspace = useCallback(async () => {
     if (!isLive || !selectedId || !fleetId) return
@@ -668,15 +845,21 @@ export function AgentDetailModal() {
     setSessions([])
     setSnapshot(null)
     setTab('sessions')
+    setActiveSessionId(null)
+    setSessionMessages([])
     void fetchSessions()
   }, [isOpen, selectedId, fetchSessions])
 
-  // Auto-refresh sessions every 5 s while the modal is open on the sessions tab
+  // Auto-refresh sessions list or session messages every 5 s while the sessions tab is active
   useEffect(() => {
     if (!isOpen || tab !== 'sessions') return
+    if (activeSessionId) {
+      const id = setInterval(() => { void fetchSessionMessages(activeSessionId) }, 5_000)
+      return () => clearInterval(id)
+    }
     const id = setInterval(() => { void fetchSessions() }, 5_000)
     return () => clearInterval(id)
-  }, [isOpen, tab, fetchSessions])
+  }, [isOpen, tab, activeSessionId, fetchSessions, fetchSessionMessages])
 
   useEffect(() => {
     if (isOpen && tab === 'computer') void fetchWorkspace()
@@ -794,7 +977,20 @@ export function AgentDetailModal() {
         {/* Content */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           {tab === 'sessions' ? (
-            <SessionsView sessions={sessions} loading={sessLoading} />
+            <SessionsView
+              sessions={sessions}
+              loading={sessLoading}
+              activeSessionId={activeSessionId}
+              sessionMessages={sessionMessages}
+              messagesLoading={msgsLoading}
+              onSelectSession={(id) => {
+                setActiveSessionId(id)
+                void fetchSessionMessages(id)
+              }}
+              onBack={() => { setActiveSessionId(null); setSessionMessages([]) }}
+              onNewSession={() => void createSession()}
+              creating={creating}
+            />
           ) : (
             <ComputerView
               agentRole={shortRole}

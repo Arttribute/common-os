@@ -1,55 +1,105 @@
+import { randomBytes } from 'crypto'
 import { Hono } from 'hono'
-import { tasks, humanMessages } from '../db/mongo.js'
+import { agents, agentSessions, humanMessages } from '../db/mongo.js'
 import type { Env } from '../types.js'
+
+const AGC_BASE_URL = (process.env.AGC_API_URL ?? 'https://api.agentcommons.io').replace(/\/$/, '')
+
+async function createAgcSession(commonsAgentId: string, title: string): Promise<string | null> {
+  const apiKey = process.env.AGENTCOMMONS_API_KEY
+  if (!apiKey || !commonsAgentId) return null
+  try {
+    const res = await fetch(`${AGC_BASE_URL}/v1/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ agentId: commonsAgentId, title, source: 'commonos' }),
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (!res.ok) return null
+    const raw = await res.json() as Record<string, unknown>
+    const data = (raw.data ?? raw) as Record<string, unknown>
+    return (data.sessionId ?? data.id ?? null) as string | null
+  } catch {
+    return null
+  }
+}
 
 const router = new Hono<Env>()
 
-// GET /fleets/:id/agents/:agentId/sessions
-// Returns a unified timeline of tasks + human-message exchanges, newest first.
+// GET /fleets/:id/agents/:agentId/sessions — list all sessions for an agent
 router.get('/:id/agents/:agentId/sessions', async (c) => {
+  try {
+    const list = await (await agentSessions())
+      .find({
+        agentId: c.req.param('agentId'),
+        fleetId: c.req.param('id'),
+        tenantId: c.get('tenantId'),
+      })
+      .sort({ createdAt: -1 })
+      .lean()
+    return c.json(list)
+  } catch {
+    return c.json({ error: 'database error' }, 503)
+  }
+})
+
+// POST /fleets/:id/agents/:agentId/sessions — create a new session
+router.post('/:id/agents/:agentId/sessions', async (c) => {
+  const body = await c.req.json<{ title?: string }>().catch(() => ({ title: undefined }))
   const agentId = c.req.param('agentId')
-  const fleetId  = c.req.param('id')
+  const fleetId = c.req.param('id')
   const tenantId = c.get('tenantId')
 
   try {
-    const [taskList, msgList] = await Promise.all([
-      (await tasks())
-        .find({ agentId, fleetId, tenantId })
-        .sort({ createdAt: -1 })
-        .limit(100)
-        .lean(),
+    const agent = await (await agents()).findOne({ _id: agentId, fleetId, tenantId }).lean()
+    if (!agent) return c.json({ error: 'agent not found' }, 404)
+
+    const title = body.title?.trim() || `Session ${new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`
+    const agcSessionId = await createAgcSession(agent.commons.agentId ?? '', title)
+
+    const sessId = `asess_${Date.now().toString(36)}${randomBytes(4).toString('hex')}`
+    const now = new Date()
+    const doc = {
+      _id: sessId,
+      agentId,
+      fleetId,
+      tenantId,
+      agcSessionId,
+      title,
+      isDefault: true,
+      messageCount: 0,
+      lastMessageAt: null,
+      createdAt: now,
+    }
+
+    // Clear old default
+    await (await agentSessions()).updateMany({ agentId, isDefault: true }, { $set: { isDefault: false } })
+    await (await agentSessions()).create(doc as never)
+
+    return c.json(doc, 201)
+  } catch {
+    return c.json({ error: 'database error' }, 503)
+  }
+})
+
+// GET /fleets/:id/agents/:agentId/sessions/:sessionId — session + its messages
+router.get('/:id/agents/:agentId/sessions/:sessionId', async (c) => {
+  const agentId = c.req.param('agentId')
+  const fleetId = c.req.param('id')
+  const tenantId = c.get('tenantId')
+  const sessionId = c.req.param('sessionId')
+
+  try {
+    const [session, msgs] = await Promise.all([
+      (await agentSessions()).findOne({ _id: sessionId, agentId, fleetId, tenantId }).lean(),
       (await humanMessages())
-        .find({ agentId, fleetId, tenantId })
-        .sort({ createdAt: -1 })
-        .limit(100)
+        .find({ sessionId, agentId, fleetId, tenantId })
+        .sort({ createdAt: 1 })
+        .limit(200)
         .lean(),
     ])
-
-    const entries = [
-      ...taskList.map((t) => ({
-        kind:        'task' as const,
-        id:          t._id,
-        description: t.description,
-        status:      t.status,
-        output:      t.output,
-        error:       t.error,
-        assignedBy:  t.assignedBy,
-        startedAt:   t.startedAt,
-        completedAt: t.completedAt,
-        createdAt:   t.createdAt,
-      })),
-      ...msgList.map((m) => ({
-        kind:        'message' as const,
-        id:          m._id,
-        content:     m.content,
-        status:      m.status,
-        response:    m.response,
-        respondedAt: m.respondedAt,
-        createdAt:   m.createdAt,
-      })),
-    ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-
-    return c.json(entries)
+    if (!session) return c.json({ error: 'session not found' }, 404)
+    return c.json({ ...session, messages: msgs })
   } catch {
     return c.json({ error: 'database error' }, 503)
   }

@@ -54,6 +54,7 @@ async function firstTimeSetup(): Promise<void> {
 
   if (config.integrationPath === "native") {
     await initSession();
+    await registerSessionWithApi();
   }
 }
 
@@ -162,6 +163,25 @@ async function initSession(): Promise<void> {
     console.warn(`[daemon] session creation failed: ${res.status} — running without session`);
   } catch (err) {
     console.warn("[daemon] session init error:", err instanceof Error ? err.message : err);
+  }
+}
+
+async function registerSessionWithApi(): Promise<void> {
+  if (!agentSessionId) return
+  const title = `Session ${new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`
+  try {
+    await fetch(`${config.apiUrl}/agents/${config.agentId}/session`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.agentToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ agcSessionId: agentSessionId, title }),
+      signal: AbortSignal.timeout(10_000),
+    })
+    console.log(`[daemon] session registered with API  agcSessionId=${agentSessionId.slice(0, 12)}…`)
+  } catch (err) {
+    console.warn('[daemon] session registration failed:', err instanceof Error ? err.message : err)
   }
 }
 
@@ -483,7 +503,7 @@ async function pollMessages(): Promise<void> {
       );
 
       if (res.status === 200) {
-        const msg = await res.json() as { id: string; content: string };
+        const msg = await res.json() as { id: string; content: string; sessionId?: string | null; agcSessionId?: string | null };
         if (msg?.id && msg?.content) {
           await handleMessage(msg);
         }
@@ -495,13 +515,13 @@ async function pollMessages(): Promise<void> {
   }
 }
 
-async function handleMessage(msg: { id: string; content: string }): Promise<void> {
+async function handleMessage(msg: { id: string; content: string; sessionId?: string | null; agcSessionId?: string | null }): Promise<void> {
   console.log(`[daemon] message ${msg.id}: ${msg.content.slice(0, 80)}`);
 
   await agent.emit({ type: "state_change", payload: { status: "working" } });
 
   try {
-    const response = await executeTask(msg.content);
+    const response = await executeTask(msg.content, msg.agcSessionId ?? undefined);
 
     await fetch(
       `${config.apiUrl}/agents/${config.agentId}/messages/${msg.id}/respond`,
@@ -591,14 +611,9 @@ async function handleTask(task: { id: string; description: string }) {
 
 // ─── Task execution ────────────────────────────────────────────────────────
 
-async function executeTask(description: string): Promise<string> {
-  if (config.integrationPath === "openclaw") {
-    return await runViaOpenClaw(description);
-  }
-  if (config.integrationPath === "native") {
-    return await runViaNative(description);
-  }
-  console.log(`[daemon] executing (guest): ${description}`);
+async function executeTask(description: string, agcSessionId?: string): Promise<string> {
+  if (config.integrationPath === "openclaw") return await runViaOpenClaw(description);
+  if (config.integrationPath === "native") return await runViaNative(description, agcSessionId);
   await sleep(2_000);
   return `completed: ${description}`;
 }
@@ -800,19 +815,20 @@ async function executeTool(call: { tool: string; args: Record<string, unknown> }
 //   final            → return the completed response
 // The persistent sessionId gives the agent continuous cross-task memory.
 
-async function runViaNative(description: string): Promise<string> {
+async function runViaNative(description: string, agcSessionId?: string): Promise<string> {
   const agentId = config.commonsAgentId || config.agentId;
   const snapshot = buildWorkspaceSnapshot(WORKSPACE_DIR);
   const cliContext = buildFilesystemManifest(WORKSPACE_DIR, snapshot);
 
-  console.log(`[daemon] AGC stream  agent=${agentId.slice(0, 12)}  session=${agentSessionId?.slice(0, 8) ?? "none"}`);
+  const sessionIdToUse = agcSessionId ?? agentSessionId;
+  console.log(`[daemon] AGC stream  agent=${agentId.slice(0, 12)}  session=${sessionIdToUse?.slice(0, 8) ?? "none"}`);
 
   const res = await fetch(`${AGC_BASE_URL}/v1/agents/run/stream`, {
     method: "POST",
     headers: agcHeaders(),
     body: JSON.stringify({
       agentId,
-      ...(agentSessionId ? { sessionId: agentSessionId } : {}),
+      ...((agcSessionId ?? agentSessionId) ? { sessionId: agcSessionId ?? agentSessionId } : {}),
       messages: [{ role: "user", content: description }],
       cliContext,
     }),

@@ -1,8 +1,17 @@
 import { Hono } from 'hono'
-import { agents, tasks, humanMessages } from '../db/mongo.js'
+import { agents, tasks, humanMessages, agentSessions } from '../db/mongo.js'
 import { dequeueTask, dequeueHumanMessage, broadcastToFleet } from '../db/memory.js'
 import { registerWithAgentCommons } from '../services/provisioner.js'
 import type { Env } from '../types.js'
+
+// Helper to resolve agcSessionId for a message
+async function resolveAgcSessionId(sessionId: string | null | undefined): Promise<string | null> {
+  if (!sessionId) return null
+  try {
+    const sess = await (await agentSessions()).findOne({ _id: sessionId }, { agcSessionId: 1 }).lean()
+    return sess?.agcSessionId ?? null
+  } catch { return null }
+}
 
 const router = new Hono<Env>()
 
@@ -109,7 +118,7 @@ router.get('/:agentId/messages/next', async (c) => {
         { sort: { createdAt: 1 }, new: false },
       ).lean()
       if (!claimed) return c.body(null, 204)
-      return c.json({ id: claimed._id, content: claimed.content })
+      return c.json({ id: claimed._id, content: claimed.content, sessionId: claimed.sessionId ?? null, agcSessionId: await resolveAgcSessionId(claimed.sessionId) })
     } catch {
       return c.json({ error: 'database error' }, 503)
     }
@@ -122,7 +131,7 @@ router.get('/:agentId/messages/next', async (c) => {
       { new: true },
     ).lean()
     if (!msg) return c.body(null, 204)
-    return c.json({ id: msg._id, content: msg.content })
+    return c.json({ id: msg._id, content: msg.content, sessionId: msg.sessionId ?? null, agcSessionId: await resolveAgcSessionId(msg.sessionId) })
   } catch {
     return c.json({ error: 'database error' }, 503)
   }
@@ -157,6 +166,14 @@ router.post('/:agentId/messages/:msgId/respond', async (c) => {
       response: body.response,
       ts: now.toISOString(),
     })
+
+    // After updating message, update session stats
+    if (msg.sessionId) {
+      await (await agentSessions()).updateOne(
+        { _id: msg.sessionId },
+        { $inc: { messageCount: 1 }, $set: { lastMessageAt: now } },
+      ).catch(() => {})
+    }
 
     return c.json({ ok: true })
   } catch {
@@ -212,6 +229,50 @@ router.post('/:agentId/bootstrap', async (c) => {
       commonsApiKey: platformKey,
       walletAddress: commons.walletAddress,
     })
+  } catch {
+    return c.json({ error: 'database error' }, 503)
+  }
+})
+
+// POST /agents/:agentId/session — daemon registers its AGC session
+router.post('/:agentId/session', async (c) => {
+  if (c.get('authType') !== 'agent') return c.json({ error: 'agent authorization required' }, 403)
+  const agentId = c.req.param('agentId')
+  if (c.get('agentId') !== agentId) return c.json({ error: 'forbidden' }, 403)
+
+  const body = await c.req.json<{ agcSessionId: string; title?: string }>().catch(() => ({ agcSessionId: '', title: undefined }))
+  if (!body.agcSessionId) return c.json({ error: 'agcSessionId is required' }, 400)
+
+  try {
+    const col = await agentSessions()
+    const agent = await (await agents()).findOne({ _id: agentId }).lean()
+    if (!agent) return c.json({ error: 'agent not found' }, 404)
+
+    const existing = await col.findOne({ agentId, agcSessionId: body.agcSessionId }).lean()
+    if (existing) {
+      // Already registered — just ensure it's marked default
+      await col.updateMany({ agentId, isDefault: true }, { $set: { isDefault: false } })
+      await col.updateOne({ _id: existing._id }, { $set: { isDefault: true } })
+      return c.json({ sessionId: existing._id, agcSessionId: existing.agcSessionId })
+    }
+
+    // Clear old defaults and create new session record
+    await col.updateMany({ agentId, isDefault: true }, { $set: { isDefault: false } })
+    const sessId = `asess_${Date.now().toString(36)}`
+    const title = body.title || `Session ${new Date().toLocaleString('en-US', { month: 'short', day: 'numeric' })}`
+    await col.create({
+      _id: sessId,
+      agentId,
+      fleetId: agent.fleetId,
+      tenantId: agent.tenantId,
+      agcSessionId: body.agcSessionId,
+      title,
+      isDefault: true,
+      messageCount: 0,
+      lastMessageAt: null,
+      createdAt: new Date(),
+    } as never)
+    return c.json({ sessionId: sessId, agcSessionId: body.agcSessionId }, 201)
   } catch {
     return c.json({ error: 'database error' }, 503)
   }

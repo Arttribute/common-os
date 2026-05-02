@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { randomBytes } from 'crypto'
-import { agents, humanMessages } from '../db/mongo.js'
+import { agents, agentSessions, humanMessages } from '../db/mongo.js'
 import { enqueueHumanMessage, broadcastToFleet } from '../db/memory.js'
 import type { Env, HumanMessageDoc } from '../types.js'
 
@@ -8,19 +8,30 @@ const router = new Hono<Env>()
 
 // POST /fleets/:id/agents/:agentId/human-message — human sends a message to an agent
 router.post('/:id/agents/:agentId/human-message', async (c) => {
-  const body = await c.req.json<{ content: string }>().catch(() => ({ content: '' }))
+  const body = await c.req.json<{ content: string; sessionId?: string }>().catch(() => ({ content: '', sessionId: undefined }))
   if (!body.content) return c.json({ error: 'content is required' }, 400)
 
   const agentId = c.req.param('agentId')
   const fleetId = c.req.param('id')
+  const tenantId = c.get('tenantId')
 
   try {
-    const agent = await (await agents()).findOne({
-      _id: agentId,
-      fleetId,
-      tenantId: c.get('tenantId'),
-    }).lean()
+    const agent = await (await agents()).findOne({ _id: agentId, fleetId, tenantId }).lean()
     if (!agent) return c.json({ error: 'agent not found' }, 404)
+
+    // Resolve or find the target session
+    let sessionId: string | null = body.sessionId ?? null
+    if (sessionId) {
+      const sess = await (await agentSessions()).findOne({ _id: sessionId, agentId }).lean()
+      if (!sess) return c.json({ error: 'session not found' }, 404)
+    } else {
+      // Use the agent's default session if one exists
+      const defaultSess = await (await agentSessions())
+        .findOne({ agentId, isDefault: true })
+        .sort({ createdAt: -1 })
+        .lean()
+      sessionId = defaultSess?._id ?? null
+    }
 
     const msgId = `hmsg_${Date.now().toString(36)}${randomBytes(4).toString('hex')}`
     const now = new Date()
@@ -29,7 +40,8 @@ router.post('/:id/agents/:agentId/human-message', async (c) => {
       _id: msgId,
       agentId,
       fleetId,
-      tenantId: c.get('tenantId'),
+      tenantId,
+      sessionId,
       content: body.content,
       status: 'pending',
       response: null,
@@ -43,6 +55,7 @@ router.post('/:id/agents/:agentId/human-message', async (c) => {
       type: 'human_message',
       agentId,
       msgId,
+      sessionId,
       content: body.content,
       ts: now.toISOString(),
     })

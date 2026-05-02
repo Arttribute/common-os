@@ -165,11 +165,25 @@ export interface MessageDoc {
   createdAt: Date
 }
 
+export interface AgentSessionDoc {
+  _id: string
+  agentId: string
+  fleetId: string
+  tenantId: string
+  agcSessionId: string | null
+  title: string
+  isDefault: boolean
+  messageCount: number
+  lastMessageAt: Date | null
+  createdAt: Date
+}
+
 export interface HumanMessageDoc {
   _id: string
   agentId: string
   fleetId: string
   tenantId: string
+  sessionId: string | null
   content: string
   status: 'pending' | 'processing' | 'responded'
   response: string | null
