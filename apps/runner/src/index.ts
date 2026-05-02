@@ -11,6 +11,12 @@ app.get("/health", (c) =>
 	c.json({ status: "ok", ts: new Date().toISOString() }),
 );
 
+app.get("/version", async (c) => {
+	const result = await Bun.$`agc --version`;
+	const output = await result.text();
+	return c.json({ version: output });
+});
+
 app.post("/run", async (c) => {
 	const body = await c.req.json<{
 		agentId: string;
