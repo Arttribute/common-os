@@ -339,14 +339,22 @@ router.post('/:agentId/messages/:msgId/respond', async (c) => {
     return c.json({ error: 'forbidden' }, 403)
   }
 
-  const body = await c.req.json<{ response: string }>().catch(() => ({ response: '' }))
+  const body: { response: string; agcSessionId?: string | null } =
+    await c.req.json<{ response: string; agcSessionId?: string | null }>().catch(() => ({ response: '' }))
   const msgId = c.req.param('msgId')
   const now = new Date()
 
   try {
     const msg = await (await humanMessages()).findOneAndUpdate(
       { _id: msgId, agentId },
-      { $set: { status: 'responded', response: body.response, respondedAt: now } },
+      {
+        $set: {
+          status: 'responded',
+          response: body.response,
+          respondedAt: now,
+          ...(body.agcSessionId ? { sessionId: body.agcSessionId } : {}),
+        },
+      },
       { new: true },
     ).lean()
     if (!msg) return c.json({ error: 'message not found' }, 404)
@@ -360,9 +368,10 @@ router.post('/:agentId/messages/:msgId/respond', async (c) => {
     })
 
     // After updating message, update session stats
-    if (msg.sessionId) {
+    const statsSessionId = body.agcSessionId ?? msg.sessionId
+    if (statsSessionId) {
       await (await agentSessions()).updateOne(
-        { agentId, $or: [{ _id: msg.sessionId }, { agcSessionId: msg.sessionId }] },
+        { agentId, $or: [{ _id: statsSessionId }, { agcSessionId: statsSessionId }] },
         { $inc: { messageCount: 1 }, $set: { lastMessageAt: now } },
       ).catch(() => {})
     }

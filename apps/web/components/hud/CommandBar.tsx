@@ -12,6 +12,7 @@ export function CommandBar() {
   const [error, setError] = useState<string | null>(null)
   const selectedId = useAgentStore((s) => s.selectedAgentId)
   const agents = useAgentStore((s) => s.agents)
+  const activeSessionByAgent = useAgentStore((s) => s.activeSessionByAgent)
   const setCurrentTask = useAgentStore((s) => s.setCurrentTask)
   const updateStatus = useAgentStore((s) => s.updateStatus)
   const setCurrentAction = useAgentStore((s) => s.setCurrentAction)
@@ -20,6 +21,7 @@ export function CommandBar() {
   const searchParams = useSearchParams()
 
   const selected = selectedId ? agents[selectedId] : null
+  const activeSessionId = selectedId ? activeSessionByAgent[selectedId] : null
   const shortRole = selected?.role.replace(/-/g, ' ') ?? 'an agent'
 
   const { getAccessToken, authenticated } = usePrivy()
@@ -52,7 +54,7 @@ export function CommandBar() {
             Authorization: `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ content }),
+          body: JSON.stringify({ content, ...(activeSessionId ? { sessionId: activeSessionId } : {}) }),
         })
         if (!res.ok) {
           const data = await res.json().catch(() => null) as { error?: string } | null

@@ -40,8 +40,10 @@ export interface Agent {
 interface AgentStore {
   agents: Record<string, Agent>
   selectedAgentId: string | null
+  activeSessionByAgent: Record<string, string | null>
   detailModalOpen: boolean
   selectAgent: (id: string | null) => void
+  setActiveSession: (agentId: string, sessionId: string | null) => void
   openDetailModal: () => void
   closeDetailModal: () => void
   upsertAgent: (agent: Omit<Agent, 'recentActions'>) => void
@@ -58,9 +60,14 @@ interface AgentStore {
 export const useAgentStore = create<AgentStore>((set) => ({
   agents: {},
   selectedAgentId: null,
+  activeSessionByAgent: {},
   detailModalOpen: false,
 
   selectAgent: (id) => set({ selectedAgentId: id }),
+  setActiveSession: (agentId, sessionId) =>
+    set((state) => ({
+      activeSessionByAgent: { ...state.activeSessionByAgent, [agentId]: sessionId },
+    })),
   openDetailModal: () => set({ detailModalOpen: true }),
   closeDetailModal: () => set({ detailModalOpen: false }),
 

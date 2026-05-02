@@ -839,6 +839,7 @@ export function AgentDetailModal() {
   const [workspaceError, setWorkspaceError] = useState<string | null>(null)
 
   const agent = selectedId ? agents[selectedId] : null
+  const setActiveSession = useAgentStore((s) => s.setActiveSession)
   const urlFleet = searchParams.get('fleet')
   const fleetId = urlFleet ?? storeFleetId
   const apiUrl = process.env.NEXT_PUBLIC_API_URL
@@ -929,13 +930,20 @@ export function AgentDetailModal() {
         setSessionError(errorText(data, `could not create Agent Commons session (${res.status})`))
         return
       }
+      const created = await res.json() as { _id?: string; agcSessionId?: string | null }
+      const newSessionId = created.agcSessionId ?? created._id ?? null
+      if (newSessionId) {
+        setActiveSessionId(newSessionId)
+        setActiveSession(selectedId, newSessionId)
+        void fetchSessionMessages(newSessionId)
+      }
       await fetchSessions()
     } catch {
       setSessionError('could not connect to create an Agent Commons session')
     }
     finally { setCreating(false) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLive, selectedId, fleetId, fetchSessions])
+  }, [isLive, selectedId, fleetId, fetchSessions, fetchSessionMessages, setActiveSession])
 
   const fetchWorkspace = useCallback(async () => {
     if (!isLive || !selectedId || !fleetId) return
@@ -1114,6 +1122,7 @@ export function AgentDetailModal() {
               error={sessionError}
               onSelectSession={(id) => {
                 setActiveSessionId(id)
+                if (selectedId) setActiveSession(selectedId, id)
                 void fetchSessionMessages(id)
               }}
               onBack={() => { setActiveSessionId(null); setSessionMessages([]) }}
