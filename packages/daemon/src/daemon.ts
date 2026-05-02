@@ -6,9 +6,8 @@ import {
   writeFileSync,
   readdirSync,
   existsSync,
-  statSync,
 } from "fs";
-import { resolve, relative, join, dirname } from "path";
+import { join, dirname } from "path";
 import { loadConfig } from "./config.js";
 import { CommonOSAgentClient } from "@common-os/sdk";
 
@@ -51,11 +50,9 @@ async function firstTimeSetup(): Promise<void> {
     console.log(`[daemon] workspace ready at ${WORKSPACE_DIR}`);
   } catch {}
 
-  if (config.integrationPath === "native" && !config.commonsApiKey) {
-    await bootstrapCommons();
-  }
-
   if (config.integrationPath === "native") {
+    if (!config.commonsApiKey) await bootstrapCommons();
+    await setupAgcAuth();
     await initSession();
     await registerSessionWithApi();
   }
@@ -92,17 +89,35 @@ async function bootstrapCommons(): Promise<void> {
   }
 }
 
-// ─── AGC API ───────────────────────────────────────────────────────────────
-// Base URL and auth headers for direct calls to the Agent Commons REST API.
-// The daemon bypasses the agc CLI and calls the API directly for both session
-// creation and streaming execution — no subprocess overhead, clean output.
+// ─── AGC CLI configuration ─────────────────────────────────────────────────
+// The daemon drives Agent Commons exclusively through the `agc` CLI binary,
+// which is pre-installed in the agent image. Auth lives in ~/.agc/config.json
+// (written once after bootstrapCommons resolves the API key). All subsequent
+// `agc run` calls inherit auth from that file via the AGC_API_KEY env var.
 
 const AGC_BASE_URL = (process.env.AGC_API_URL ?? "https://api.agentcommons.io").replace(/\/$/, "");
+const AGC_HOME_CONFIG = join(process.env.HOME ?? "/root", ".agc", "config.json");
 
-function agcHeaders(): Record<string, string> {
+async function setupAgcAuth(): Promise<void> {
+  if (!config.commonsApiKey) return;
+  try {
+    mkdirSync(dirname(AGC_HOME_CONFIG), { recursive: true });
+    writeFileSync(
+      AGC_HOME_CONFIG,
+      JSON.stringify({ apiKey: config.commonsApiKey, apiUrl: AGC_BASE_URL }),
+      { mode: 0o600 },
+    );
+    console.log("[daemon] agc auth configured");
+  } catch (err) {
+    console.warn("[daemon] agc config write failed:", err instanceof Error ? err.message : err);
+  }
+}
+
+function agcEnv(): NodeJS.ProcessEnv {
   return {
-    "Content-Type": "application/json",
-    "Authorization": `Bearer ${config.commonsApiKey}`,
+    ...process.env,
+    AGC_API_KEY: config.commonsApiKey ?? "",
+    AGC_API_URL: AGC_BASE_URL,
   };
 }
 
@@ -143,72 +158,84 @@ async function initSession(): Promise<void> {
     return;
   }
 
-  // Try to resume an existing session for this agent
+  // 1. Resume from local file (survives in-place restarts)
   try {
     if (existsSync(SESSION_FILE)) {
-      const data = JSON.parse(readFileSync(SESSION_FILE, "utf-8")) as {
+      const saved = JSON.parse(readFileSync(SESSION_FILE, "utf-8")) as {
         sessionId?: string;
         agentId?: string;
       };
-      if (data.sessionId && data.agentId === config.commonsAgentId) {
-        agentSessionId = data.sessionId;
+      if (saved.sessionId && saved.agentId === config.commonsAgentId) {
+        agentSessionId = saved.sessionId;
         console.log(`[daemon] resumed session ${agentSessionId}`);
         return;
       }
     }
-  } catch {
-    // Fall through to create a new session
-  }
+  } catch {}
 
-  // GCP currently mounts /mnt/shared as emptyDir, so SESSION_FILE disappears on
-  // pod restart. MongoDB remains the durable source of truth for the default
-  // session, so recover it before creating a fresh AGC session.
-  const recoveredSessionId = await recoverSessionFromApi();
-  if (recoveredSessionId) {
-    agentSessionId = recoveredSessionId;
+  // 2. Recover from MongoDB (survives pod restarts where /workspace is wiped)
+  const recovered = await recoverSessionFromApi();
+  if (recovered) {
+    agentSessionId = recovered;
     try {
-      writeFileSync(
-        SESSION_FILE,
-        JSON.stringify({ sessionId: recoveredSessionId, agentId: config.commonsAgentId }),
-      );
-    } catch (err) {
-      console.warn("[daemon] recovered session but could not write session file:", err instanceof Error ? err.message : err);
-    }
+      writeFileSync(SESSION_FILE, JSON.stringify({ sessionId: recovered, agentId: config.commonsAgentId }));
+    } catch {}
     console.log(`[daemon] recovered session ${agentSessionId} from API`);
     return;
   }
 
-  // Create a new session via the AGC REST API directly
-  try {
-    const res = await fetch(`${AGC_BASE_URL}/v1/sessions`, {
-      method: "POST",
-      headers: agcHeaders(),
-      body: JSON.stringify({
-        agentId: config.commonsAgentId,
-        title: `daemon-${config.agentId.slice(0, 12)}`,
-        source: "daemon",
-      }),
-      signal: AbortSignal.timeout(10_000),
-    });
-
-    if (res.ok) {
-      const raw = await res.json() as Record<string, unknown>;
-      const data = (raw.data ?? raw) as Record<string, unknown>;
-      const sessionId = (data.sessionId ?? data.id ?? null) as string | null;
-      if (sessionId) {
-        agentSessionId = sessionId;
-        writeFileSync(
-          SESSION_FILE,
-          JSON.stringify({ sessionId, agentId: config.commonsAgentId }),
-        );
-        console.log(`[daemon] created session ${agentSessionId}`);
-        return;
-      }
-    }
-    console.warn(`[daemon] session creation failed: ${res.status} — running without session`);
-  } catch (err) {
-    console.warn("[daemon] session init error:", err instanceof Error ? err.message : err);
+  // 3. Create a new session via the agc CLI
+  agentSessionId = await createSessionViaCli();
+  if (agentSessionId) {
+    try {
+      writeFileSync(SESSION_FILE, JSON.stringify({ sessionId: agentSessionId, agentId: config.commonsAgentId }));
+    } catch {}
+    console.log(`[daemon] created session ${agentSessionId}`);
+  } else {
+    console.warn("[daemon] could not create AGC session — agent will run without persistent memory");
   }
+}
+
+async function createSessionViaCli(): Promise<string | null> {
+  try {
+    const proc = Bun.spawn(
+      ["agc", "run", "--agent", config.commonsAgentId, "--new-session", "--yes", "--no-stream", "init"],
+      { cwd: WORKSPACE_DIR, env: agcEnv(), stdout: "pipe", stderr: "pipe" },
+    );
+    await Promise.race([proc.exited, sleep(30_000).then(() => proc.kill())]);
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    const sessionId = parseAgcSessionId(stdout + "\n" + stderr);
+    if (!sessionId) {
+      console.warn("[daemon] agc --new-session: could not find session ID in output:", (stdout + stderr).slice(0, 300));
+    }
+    return sessionId;
+  } catch (err) {
+    console.warn("[daemon] createSessionViaCli failed:", err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+function parseAgcSessionId(output: string): string | null {
+  for (const line of output.split("\n")) {
+    const s = line.trim();
+    if (!s) continue;
+    // SSE line or plain JSON
+    const raw = s.startsWith("data:") ? s.slice(5).trim() : s;
+    if (raw.startsWith("{")) {
+      try {
+        const obj = JSON.parse(raw) as Record<string, unknown>;
+        const id = obj.sessionId ?? obj.id ?? obj.session_id ?? null;
+        if (typeof id === "string" && id) return id;
+      } catch {}
+    }
+    // "Session: ses_xxx" or "Session ID: ses_xxx" header line
+    const kv = s.match(/(?:session(?:\s+id)?)\s*[=:]\s*(\S+)/i);
+    if (kv?.[1]) return kv[1];
+  }
+  // Fallback: any token that looks like a session identifier
+  const m = output.match(/\b(sess?[-_][a-zA-Z0-9_-]{6,}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\b/);
+  return m?.[1] ?? null;
 }
 
 async function registerSessionWithApi(): Promise<void> {
@@ -709,436 +736,41 @@ function buildWorkspaceSnapshot(dir: string, maxDepth = 2): string {
   return lines.join("\n");
 }
 
-function buildFilesystemManifest(rootDir: string, snapshot: string): string {
-  return `
-## CLI Local File System — ACTIVE
+// ─── Native execution via agc CLI ──────────────────────────────────────────
+// `agc run --local --yes` is the only way to get cli_tool_request events from
+// AGC (direct REST calls do not trigger local-tool mode). The CLI binary is
+// pre-installed in the image; it handles auth, session memory, and all local
+// tool calls (read/write/run) automatically inside its own process. We just
+// capture stdout as the agent's final response.
 
-You are running inside a CLI-like daemon session with DIRECT access to your own CommonOS Kubernetes pod workspace. The following tools are in your tool list and execute in the pod in real time.
-
-**Session root:** ${rootDir}
-
-### Current file system (live snapshot)
-\`\`\`
-${snapshot}
-\`\`\`
-
-### MANDATORY RULES — READ CAREFULLY
-
-1. **Call cli_* tools immediately and directly.** Do NOT create tasks for local file operations. Do NOT delegate to sub-agents. Do NOT ask the user to run commands themselves.
-2. **Always show the actual output** returned by the tool in your response. Never say "I listed the files" without showing them. Report exactly what the tool returns.
-3. **Never fabricate results.** Wait for the real tool output before responding.
-4. **Sensitive paths are blocked** (.ssh, .gnupg, .aws, .env, credentials). Attempting to access them will return an error.
-5. **cli_write_file and cli_run_command execute immediately** — auto-approve is active, no user confirmation is required.
-6. If the user asks you to create, edit, inspect, or run something in the workspace, use the cli_* tools. You can read and write files in this pod.
-
-### Available CLI tools
-
-| Tool | What it does |
-|------|-------------|
-| \`cli_list_directory\` | List files and folders at a path |
-| \`cli_read_file\` | Read a file |
-| \`cli_write_file\` | Write or overwrite a file |
-| \`cli_search_files\` | Find files matching a pattern |
-| \`cli_run_command\` | Run a short command and return its output |
-| \`cli_start_process\` | Start a long-running command in the background; returns a processId immediately |
-| \`cli_wait_for_process\` | Block up to N seconds for a background process, then return current output |
-| \`cli_process_status\` | Instant non-blocking check on a background process |
-| \`cli_kill_process\` | Kill a running background process |
-| \`cli_list_processes\` | List all background processes started this session |
-
-### run_command options
-- \`timeout_seconds\` (default 120, max 300)
-
-### Choosing between run_command and start_process
-- Use \`cli_run_command\` when the command should finish in under about 30 seconds.
-- Use \`cli_start_process\` plus \`cli_wait_for_process\` for long-running commands like installs, builds, and dev servers.
-
-All paths are restricted to the session root. Chain tool calls across turns to accomplish complex tasks.`;
-}
-
-// ─── Local tool execution ──────────────────────────────────────────────────
-// Tools are invoked via the AGC platform's cli_tool_request SSE event.
-// The daemon receives the event, executes the tool locally, and posts the
-// result back to AGC — no interactive confirmation, the agent owns this pod.
-
-function assertInWorkspace(userPath: string): string {
-  const abs = resolve(WORKSPACE_DIR, userPath);
-  const rel = relative(WORKSPACE_DIR, abs);
-  if (rel.startsWith("..") || rel.startsWith("/")) {
-    throw new Error(`path "${userPath}" escapes workspace`);
-  }
-  return abs;
-}
-
-function toolReadFile(args: { path: string }): string {
-  const abs = assertInWorkspace(args.path);
-  if (!existsSync(abs)) return `[error: file not found: ${args.path}]`;
-  try {
-    const stat = statSync(abs);
-    if (stat.isDirectory()) return `[error: "${args.path}" is a directory — use list_directory]`;
-    const content = readFileSync(abs, "utf-8");
-    return content.length > 50_000
-      ? content.slice(0, 50_000) + "\n… (truncated at 50 KB)"
-      : content;
-  } catch (err) {
-    return `[error: ${err instanceof Error ? err.message : String(err)}]`;
-  }
-}
-
-function toolWriteFile(args: { path: string; content: string }): string {
-  try {
-    const abs = assertInWorkspace(args.path);
-    mkdirSync(dirname(abs), { recursive: true });
-    writeFileSync(abs, args.content ?? "", "utf-8");
-    return `[ok: wrote ${abs}]`;
-  } catch (err) {
-    return `[error: ${err instanceof Error ? err.message : String(err)}]`;
-  }
-}
-
-function toolListDirectory(args: { path?: string }): string {
-  try {
-    const abs = args.path ? assertInWorkspace(args.path) : WORKSPACE_DIR;
-    if (!existsSync(abs)) return `[error: directory not found: ${args.path ?? "."}]`;
-    const entries = readdirSync(abs, { withFileTypes: true }) as Array<{
-      name: string;
-      isDirectory: () => boolean;
-    }>;
-    if (entries.length === 0) return "[empty directory]";
-    return entries
-      .sort((a, b) => {
-        if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
-        return a.name.localeCompare(b.name);
-      })
-      .map((e) => (e.isDirectory() ? `${e.name}/` : e.name))
-      .join("\n");
-  } catch (err) {
-    return `[error: ${err instanceof Error ? err.message : String(err)}]`;
-  }
-}
-
-async function toolRunCommand(args: {
-  command: string;
-  args?: Array<string | number | boolean>;
-  cwd?: string;
-  timeout_seconds?: number;
-}): Promise<string> {
-  try {
-    const cwd = args.cwd ? assertInWorkspace(args.cwd) : WORKSPACE_DIR;
-    const cmdArgs = Array.isArray(args.args) ? args.args.map(String) : [];
-    const command = cmdArgs.length > 0 ? [args.command, ...cmdArgs] : ["sh", "-c", args.command];
-    const timeoutMs = Math.min(Math.max(args.timeout_seconds ?? 120, 1), 300) * 1000;
-    const proc = Bun.spawn(command, {
-      cwd,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const timeout = sleep(timeoutMs).then(() => {
-      proc.kill();
-      return null;
-    });
-    await Promise.race([proc.exited, timeout]);
-    const [stdout, stderr] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ]);
-    const combined = (stdout + (stderr ? `\n[stderr]\n${stderr}` : "")).trim();
-    return combined.slice(0, 10_000) || "[command produced no output]";
-  } catch (err) {
-    return `[error: ${err instanceof Error ? err.message : String(err)}]`;
-  }
-}
-
-async function toolSearchFiles(args: { pattern: string; path?: string; directory?: string }): Promise<string> {
-  try {
-    const rootArg = args.path ?? args.directory;
-    const searchRoot = rootArg ? assertInWorkspace(rootArg) : WORKSPACE_DIR;
-    const proc = Bun.spawn(
-      ["find", searchRoot, "-name", args.pattern, "-not", "-path", "*/node_modules/*", "-not", "-path", "*/.git/*"],
-      {
-        cwd: WORKSPACE_DIR,
-        env: process.env,
-        stdout: "pipe",
-        stderr: "pipe",
-      },
-    );
-    const stdout = await new Response(proc.stdout).text();
-    await proc.exited;
-    const lines = stdout.trim().split("\n").filter(Boolean);
-    if (lines.length === 0) return `[no files matching "${args.pattern}"]`;
-    return lines.slice(0, 200).join("\n");
-  } catch (err) {
-    return `[error: ${err instanceof Error ? err.message : String(err)}]`;
-  }
-}
-
-type ManagedProcess = {
-  id: string;
-  command: string;
-  status: "running" | "done" | "error" | "killed";
-  exitCode: number | null;
-  stdout: string;
-  stderr: string;
-  startedAt: Date;
-  endedAt: Date | null;
-  child: ReturnType<typeof Bun.spawn>;
-};
-
-const managedProcesses = new Map<string, ManagedProcess>();
-
-function capBuffer(current: string, next: string, max: number): string {
-  const combined = current + next;
-  return combined.length > max ? combined.slice(combined.length - max) : combined;
-}
-
-function processSnapshot(proc: ManagedProcess): string {
-  const elapsedSec = Math.round((Date.now() - proc.startedAt.getTime()) / 1000);
-  const stdout = proc.stdout.length > 4000
-    ? `...(earlier output truncated)\n${proc.stdout.slice(-4000)}`
-    : proc.stdout;
-  return JSON.stringify({
-    processId: proc.id,
-    command: proc.command,
-    status: proc.status,
-    exitCode: proc.exitCode,
-    elapsedSec,
-    stdout: stdout || "(no output yet)",
-    stderr: proc.stderr.slice(-1000) || undefined,
-  });
-}
-
-async function toolStartProcess(args: {
-  command: string;
-  args?: Array<string | number | boolean>;
-  cwd?: string;
-}): Promise<string> {
-  try {
-    if (!args.command) return JSON.stringify({ error: 'start_process requires a "command" string' });
-    const cwd = args.cwd ? assertInWorkspace(args.cwd) : WORKSPACE_DIR;
-    const cmdArgs = Array.isArray(args.args) ? args.args.map(String) : [];
-    const command = [args.command, ...cmdArgs];
-    const id = `proc_${Date.now().toString(36)}${randomBytes(3).toString("hex")}`;
-    const child = Bun.spawn(command, {
-      cwd,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const proc: ManagedProcess = {
-      id,
-      command: command.join(" "),
-      status: "running",
-      exitCode: null,
-      stdout: "",
-      stderr: "",
-      startedAt: new Date(),
-      endedAt: null,
-      child,
-    };
-    managedProcesses.set(id, proc);
-
-    void new Response(child.stdout).text().then((out) => {
-      proc.stdout = capBuffer(proc.stdout, out, 200_000);
-    }).catch(() => {});
-    void new Response(child.stderr).text().then((err) => {
-      proc.stderr = capBuffer(proc.stderr, err, 50_000);
-    }).catch(() => {});
-    void child.exited.then((code) => {
-      if (proc.status === "running") proc.status = code === 0 ? "done" : "error";
-      proc.exitCode = code;
-      proc.endedAt = new Date();
-    }).catch((err) => {
-      proc.status = "error";
-      proc.endedAt = new Date();
-      proc.stderr = capBuffer(proc.stderr, `\nSpawn error: ${err instanceof Error ? err.message : String(err)}`, 50_000);
-    });
-
-    return JSON.stringify({ processId: id, status: "running", command: proc.command });
-  } catch (err) {
-    return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
-  }
-}
-
-async function toolProcessStatus(args: { processId: string }): Promise<string> {
-  if (!args.processId) return JSON.stringify({ error: 'process_status requires a "processId" argument' });
-  const proc = managedProcesses.get(args.processId);
-  return proc ? processSnapshot(proc) : JSON.stringify({ error: `No process found with id "${args.processId}"` });
-}
-
-async function toolWaitForProcess(args: { processId: string; wait_seconds?: number }): Promise<string> {
-  if (!args.processId) return JSON.stringify({ error: 'wait_for_process requires a "processId" argument' });
-  const proc = managedProcesses.get(args.processId);
-  if (!proc) return JSON.stringify({ error: `No process found with id "${args.processId}"` });
-  if (proc.status !== "running") return processSnapshot(proc);
-  const waitMs = Math.min(Math.max(args.wait_seconds ?? 60, 1), 120) * 1000;
-  const deadline = Date.now() + waitMs;
-  while (proc.status === "running" && Date.now() < deadline) {
-    await sleep(500);
-  }
-  return processSnapshot(proc);
-}
-
-async function toolKillProcess(args: { processId: string }): Promise<string> {
-  if (!args.processId) return JSON.stringify({ error: 'kill_process requires a "processId" argument' });
-  const proc = managedProcesses.get(args.processId);
-  if (!proc) return JSON.stringify({ error: `No process found with id "${args.processId}"` });
-  if (proc.status !== "running") return JSON.stringify({ error: `Process "${args.processId}" is not running (status: ${proc.status})` });
-  proc.child.kill("SIGTERM");
-  proc.status = "killed";
-  proc.endedAt = new Date();
-  return JSON.stringify({ processId: args.processId, status: "killed" });
-}
-
-async function toolListProcesses(): Promise<string> {
-  if (managedProcesses.size === 0) return JSON.stringify([]);
-  return JSON.stringify([...managedProcesses.values()].map((proc) => ({
-    processId: proc.id,
-    command: proc.command,
-    status: proc.status,
-    elapsedSec: Math.round((Date.now() - proc.startedAt.getTime()) / 1000),
-  })));
-}
-
-async function executeTool(call: { tool: string; args: Record<string, unknown> }): Promise<string> {
-  const tool = call.tool.replace(/^cli_/, ""); // strip optional cli_ prefix
-  const args = call.args ?? {};
-
-  switch (tool) {
-    case "read_file":
-      return toolReadFile(args as { path: string });
-    case "write_file":
-      return toolWriteFile(args as { path: string; content: string });
-    case "list_directory":
-      return toolListDirectory(args as { path?: string });
-    case "run_command":
-      return await toolRunCommand(args as { command: string; args?: Array<string | number | boolean>; cwd?: string; timeout_seconds?: number });
-    case "search_files":
-      return await toolSearchFiles(args as { pattern: string; path?: string; directory?: string });
-    case "start_process":
-      return await toolStartProcess(args as { command: string; args?: Array<string | number | boolean>; cwd?: string });
-    case "process_status":
-      return await toolProcessStatus(args as { processId: string });
-    case "wait_for_process":
-      return await toolWaitForProcess(args as { processId: string; wait_seconds?: number });
-    case "kill_process":
-      return await toolKillProcess(args as { processId: string });
-    case "list_processes":
-      return await toolListProcesses();
-    default:
-      return `[error: unknown tool "${tool}". Available: read_file, write_file, list_directory, run_command, search_files, start_process, process_status, wait_for_process, kill_process, list_processes]`;
-  }
-}
-
-// ─── Native execution via AGC streaming API ────────────────────────────────
-// Calls the AGC streaming endpoint directly — no CLI subprocess.
-// SSE events handled:
-//   token            → accumulate streamed content
-//   cli_tool_request → execute tool locally, POST result to /cli-tool-result
-//   final            → return the completed response
-// The persistent sessionId gives the agent continuous cross-task memory.
-
-async function runViaNative(description: string, agcSessionId?: string, messages?: AgcMessage[]): Promise<string> {
-  const agentId = config.commonsAgentId || config.agentId;
-  const snapshot = buildWorkspaceSnapshot(WORKSPACE_DIR);
-  const cliContext = buildFilesystemManifest(WORKSPACE_DIR, snapshot);
-
+async function runViaNative(description: string, agcSessionId?: string, _messages?: AgcMessage[]): Promise<string> {
   const sessionIdToUse = agcSessionId ?? agentSessionId;
-  const agcMessages = messages?.length ? messages : [{ role: "user" as const, content: description }];
-  console.log(`[daemon] AGC stream  agent=${agentId.slice(0, 12)}  agcSessionId=${sessionIdToUse?.slice(0, 12) ?? "none"}  messages=${agcMessages.length}`);
+  const agentId = config.commonsAgentId || config.agentId;
 
-  const res = await fetch(`${AGC_BASE_URL}/v1/agents/run/stream`, {
-    method: "POST",
-    headers: agcHeaders(),
-    body: JSON.stringify({
-      agentId,
-      ...(sessionIdToUse ? { sessionId: sessionIdToUse } : {}),
-      messages: agcMessages,
-      cliContext,
-    }),
-    signal: AbortSignal.timeout(120_000),
+  console.log(`[daemon] agc run  agent=${agentId.slice(0, 12)}  session=${sessionIdToUse?.slice(0, 12) ?? "none"}`);
+
+  const args = ["run", "--agent", agentId, "--local", "--yes", "--no-stream"];
+  if (sessionIdToUse) args.push("--session", sessionIdToUse);
+  args.push(description);
+
+  const proc = Bun.spawn(["agc", ...args], {
+    cwd: WORKSPACE_DIR,
+    env: agcEnv(),
+    stdout: "pipe",
+    stderr: "pipe",
   });
 
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "");
-    throw new Error(`AGC stream error ${res.status}: ${errText.slice(0, 200)}`);
-  }
-  if (!res.body) throw new Error("AGC stream: empty response body");
+  await Promise.race([proc.exited, sleep(120_000).then(() => proc.kill())]);
 
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = "";
-  let tokens = "";
-  let finalContent = "";
+  const [out, err] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
 
-  try {
-    outer: while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buf += decoder.decode(value, { stream: true });
-
-      // SSE messages are separated by double newlines
-      const parts = buf.split("\n\n");
-      buf = parts.pop() ?? "";
-
-      for (const part of parts) {
-        if (!part.trim()) continue;
-
-        const dataLine = part.split("\n").find((l) => l.startsWith("data: "));
-        if (!dataLine) continue;
-
-        const jsonStr = dataLine.slice(6).trim();
-        if (!jsonStr || jsonStr === "[DONE]") continue;
-
-        let event: Record<string, unknown>;
-        try {
-          event = JSON.parse(jsonStr) as Record<string, unknown>;
-        } catch {
-          continue;
-        }
-
-        const type = event.type as string;
-
-        if (type === "token") {
-          tokens += (event.content as string) ?? "";
-
-        } else if (type === "cli_tool_request") {
-          const requestId = event.requestId as string;
-          const toolName  = event.tool as string;
-          const toolArgs  = (event.args ?? {}) as Record<string, unknown>;
-
-          console.log(`[daemon] cli_tool_request: ${toolName}  args=${JSON.stringify(toolArgs).slice(0, 100)}`);
-          const toolResult = await executeTool({ tool: toolName, args: toolArgs });
-          console.log(`[daemon] tool result: ${toolResult.slice(0, 120)}`);
-
-          await fetch(`${AGC_BASE_URL}/v1/agents/cli-tool-result`, {
-            method: "POST",
-            headers: agcHeaders(),
-            body: JSON.stringify({ requestId, result: toolResult }),
-            signal: AbortSignal.timeout(15_000),
-          }).catch((err) =>
-            console.warn("[daemon] cli-tool-result post failed:", err instanceof Error ? err.message : err),
-          );
-
-        } else if (type === "final" || type === "completed") {
-          finalContent = (event.content as string) ?? tokens;
-          console.log(`[daemon] AGC stream done  tokens=${tokens.length}  final=${finalContent.length}`);
-          break outer;
-
-        } else if (type === "error") {
-          throw new Error(`AGC error: ${(event.message as string) ?? JSON.stringify(event)}`);
-        }
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
-
-  if (!finalContent && !tokens) {
-    console.warn(`[daemon] AGC stream returned empty response  agent=${agentId.slice(0, 20)}  session=${sessionIdToUse?.slice(0, 12) ?? "none"}`);
-  }
-  return finalContent || tokens || "done";
+  if (err) console.warn("[daemon] agc run stderr:", err.slice(0, 300));
+  const result = out.trim();
+  console.log(`[daemon] agc run done  length=${result.length}`);
+  return result || "done";
 }
 
 async function runViaOpenClaw(description: string): Promise<string> {
