@@ -137,8 +137,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/event-schema
       '@common-os/sdk':
-        specifier: workspace:*
-        version: link:../../packages/sdk
+        specifier: ^0.2.0
+        version: 0.2.0
       '@privy-io/react-auth':
         specifier: ^2.12.0
         version: 2.25.0(@solana/kit@5.5.1(bufferutil@4.1.0)(typescript@5.9.3))(@solana/web3.js@1.98.4(bufferutil@4.1.0)(encoding@0.1.13)(typescript@5.9.3))(@types/react@19.2.14)(bs58@6.0.0)(bufferutil@4.1.0)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(typescript@5.9.3)(use-sync-external-store@1.6.0(react@19.2.5))(zod@3.25.76)
@@ -769,6 +769,14 @@ packages:
 
   '@coinbase/wallet-sdk@4.3.2':
     resolution: {integrity: sha512-hOLA2YONq8Z9n8f6oVP6N//FEEHOen7nq+adG/cReol6juFTHUelVN5GnA5zTIxiLFMDcrhDwwgCA6Tdb5jubw==}
+
+  '@common-os/events@0.2.0':
+    resolution: {integrity: sha512-j0ISFyRmKpWU6f8Ta9TXEy05CdEK3XZSfF84jOE0zzNp3kpnTc7vA9GRYMyBrouXt93alvJCxZQ/1z2/xtsrCg==}
+    engines: {node: '>=22'}
+
+  '@common-os/sdk@0.2.0':
+    resolution: {integrity: sha512-vScycASSpNuwGtHaz8s8El6Iiyw/7sK2+2ksIRNlNWJmAmOUKgAmK7ZLU7LOkRPE1rhwqsyWEr7BT60JfPd8sA==}
+    engines: {node: '>=22'}
 
   '@emnapi/runtime@1.10.0':
     resolution: {integrity: sha512-ewvYlk86xUoGI0zQRNq/mC+16R1QeDlKQy21Ki3oSYXNgLb45GV1P6A0M+/s6nyCuNDqe5VpaY84BzXGwVbwFA==}
@@ -6961,6 +6969,15 @@ snapshots:
       clsx: 1.2.1
       eventemitter3: 5.0.4
       preact: 10.29.1
+
+  '@common-os/events@0.2.0':
+    dependencies:
+      zod: 3.25.76
+
+  '@common-os/sdk@0.2.0':
+    dependencies:
+      '@common-os/events': 0.2.0
+      zod: 3.25.76
 
   '@emnapi/runtime@1.10.0':
     dependencies:
