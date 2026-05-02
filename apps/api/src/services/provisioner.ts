@@ -88,6 +88,11 @@ export async function provisionAgent(
 					role: opts.role,
 					permissionTier: opts.permissionTier,
 					status: "provisioning",
+					commons: {
+						agentId: commons.agentId,
+						walletAddress: commons.walletAddress,
+						registryAgentId: commons.registryAgentId ?? null,
+					},
 					world: agentDoc.world,
 				} as never,
 			},

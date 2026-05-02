@@ -4,7 +4,7 @@ import { useAgentStore } from '@/store/agentStore'
 import { useWorldStore } from '@/store/worldStore'
 import { useSocketStore } from '@/store/socketStore'
 import { startMockSimulation } from '@/lib/mockSimulation'
-import type { AgentStatus } from '@/store/agentStore'
+import type { AgentCommonsIdentity, AgentStatus } from '@/store/agentStore'
 
 const API_STATUS_MAP: Record<string, AgentStatus> = {
   provisioning: 'provisioning',
@@ -89,6 +89,7 @@ export function useWorldConnection(fleetId?: string, getToken?: () => Promise<st
             status?: string
             world?: { room: string; x: number; y: number; facing: string }
             pod?: { provider?: string; region?: string; namespaceId?: string | null }
+            commons?: AgentCommonsIdentity
             createdAt?: string
           }>
           // Upsert agents with full info; snapshot events will overwrite live status/position
@@ -109,6 +110,7 @@ export function useWorldConnection(fleetId?: string, getToken?: () => Promise<st
                 region:      a.pod.region      ?? 'unknown',
                 namespaceId: a.pod.namespaceId ?? null,
               } : undefined,
+              commons: a.commons,
               createdAt: a.createdAt ? new Date(a.createdAt).getTime() : undefined,
             })
           }
@@ -128,6 +130,7 @@ export function useWorldConnection(fleetId?: string, getToken?: () => Promise<st
                 permissionTier: 'manager' | 'worker'
                 status: string
                 world: { room: string; x: number; y: number; facing: string }
+                commons?: AgentCommonsIdentity
               }>
               objects?: Array<{
                 objectId: string
@@ -145,6 +148,7 @@ export function useWorldConnection(fleetId?: string, getToken?: () => Promise<st
                 role: entry.role,
                 permissionTier: entry.permissionTier,
                 status: toUiStatus(entry.status),
+                commons: entry.commons,
                 world: {
                   room: entry.world.room,
                   x: entry.world.x,

@@ -148,6 +148,11 @@ export interface WorldStateDoc {
     role: string
     permissionTier: 'manager' | 'worker'
     status: string
+    commons?: {
+      agentId: string | null
+      walletAddress: string | null
+      registryAgentId?: string | null
+    }
     world: { room: string; x: number; y: number; facing: string }
   }>
   objects: WorldObject[]

@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAgentStore } from '@/store/agentStore'
+import type { AgentCommonsIdentity } from '@/store/agentStore'
 import { useWorldStore } from '@/store/worldStore'
 import { useAuthStore } from '@/store/authStore'
 import { usePrivy } from '@privy-io/react-auth'
@@ -113,6 +114,23 @@ function statusColor(status: string): string {
   return map[status] ?? '#64748b'
 }
 
+function shortId(value: string | null | undefined, head = 10, tail = 4): string {
+  if (!value) return 'missing'
+  if (value.length <= head + tail + 1) return value
+  return `${value.slice(0, head)}…${value.slice(-tail)}`
+}
+
+function errorText(data: unknown, fallback: string): string {
+  if (data && typeof data === 'object' && 'error' in data && typeof data.error === 'string') {
+    return data.error
+  }
+  return fallback
+}
+
+function isWalletAddress(value: string | null | undefined): boolean {
+  return Boolean(value && /^0x[a-fA-F0-9]{40}$/.test(value))
+}
+
 // ─── Sessions view ──────────────────────────────────────────────────────────
 
 function SessionsView({
@@ -122,6 +140,7 @@ function SessionsView({
   activeSessionId,
   sessionMessages,
   messagesLoading,
+  error,
   onSelectSession,
   onBack,
   onNewSession,
@@ -133,6 +152,7 @@ function SessionsView({
   activeSessionId: string | null
   sessionMessages: SessionEntry[]
   messagesLoading: boolean
+  error: string | null
   onSelectSession: (id: string) => void
   onBack: () => void
   onNewSession: () => void
@@ -158,11 +178,32 @@ function SessionsView({
             {session?.title ?? 'Session'}
           </span>
           {session?.agcSessionId && (
-            <span style={{ fontSize: 7, color: '#1e3a5f', fontFamily: 'monospace' }}>
-              {session.agcSessionId.slice(0, 12)}…
+            <span style={{ fontSize: 7, color: '#1e3a5f', fontFamily: 'monospace' }} title={session.agcSessionId}>
+              agc {shortId(session.agcSessionId, 12, 6)}
+            </span>
+          )}
+          {session && !session.agcSessionId && (
+            <span style={{ fontSize: 7, color: '#ef4444', fontFamily: 'monospace' }}>
+              missing agc session
             </span>
           )}
         </div>
+        {error && (
+          <div style={{
+            margin: '8px 16px 0',
+            padding: '7px 9px',
+            border: '1px solid rgba(239,68,68,0.25)',
+            background: 'rgba(239,68,68,0.08)',
+            borderRadius: 4,
+            color: '#fca5a5',
+            fontSize: 9,
+            fontFamily: 'monospace',
+            lineHeight: 1.5,
+            flexShrink: 0,
+          }}>
+            {error}
+          </div>
+        )}
         {messagesLoading ? (
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <div style={{ fontSize: 10, color: '#334155', fontFamily: 'monospace' }}>loading…</div>
@@ -177,6 +218,7 @@ function SessionsView({
           </div>
         )}
       </div>
+
     )
   }
 
@@ -270,8 +312,13 @@ function SessionRow({ session, onClick }: { session: AgentSession; onClick: () =
           {session.messageCount} message{session.messageCount !== 1 ? 's' : ''}
         </span>
         {session.agcSessionId && (
-          <span style={{ fontSize: 7, color: '#1e293b', fontFamily: 'monospace' }}>
-            {session.agcSessionId.slice(0, 10)}…
+          <span style={{ fontSize: 7, color: '#1e293b', fontFamily: 'monospace' }} title={session.agcSessionId}>
+            agc {shortId(session.agcSessionId, 10, 4)}
+          </span>
+        )}
+        {!session.agcSessionId && (
+          <span style={{ fontSize: 7, color: '#ef4444', fontFamily: 'monospace' }}>
+            missing agc id
           </span>
         )}
       </div>
@@ -405,9 +452,10 @@ interface ComputerViewProps {
   pod?: { provider: string; region: string; namespaceId?: string | null }
   snapshot: string | null
   loading: boolean
+  error: string | null
 }
 
-function ComputerView({ agentRole, pod, snapshot, loading }: ComputerViewProps) {
+function ComputerView({ agentRole, pod, snapshot, loading, error }: ComputerViewProps) {
   const [path, setPath] = useState<string[]>([])
   const [history, setHistory] = useState<string[][]>([[]])
   const [histIdx, setHistIdx] = useState(0)
@@ -550,7 +598,7 @@ function ComputerView({ agentRole, pod, snapshot, loading }: ComputerViewProps) 
               <div style={{ fontSize: 10, color: '#334155', fontFamily: 'monospace' }}>loading workspace…</div>
             </div>
           ) : !snapshot ? (
-            <NoSnapshot agentRole={agentRole} pod={pod} />
+            <NoSnapshot agentRole={agentRole} pod={pod} error={error} />
           ) : sortedNodes.length === 0 ? (
             <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 6 }}>
               <div style={{ fontSize: 16 }}>📂</div>
@@ -705,9 +753,10 @@ function FileItem({ node, onOpen }: { node: FsNode; onOpen: () => void }) {
   )
 }
 
-function NoSnapshot({ agentRole, pod }: {
+function NoSnapshot({ agentRole, pod, error }: {
   agentRole: string
   pod?: { provider: string; region: string; namespaceId?: string | null }
+  error?: string | null
 }) {
   return (
     <div style={{
@@ -726,6 +775,22 @@ function NoSnapshot({ agentRole, pod }: {
           Workspace snapshot will appear once the agent processes its first task.
         </span>
       </div>
+      {error && (
+        <div style={{
+          maxWidth: 320,
+          padding: '7px 9px',
+          border: '1px solid rgba(239,68,68,0.25)',
+          background: 'rgba(239,68,68,0.08)',
+          borderRadius: 4,
+          color: '#fca5a5',
+          fontSize: 9,
+          fontFamily: 'monospace',
+          lineHeight: 1.5,
+          textAlign: 'center',
+        }}>
+          {error}
+        </div>
+      )}
       {pod && (
         <div style={{
           marginTop: 8,
@@ -770,6 +835,8 @@ export function AgentDetailModal() {
   const [msgsLoading, setMsgsLoading] = useState(false)
   const [creating, setCreating] = useState(false)
   const [allMessages, setAllMessages] = useState<SessionEntry[]>([])
+  const [sessionError, setSessionError] = useState<string | null>(null)
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null)
 
   const agent = selectedId ? agents[selectedId] : null
   const urlFleet = searchParams.get('fleet')
@@ -787,6 +854,7 @@ export function AgentDetailModal() {
   const fetchSessions = useCallback(async () => {
     if (!isLive || !selectedId || !fleetId) return
     setSessLoading(true)
+    setSessionError(null)
     try {
       const token = await resolveToken()
       const [sessRes, msgsRes] = await Promise.all([
@@ -797,12 +865,23 @@ export function AgentDetailModal() {
           headers: { Authorization: `Bearer ${token}` },
         }),
       ])
-      if (sessRes.ok) setSessions(await sessRes.json() as AgentSession[])
+      if (sessRes.ok) {
+        setSessions(await sessRes.json() as AgentSession[])
+      } else {
+        const data = await sessRes.json().catch(() => null)
+        setSessionError(errorText(data, `could not load sessions (${sessRes.status})`))
+      }
       if (msgsRes.ok) {
         const raw = await msgsRes.json() as Array<Record<string, unknown>>
-        setAllMessages(raw.map(m => ({ ...m, id: m._id as string, kind: 'message' as const }) as SessionEntry))
+        setAllMessages(raw.map(m => ({
+          ...m,
+          id: (m._id ?? m.id) as string,
+          kind: 'message' as const,
+        }) as SessionEntry))
       }
-    } catch { /* ignore */ }
+    } catch {
+      setSessionError('could not connect to sessions API')
+    }
     finally { setSessLoading(false) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLive, selectedId, fleetId])
@@ -810,6 +889,7 @@ export function AgentDetailModal() {
   const fetchSessionMessages = useCallback(async (sessionId: string) => {
     if (!isLive || !selectedId || !fleetId) return
     setMsgsLoading(true)
+    setSessionError(null)
     try {
       const token = await resolveToken()
       const res = await fetch(`${apiUrl}/fleets/${fleetId}/agents/${selectedId}/sessions/${sessionId}`, {
@@ -817,9 +897,18 @@ export function AgentDetailModal() {
       })
       if (res.ok) {
         const data = await res.json() as { messages?: Array<Record<string, unknown>> }
-        setSessionMessages((data.messages ?? []).map(m => ({ ...m, id: m._id as string }) as SessionEntry))
+        setSessionMessages((data.messages ?? []).map(m => ({
+          ...m,
+          id: (m._id ?? m.id) as string,
+          kind: (m.kind ?? 'message') as SessionEntry['kind'],
+        }) as SessionEntry))
+      } else {
+        const data = await res.json().catch(() => null)
+        setSessionError(errorText(data, `could not load session messages (${res.status})`))
       }
-    } catch { /* ignore */ }
+    } catch {
+      setSessionError('could not connect to session messages API')
+    }
     finally { setMsgsLoading(false) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLive, selectedId, fleetId])
@@ -827,15 +916,23 @@ export function AgentDetailModal() {
   const createSession = useCallback(async () => {
     if (!isLive || !selectedId || !fleetId) return
     setCreating(true)
+    setSessionError(null)
     try {
       const token = await resolveToken()
-      await fetch(`${apiUrl}/fleets/${fleetId}/agents/${selectedId}/sessions`, {
+      const res = await fetch(`${apiUrl}/fleets/${fleetId}/agents/${selectedId}/sessions`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
       })
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        setSessionError(errorText(data, `could not create Agent Commons session (${res.status})`))
+        return
+      }
       await fetchSessions()
-    } catch { /* ignore */ }
+    } catch {
+      setSessionError('could not connect to create an Agent Commons session')
+    }
     finally { setCreating(false) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLive, selectedId, fleetId, fetchSessions])
@@ -843,6 +940,7 @@ export function AgentDetailModal() {
   const fetchWorkspace = useCallback(async () => {
     if (!isLive || !selectedId || !fleetId) return
     setSnapLoading(true)
+    setWorkspaceError(null)
     try {
       const token = await resolveToken()
       const res = await fetch(`${apiUrl}/fleets/${fleetId}/agents/${selectedId}`, {
@@ -851,8 +949,13 @@ export function AgentDetailModal() {
       if (res.ok) {
         const data = await res.json() as { workspace?: { snapshot?: string } | null }
         setSnapshot(data.workspace?.snapshot ?? null)
+      } else {
+        const data = await res.json().catch(() => null)
+        setWorkspaceError(errorText(data, `could not load workspace snapshot (${res.status})`))
       }
-    } catch { /* ignore */ }
+    } catch {
+      setWorkspaceError('could not connect to workspace API')
+    }
     finally { setSnapLoading(false) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLive, selectedId, fleetId])
@@ -861,6 +964,8 @@ export function AgentDetailModal() {
     if (!isOpen || !selectedId) return
     setSessions([])
     setAllMessages([])
+    setSessionError(null)
+    setWorkspaceError(null)
     setSnapshot(null)
     setTab('sessions')
     setActiveSessionId(null)
@@ -902,7 +1007,6 @@ export function AgentDetailModal() {
   if (!isOpen || !agent) return null
 
   const shortRole = agent.role.replace(/-/g, ' ')
-
   return (
     <div
       style={{
@@ -970,10 +1074,15 @@ export function AgentDetailModal() {
             </div>
           )}
 
-          <span style={{ fontSize: 10, color: '#1e293b', fontFamily: 'monospace', marginLeft: 4 }}>
-            {agent.agentId.slice(0, 16)}…
+          <span style={{ fontSize: 10, color: '#1e293b', fontFamily: 'monospace', marginLeft: 4 }} title={agent.agentId}>
+            cos {shortId(agent.agentId, 12, 4)}
           </span>
         </div>
+
+        <AgentIdentityStrip
+          commonOsAgentId={agent.agentId}
+          commons={agent.commons}
+        />
 
         {/* Tab bar */}
         <div style={{
@@ -1002,6 +1111,7 @@ export function AgentDetailModal() {
               activeSessionId={activeSessionId}
               sessionMessages={sessionMessages}
               messagesLoading={msgsLoading}
+              error={sessionError}
               onSelectSession={(id) => {
                 setActiveSessionId(id)
                 void fetchSessionMessages(id)
@@ -1016,6 +1126,7 @@ export function AgentDetailModal() {
               pod={agent.pod}
               snapshot={snapshot}
               loading={snapLoading}
+              error={workspaceError}
             />
           )}
         </div>
@@ -1027,6 +1138,89 @@ export function AgentDetailModal() {
           to   { opacity: 1; transform: scale(1) translateY(0); }
         }
       `}</style>
+    </div>
+  )
+}
+
+function AgentIdentityStrip({
+  commonOsAgentId,
+  commons,
+}: {
+  commonOsAgentId: string
+  commons?: AgentCommonsIdentity
+}) {
+  const runtimeId = commons?.agentId ?? commons?.walletAddress ?? null
+  const validWallet = isWalletAddress(runtimeId)
+
+  return (
+    <div style={{
+      background: '#080d18',
+      borderBottom: '1px solid rgba(255,255,255,0.04)',
+      padding: '6px 14px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      flexShrink: 0,
+      overflow: 'hidden',
+    }}>
+      <IdentityField label="commonos" value={commonOsAgentId} />
+      <IdentityField
+        label="agent commons"
+        value={runtimeId}
+        color={validWallet ? '#86efac' : '#fca5a5'}
+        badge={validWallet ? 'wallet' : 'not resolved'}
+      />
+      {commons?.registryAgentId && (
+        <IdentityField label="registry" value={commons.registryAgentId} />
+      )}
+    </div>
+  )
+}
+
+function IdentityField({
+  label,
+  value,
+  color = '#64748b',
+  badge,
+}: {
+  label: string
+  value: string | null | undefined
+  color?: string
+  badge?: string
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
+      <span style={{ fontSize: 7, color: '#1e3a5f', fontFamily: 'monospace', textTransform: 'uppercase', flexShrink: 0 }}>
+        {label}
+      </span>
+      <span
+        title={value ?? 'missing'}
+        style={{
+          fontSize: 8,
+          color,
+          fontFamily: 'monospace',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          maxWidth: label === 'agent commons' ? 210 : 150,
+        }}
+      >
+        {shortId(value, label === 'agent commons' ? 14 : 10, 6)}
+      </span>
+      {badge && (
+        <span style={{
+          fontSize: 7,
+          color,
+          fontFamily: 'monospace',
+          border: `1px solid ${color}33`,
+          background: `${color}10`,
+          borderRadius: 3,
+          padding: '1px 4px',
+          flexShrink: 0,
+        }}>
+          {badge}
+        </span>
+      )}
     </div>
   )
 }

@@ -16,6 +16,12 @@ export interface AgentPod {
   namespaceId?: string | null
 }
 
+export interface AgentCommonsIdentity {
+  agentId: string | null
+  walletAddress: string | null
+  registryAgentId?: string | null
+}
+
 export interface Agent {
   agentId: string
   role: string
@@ -23,6 +29,7 @@ export interface Agent {
   status: AgentStatus
   world: AgentWorld
   pod?: AgentPod
+  commons?: AgentCommonsIdentity
   createdAt?: number  // unix ms — used to infer creation step
   currentAction?: string
   currentTask?: { taskId: string; description: string }
@@ -78,7 +85,11 @@ export const useAgentStore = create<AgentStore>((set) => ({
       agents: {
         ...state.agents,
         [agent.agentId]: {
+          ...state.agents[agent.agentId],
           ...agent,
+          pod: agent.pod ?? state.agents[agent.agentId]?.pod,
+          commons: agent.commons ?? state.agents[agent.agentId]?.commons,
+          createdAt: agent.createdAt ?? state.agents[agent.agentId]?.createdAt,
           recentActions: state.agents[agent.agentId]?.recentActions ?? [],
         },
       },
