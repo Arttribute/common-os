@@ -336,8 +336,8 @@ export async function launchAgentPod(
 					imagePullPolicy: "Always",
 					env: envVars,
 					resources: {
-						requests: { cpu: "250m", memory: "256Mi" },
-						limits:   { cpu: "1",    memory: "1Gi"  },
+						requests: { cpu: "100m", memory: "128Mi" },
+						limits:   { cpu: "1",    memory: "512Mi"  },
 					},
 					volumeMounts: [
 						{
@@ -548,8 +548,8 @@ export async function launchAgentPodEks(opts: LaunchOptions): Promise<LaunchedSe
 					imagePullPolicy: "Always",
 					env:             envVars,
 					resources: {
-						requests: { cpu: "250m", memory: "256Mi" },
-						limits:   { cpu: "1",    memory: "1Gi"  },
+						requests: { cpu: "100m", memory: "128Mi" },
+						limits:   { cpu: "1",    memory: "512Mi"  },
 					},
 					volumeMounts: [{ name: "agent-storage", mountPath: "/mnt/shared" }],
 				}],
