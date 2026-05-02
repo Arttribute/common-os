@@ -104,11 +104,35 @@ function agcHeaders(): Record<string, string> {
 }
 
 // ─── Session management ────────────────────────────────────────────────────
-// One persistent AGC session per agent. The session ID is stored in the
-// workspace so it survives daemon restarts. All messages and tasks share
-// this session, giving the agent continuous conversational memory.
+// One persistent AGC session per agent. The session ID is cached in the
+// workspace and recovered from the control plane when ephemeral pod storage is
+// lost. All messages and tasks share this session, giving the agent continuous
+// conversational memory.
 
 const SESSION_FILE = join(WORKSPACE_DIR, ".common-os-session.json");
+
+async function recoverSessionFromApi(): Promise<string | null> {
+  if (!config.apiUrl || !config.agentId || !config.agentToken) return null;
+
+  try {
+    const res = await fetch(`${config.apiUrl}/agents/${config.agentId}/session/current`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${config.agentToken}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (!res.ok) {
+      console.warn(`[daemon] session recovery skipped: API returned ${res.status}`);
+      return null;
+    }
+
+    const data = await res.json() as { agcSessionId?: string | null };
+    return data.agcSessionId ?? null;
+  } catch (err) {
+    console.warn("[daemon] session recovery failed:", err instanceof Error ? err.message : err);
+    return null;
+  }
+}
 
 async function initSession(): Promise<void> {
   if (!config.commonsAgentId || !config.commonsApiKey) {
@@ -131,6 +155,24 @@ async function initSession(): Promise<void> {
     }
   } catch {
     // Fall through to create a new session
+  }
+
+  // GCP currently mounts /mnt/shared as emptyDir, so SESSION_FILE disappears on
+  // pod restart. MongoDB remains the durable source of truth for the default
+  // session, so recover it before creating a fresh AGC session.
+  const recoveredSessionId = await recoverSessionFromApi();
+  if (recoveredSessionId) {
+    agentSessionId = recoveredSessionId;
+    try {
+      writeFileSync(
+        SESSION_FILE,
+        JSON.stringify({ sessionId: recoveredSessionId, agentId: config.commonsAgentId }),
+      );
+    } catch (err) {
+      console.warn("[daemon] recovered session but could not write session file:", err instanceof Error ? err.message : err);
+    }
+    console.log(`[daemon] recovered session ${agentSessionId} from API`);
+    return;
   }
 
   // Create a new session via the AGC REST API directly

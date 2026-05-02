@@ -6,8 +6,9 @@ on:
     paths:
       - 'packages/daemon/**'
       - 'packages/sdk/**'
-      - 'packages/events/**'
+      - 'packages/event-schema/**'
       - 'apps/api/agent/**'
+      - '.github/workflows/agent.yml'
 
 concurrency:
   group: agent-image-build

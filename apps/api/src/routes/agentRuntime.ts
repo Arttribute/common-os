@@ -234,6 +234,20 @@ router.post('/:agentId/bootstrap', async (c) => {
   }
 })
 
+// GET /agents/:agentId/session/current — daemon recovers its session on restart
+router.get('/:agentId/session/current', async (c) => {
+  if (c.get('authType') !== 'agent') return c.json({ error: 'agent authorization required' }, 403)
+  const agentId = c.req.param('agentId')
+  if (c.get('agentId') !== agentId) return c.json({ error: 'forbidden' }, 403)
+
+  try {
+    const sess = await (await agentSessions()).findOne({ agentId, isDefault: true }).lean()
+    return c.json({ agcSessionId: sess?.agcSessionId ?? null, sessionId: sess?._id ?? null })
+  } catch {
+    return c.json({ error: 'database error' }, 503)
+  }
+})
+
 // POST /agents/:agentId/session — daemon registers its AGC session
 router.post('/:agentId/session', async (c) => {
   if (c.get('authType') !== 'agent') return c.json({ error: 'agent authorization required' }, 403)
@@ -254,6 +268,19 @@ router.post('/:agentId/session', async (c) => {
       await col.updateMany({ agentId, isDefault: true }, { $set: { isDefault: false } })
       await col.updateOne({ _id: existing._id }, { $set: { isDefault: true } })
       return c.json({ sessionId: existing._id, agcSessionId: existing.agcSessionId })
+    }
+
+    const pendingDefault = await col.findOne({ agentId, isDefault: true, agcSessionId: null }).lean()
+    if (pendingDefault) {
+      await col.updateMany(
+        { agentId, _id: { $ne: pendingDefault._id }, isDefault: true },
+        { $set: { isDefault: false } },
+      )
+      await col.updateOne(
+        { _id: pendingDefault._id },
+        { $set: { agcSessionId: body.agcSessionId, isDefault: true } },
+      )
+      return c.json({ sessionId: pendingDefault._id, agcSessionId: body.agcSessionId })
     }
 
     // Clear old defaults and create new session record
