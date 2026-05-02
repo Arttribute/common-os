@@ -30,6 +30,15 @@ const ETH_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 
 type AgcMessage = { role: "user" | "assistant"; content: string };
 
+type AxlEnvelope = {
+  type?: "request" | "response";
+  id?: string;
+  fromAgentId?: string;
+  toAgentId?: string;
+  content?: string;
+  inReplyTo?: string;
+};
+
 // Session ID is created once at startup and persisted so the agent remembers
 // all previous conversations across daemon restarts.
 let agentSessionId: string | null = null;
@@ -422,6 +431,29 @@ async function discoverFleetPeers(): Promise<void> {
 
 const peerIdToAgentId = new Map<string, string>();
 
+function parseAxlPayload(raw: string): AxlEnvelope {
+  try {
+    const parsed = JSON.parse(raw) as AxlEnvelope;
+    if (parsed && typeof parsed === "object" && typeof parsed.content === "string") {
+      return parsed;
+    }
+  } catch {}
+
+  return { type: "request", content: raw };
+}
+
+function formatAxlPayload(envelope: Required<Pick<AxlEnvelope, "type" | "content">> & AxlEnvelope): string {
+  return JSON.stringify({
+    id: envelope.id ?? `axlmsg_${Date.now().toString(36)}${randomBytes(4).toString("hex")}`,
+    type: envelope.type,
+    fromAgentId: envelope.fromAgentId ?? config.agentId,
+    toAgentId: envelope.toAgentId,
+    content: envelope.content,
+    inReplyTo: envelope.inReplyTo,
+    createdAt: new Date().toISOString(),
+  });
+}
+
 async function startAxlInboxLoop(): Promise<void> {
   console.log("[daemon] AXL inbox loop started");
   while (true) {
@@ -445,7 +477,9 @@ async function pollAxlInbox(): Promise<void> {
     if (res.status === 204) break; // queue empty
     if (!res.ok) break;
 
-    const content = await res.text();
+    const raw = await res.text();
+    const envelope = parseAxlPayload(raw);
+    const content = envelope.content ?? "";
     const fromPeerId = res.headers.get("x-from-peer-id") ?? "unknown";
 
     // Resolve peerId (hex public key) → agentId: fleet cache first, then API.
@@ -457,7 +491,7 @@ async function pollAxlInbox(): Promise<void> {
         peerIdToAgentId.set(fromPeerId, resolved.agentId);
       }
     }
-    const senderLabel = resolvedAgentId ?? fromPeerId.slice(0, 16);
+    const senderLabel = envelope.fromAgentId ?? resolvedAgentId ?? fromPeerId.slice(0, 16);
 
     console.log(`[daemon] AXL message from ${senderLabel}: ${content.slice(0, 80)}`);
 
@@ -468,9 +502,21 @@ async function pollAxlInbox(): Promise<void> {
       })
       .catch(() => {});
 
+    if (envelope.type === "response") {
+      console.log(`[daemon] AXL response from ${senderLabel}: ${content.slice(0, 120)}`);
+      continue;
+    }
+
     if (content && config.integrationPath !== "guest") {
       const taskDescription = `[AXL from ${senderLabel}]\n${content}`;
-      void handleTask({ id: `axl_${Date.now()}`, description: taskDescription }).catch(() => {});
+      void handleTask(
+        { id: `axl_${Date.now()}`, description: taskDescription },
+        {
+          replyToPeerId: fromPeerId !== "unknown" ? fromPeerId : undefined,
+          replyToAgentId: resolvedAgentId ?? envelope.fromAgentId,
+          incomingMessageId: envelope.id,
+        },
+      ).catch(() => {});
     }
   }
 }
@@ -527,11 +573,18 @@ async function sendAxlMessage(
   toPeerId: string,  // recipient's ed25519 public key (hex), used as X-Destination-Peer-Id
   toAgentId: string,
   content: string,
+  options: { type?: "request" | "response"; inReplyTo?: string } = {},
 ): Promise<void> {
   const res = await fetch(`${AXL_API_URL}/send`, {
     method: "POST",
     headers: { "X-Destination-Peer-Id": toPeerId },
-    body: content,
+    body: formatAxlPayload({
+      type: options.type ?? "request",
+      fromAgentId: config.agentId,
+      toAgentId,
+      content,
+      inReplyTo: options.inReplyTo,
+    }),
     signal: AbortSignal.timeout(10_000),
   });
 
@@ -662,7 +715,10 @@ async function pollTasks() {
   }
 }
 
-async function handleTask(task: { id: string; description: string }) {
+async function handleTask(
+  task: { id: string; description: string },
+  axlReply?: { replyToPeerId?: string; replyToAgentId?: string; incomingMessageId?: string },
+) {
   if (!task?.id || !task?.description) {
     console.warn(`[daemon] skipping malformed task:`, task);
     return;
@@ -691,6 +747,18 @@ async function handleTask(task: { id: string; description: string }) {
     await agent.emit({ type: "task_complete", payload: { taskId: task.id, output } });
 
     console.log(`[daemon] task ${task.id} complete`);
+
+    if (axlReply?.replyToPeerId && axlReply.replyToAgentId) {
+      await sendAxlMessage(
+        axlReply.replyToPeerId,
+        axlReply.replyToAgentId,
+        output,
+        { type: "response", inReplyTo: axlReply.incomingMessageId ?? task.id },
+      ).catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[daemon] AXL response send failed: ${msg}`);
+      });
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await agent.emit({ type: "error", payload: { message: msg } });
