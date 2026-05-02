@@ -100,6 +100,10 @@ router.post('/:id/agents/:agentId/human-message', async (c) => {
       status: 'pending',
       response: null,
       respondedAt: null,
+      source: 'human',
+      fromAgentId: null,
+      axlPeerId: null,
+      axlMessageId: null,
       createdAt: now,
     }
 

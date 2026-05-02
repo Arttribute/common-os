@@ -194,5 +194,9 @@ export interface HumanMessageDoc {
   status: 'pending' | 'processing' | 'responded'
   response: string | null
   respondedAt: Date | null
+  source?: 'human' | 'axl'
+  fromAgentId?: string | null
+  axlPeerId?: string | null
+  axlMessageId?: string | null
   createdAt: Date
 }

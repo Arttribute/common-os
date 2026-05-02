@@ -1,9 +1,10 @@
 import { Hono } from 'hono'
+import { randomBytes } from 'crypto'
 import { agents, tasks, humanMessages, agentSessions, worldStates } from '../db/mongo.js'
-import { dequeueTask, dequeueHumanMessage, broadcastToFleet } from '../db/memory.js'
+import { dequeueTask, dequeueHumanMessage, enqueueHumanMessage, broadcastToFleet } from '../db/memory.js'
 import { registerWithAgentCommons } from '../services/provisioner.js'
 import { persistNormalizedCommonsIdentity } from '../services/agentCommonsIdentity.js'
-import type { Env } from '../types.js'
+import type { Env, HumanMessageDoc } from '../types.js'
 
 // Session documents now use the AGC session ID as _id — no indirection needed.
 function resolveAgcSessionId(sessionId: string | null | undefined): string | null {
@@ -205,6 +206,10 @@ router.get('/:agentId/messages/next', async (c) => {
         messages: await buildMessageHistory(agentId, claimed.sessionId, claimed._id, claimed.content),
         sessionId: claimed.sessionId ?? null,
         agcSessionId,
+        source: claimed.source ?? 'human',
+        fromAgentId: claimed.fromAgentId ?? null,
+        axlPeerId: claimed.axlPeerId ?? null,
+        axlMessageId: claimed.axlMessageId ?? null,
       })
     } catch {
       return c.json({ error: 'database error' }, 503)
@@ -228,7 +233,73 @@ router.get('/:agentId/messages/next', async (c) => {
       messages: await buildMessageHistory(agentId, msg.sessionId, msg._id, msg.content),
       sessionId: msg.sessionId ?? null,
       agcSessionId,
+      source: msg.source ?? 'human',
+      fromAgentId: msg.fromAgentId ?? null,
+      axlPeerId: msg.axlPeerId ?? null,
+      axlMessageId: msg.axlMessageId ?? null,
     })
+  } catch {
+    return c.json({ error: 'database error' }, 503)
+  }
+})
+
+// POST /agents/:agentId/messages/axl — daemon records an inbound AXL request.
+// This mirrors the UI human-message flow: persist pending message, enqueue it,
+// and broadcast so the UI can show that another agent contacted this one.
+router.post('/:agentId/messages/axl', async (c) => {
+  if (c.get('authType') !== 'agent') {
+    return c.json({ error: 'agent authorization required' }, 403)
+  }
+  const agentId = c.req.param('agentId')
+  if (c.get('agentId') !== agentId) {
+    return c.json({ error: 'forbidden' }, 403)
+  }
+
+  const body = await c.req.json<{
+    content: string
+    fromAgentId?: string | null
+    axlPeerId?: string | null
+    axlMessageId?: string | null
+  }>().catch(() => ({ content: '' }))
+  if (!body.content) return c.json({ error: 'content is required' }, 400)
+
+  try {
+    const agent = await (await agents()).findOne({ _id: agentId }).lean()
+    if (!agent) return c.json({ error: 'agent not found' }, 404)
+
+    const msgId = `hmsg_${Date.now().toString(36)}${randomBytes(4).toString('hex')}`
+    const now = new Date()
+    const doc: HumanMessageDoc = {
+      _id: msgId,
+      agentId,
+      fleetId: agent.fleetId,
+      tenantId: agent.tenantId,
+      sessionId: null,
+      content: body.content,
+      status: 'pending',
+      response: null,
+      respondedAt: null,
+      source: 'axl',
+      fromAgentId: body.fromAgentId ?? null,
+      axlPeerId: body.axlPeerId ?? null,
+      axlMessageId: body.axlMessageId ?? null,
+      createdAt: now,
+    }
+
+    await (await humanMessages()).create(doc as never)
+    enqueueHumanMessage(agentId, msgId)
+    broadcastToFleet(agent.fleetId, {
+      type: 'human_message',
+      agentId,
+      msgId,
+      sessionId: null,
+      source: 'axl',
+      fromAgentId: body.fromAgentId ?? null,
+      content: body.content,
+      ts: now.toISOString(),
+    })
+
+    return c.json(doc, 201)
   } catch {
     return c.json({ error: 'database error' }, 503)
   }

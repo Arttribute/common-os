@@ -508,15 +508,15 @@ async function pollAxlInbox(): Promise<void> {
     }
 
     if (content && config.integrationPath !== "guest") {
-      const taskDescription = `[AXL from ${senderLabel}]\n${content}`;
-      void handleTask(
-        { id: `axl_${Date.now()}`, description: taskDescription },
-        {
-          replyToPeerId: fromPeerId !== "unknown" ? fromPeerId : undefined,
-          replyToAgentId: resolvedAgentId ?? envelope.fromAgentId,
-          incomingMessageId: envelope.id,
-        },
-      ).catch(() => {});
+      await enqueueAxlMessage({
+        content,
+        fromAgentId: resolvedAgentId ?? envelope.fromAgentId,
+        axlPeerId: fromPeerId !== "unknown" ? fromPeerId : null,
+        axlMessageId: envelope.id ?? null,
+      }).catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[daemon] AXL message enqueue failed: ${msg}`);
+      });
     }
   }
 }
@@ -597,6 +597,25 @@ async function sendAxlMessage(
   console.log(`[daemon] AXL message sent → ${toAgentId}  "${content.slice(0, 60)}"`);
 }
 
+async function enqueueAxlMessage(body: {
+  content: string;
+  fromAgentId?: string | null;
+  axlPeerId?: string | null;
+  axlMessageId?: string | null;
+}): Promise<void> {
+  const res = await fetch(`${config.apiUrl}/agents/${config.agentId}/messages/axl`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${config.agentToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(10_000),
+  });
+
+  if (!res.ok) throw new Error(`AXL message enqueue failed: ${res.status}`);
+}
+
 // ─── AXL agent resolution ─────────────────────────────────────────────────
 
 async function resolveAgentByName(name: string): Promise<{
@@ -650,6 +669,10 @@ async function pollMessages(): Promise<void> {
           messages?: AgcMessage[];
           sessionId?: string | null;
           agcSessionId?: string | null;
+          source?: "human" | "axl";
+          fromAgentId?: string | null;
+          axlPeerId?: string | null;
+          axlMessageId?: string | null;
         };
         if (msg?.id && msg?.content) {
           await handleMessage(msg);
@@ -668,6 +691,10 @@ async function handleMessage(msg: {
   messages?: AgcMessage[];
   sessionId?: string | null;
   agcSessionId?: string | null;
+  source?: "human" | "axl";
+  fromAgentId?: string | null;
+  axlPeerId?: string | null;
+  axlMessageId?: string | null;
 }): Promise<void> {
   console.log(`[daemon] message ${msg.id}: ${msg.content.slice(0, 80)}`);
 
@@ -690,6 +717,18 @@ async function handleMessage(msg: {
     );
 
     console.log(`[daemon] message ${msg.id} responded`);
+
+    if (msg.source === "axl" && msg.axlPeerId) {
+      await sendAxlMessage(
+        msg.axlPeerId,
+        msg.fromAgentId ?? msg.axlPeerId.slice(0, 16),
+        response,
+        { type: "response", inReplyTo: msg.axlMessageId ?? msg.id },
+      ).catch((err) => {
+        const detail = err instanceof Error ? err.message : String(err);
+        console.warn(`[daemon] AXL response send failed: ${detail}`);
+      });
+    }
   } catch (err) {
     console.error(`[daemon] message ${msg.id} error:`, err);
   } finally {
