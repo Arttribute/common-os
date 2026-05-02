@@ -1,6 +1,6 @@
 {
 	"name": "@common-os/cloud",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"description": "Cloud provider abstraction for CommonOS — AWS EC2 and GCP Compute Engine",
 	"main": "./dist/index.cjs",
 	"module": "./dist/index.mjs",
