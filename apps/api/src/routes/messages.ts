@@ -6,9 +6,10 @@ import type { Env, HumanMessageDoc } from '../types.js'
 
 const AGC_BASE_URL = (process.env.AGC_API_URL ?? 'https://api.agentcommons.io').replace(/\/$/, '')
 
-async function createAgcSession(commonsAgentId: string, title: string): Promise<string | null> {
+async function createAgcSession(commonsAgentId: string, title: string): Promise<string> {
   const apiKey = process.env.AGENTCOMMONS_API_KEY
-  if (!apiKey || !commonsAgentId) return null
+  if (!apiKey) throw new Error('AGENTCOMMONS_API_KEY is not configured')
+  if (!commonsAgentId) throw new Error('agent is not registered with Agent Commons')
   try {
     const res = await fetch(`${AGC_BASE_URL}/v1/sessions`, {
       method: 'POST',
@@ -16,12 +17,14 @@ async function createAgcSession(commonsAgentId: string, title: string): Promise<
       body: JSON.stringify({ agentId: commonsAgentId, title, source: 'commonos' }),
       signal: AbortSignal.timeout(10_000),
     })
-    if (!res.ok) return null
+    if (!res.ok) throw new Error(`Agent Commons session create failed: ${res.status}`)
     const raw = await res.json() as Record<string, unknown>
     const data = (raw.data ?? raw) as Record<string, unknown>
-    return (data.sessionId ?? data.id ?? null) as string | null
-  } catch {
-    return null
+    const sessionId = (data.sessionId ?? data.id ?? null) as string | null
+    if (!sessionId) throw new Error('Agent Commons session create response did not include sessionId')
+    return sessionId
+  } catch (err) {
+    throw err instanceof Error ? err : new Error(String(err))
   }
 }
 
@@ -29,9 +32,19 @@ async function ensureDefaultSession(
   agentId: string, fleetId: string, tenantId: string, commonsAgentId: string | null
 ): Promise<string | null> {
   const existing = await (await agentSessions()).findOne({ agentId, isDefault: true }).lean()
-  if (existing) return existing._id as string
-
   const title = `Chat ${new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`
+
+  if (existing) {
+    if (existing.agcSessionId) return existing._id as string
+
+    const agcSessionId = await createAgcSession(commonsAgentId ?? '', title)
+    await (await agentSessions()).updateOne(
+      { _id: existing._id },
+      { $set: { agcSessionId, isDefault: true } },
+    )
+    return existing._id as string
+  }
+
   const agcSessionId = await createAgcSession(commonsAgentId ?? '', title)
   const sessId = `asess_${Date.now().toString(36)}${randomBytes(4).toString('hex')}`
 
@@ -61,8 +74,13 @@ router.post('/:id/agents/:agentId/human-message', async (c) => {
     // Resolve or find the target session — auto-create if none exists
     let sessionId: string | null = body.sessionId ?? null
     if (sessionId) {
-      const sess = await (await agentSessions()).findOne({ _id: sessionId, agentId }).lean()
+      const sess = await (await agentSessions()).findOne({
+        agentId,
+        $or: [{ _id: sessionId }, { agcSessionId: sessionId }],
+      }).lean()
       if (!sess) return c.json({ error: 'session not found' }, 404)
+      if (!sess.agcSessionId) return c.json({ error: 'session is missing Agent Commons sessionId' }, 409)
+      sessionId = sess._id
     } else {
       sessionId = await ensureDefaultSession(agentId, fleetId, tenantId, agent.commons.agentId ?? null)
     }
@@ -95,8 +113,8 @@ router.post('/:id/agents/:agentId/human-message', async (c) => {
     })
 
     return c.json(doc, 201)
-  } catch {
-    return c.json({ error: 'database error' }, 503)
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : 'database error' }, 503)
   }
 })
 

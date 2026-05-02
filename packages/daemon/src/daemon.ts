@@ -1044,14 +1044,14 @@ async function runViaNative(description: string, agcSessionId?: string, messages
 
   const sessionIdToUse = agcSessionId ?? agentSessionId;
   const agcMessages = messages?.length ? messages : [{ role: "user" as const, content: description }];
-  console.log(`[daemon] AGC stream  agent=${agentId.slice(0, 12)}  session=${sessionIdToUse?.slice(0, 8) ?? "none"}  messages=${agcMessages.length}`);
+  console.log(`[daemon] AGC stream  agent=${agentId.slice(0, 12)}  agcSessionId=${sessionIdToUse?.slice(0, 12) ?? "none"}  messages=${agcMessages.length}`);
 
   const res = await fetch(`${AGC_BASE_URL}/v1/agents/run/stream`, {
     method: "POST",
     headers: agcHeaders(),
     body: JSON.stringify({
       agentId,
-      ...((agcSessionId ?? agentSessionId) ? { sessionId: agcSessionId ?? agentSessionId } : {}),
+      ...(sessionIdToUse ? { sessionId: sessionIdToUse } : {}),
       messages: agcMessages,
       cliContext,
     }),

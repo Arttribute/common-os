@@ -4,7 +4,8 @@ import { dequeueTask, dequeueHumanMessage, broadcastToFleet } from '../db/memory
 import { registerWithAgentCommons } from '../services/provisioner.js'
 import type { Env } from '../types.js'
 
-// Helper to resolve agcSessionId for a message
+// Helper to resolve the Agent Commons sessionId for a CommonOS/Mongo session.
+// This value is passed as `sessionId` to /v1/agents/run/stream.
 async function resolveAgcSessionId(sessionId: string | null | undefined): Promise<string | null> {
   if (!sessionId) return null
   try {
@@ -151,12 +152,16 @@ router.get('/:agentId/messages/next', async (c) => {
         { sort: { createdAt: 1 }, new: false },
       ).lean()
       if (!claimed) return c.body(null, 204)
+      const agcSessionId = await resolveAgcSessionId(claimed.sessionId)
+      if (!agcSessionId) {
+        console.warn(`[runtime] message ${claimed._id} has no Agent Commons sessionId; daemon will fall back to its boot session`)
+      }
       return c.json({
         id: claimed._id,
         content: claimed.content,
         messages: await buildMessageHistory(agentId, claimed.sessionId, claimed._id, claimed.content),
         sessionId: claimed.sessionId ?? null,
-        agcSessionId: await resolveAgcSessionId(claimed.sessionId),
+        agcSessionId,
       })
     } catch {
       return c.json({ error: 'database error' }, 503)
@@ -170,12 +175,16 @@ router.get('/:agentId/messages/next', async (c) => {
       { new: true },
     ).lean()
     if (!msg) return c.body(null, 204)
+    const agcSessionId = await resolveAgcSessionId(msg.sessionId)
+    if (!agcSessionId) {
+      console.warn(`[runtime] message ${msg._id} has no Agent Commons sessionId; daemon will fall back to its boot session`)
+    }
     return c.json({
       id: msg._id,
       content: msg.content,
       messages: await buildMessageHistory(agentId, msg.sessionId, msg._id, msg.content),
       sessionId: msg.sessionId ?? null,
-      agcSessionId: await resolveAgcSessionId(msg.sessionId),
+      agcSessionId,
     })
   } catch {
     return c.json({ error: 'database error' }, 503)
