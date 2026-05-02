@@ -23,7 +23,14 @@ app.post("/run", async (c) => {
 	}
 
 	try {
-		const args = ["run", "--agent", body.agentId, body.prompt, "--no-stream"];
+		const args = [
+			"run",
+			"--agent",
+			body.agentId,
+			body.prompt,
+			"--no-stream",
+			"--yes",
+		];
 		if (body.sessionId) args.push("--session", body.sessionId);
 		console.log("Command: agc", args.join(" "));
 		const result = await Bun.$`agc ${args}`;
