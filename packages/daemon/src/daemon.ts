@@ -165,8 +165,8 @@ async function main() {
   // Push initial workspace snapshot so the UI can show the pod filesystem immediately
   await emitWorkspaceSnapshot().catch(() => {});
 
-  await registerAxlPeer();
-  await discoverFleetPeers();
+  void registerAxlPeer();
+  void discoverFleetPeers();
 
   setInterval(() => {
     agent.emit({ type: "heartbeat" }).catch((err) => {
@@ -456,6 +456,55 @@ async function sendAxlMessage(
   console.log(`[daemon] AXL message sent → ${toAgentId}  "${content.slice(0, 60)}"`);
 }
 
+// ─── AXL agent resolution & tool handlers ────────────────────────────────
+
+async function resolveAgentByName(name: string): Promise<{
+  agentId: string;
+  multiaddr: string;
+  peerId?: string;
+  role?: string;
+  fleetId?: string;
+} | null> {
+  try {
+    const res = await fetch(
+      `${config.apiUrl}/agents/resolve/${encodeURIComponent(name)}`,
+      {
+        headers: { Authorization: `Bearer ${config.agentToken}` },
+        signal: AbortSignal.timeout(5_000),
+      },
+    );
+    if (!res.ok) return null;
+    const data = await res.json() as {
+      agentId?: string;
+      multiaddr?: string;
+      peerId?: string;
+      role?: string;
+      fleetId?: string;
+    };
+    if (!data.agentId || !data.multiaddr) return null;
+    return data as { agentId: string; multiaddr: string; peerId?: string; role?: string; fleetId?: string };
+  } catch {
+    return null;
+  }
+}
+
+async function toolResolveAgent(args: { name: string }): Promise<string> {
+  const result = await resolveAgentByName(args.name);
+  if (!result) return `[agent not found: ${args.name}]`;
+  return JSON.stringify(result);
+}
+
+async function toolSendAxlMessage(args: { to_name: string; message: string }): Promise<string> {
+  const result = await resolveAgentByName(args.to_name);
+  if (!result) return `[agent not found: ${args.to_name}]`;
+  try {
+    await sendAxlMessage(result.multiaddr, result.agentId, args.message);
+    return `[message sent to ${args.to_name} via AXL]`;
+  } catch (err) {
+    return `[AXL send failed: ${err instanceof Error ? err.message : String(err)}]`;
+  }
+}
+
 // ─── Human message polling loop ───────────────────────────────────────────
 
 async function pollMessages(): Promise<void> {
@@ -559,13 +608,6 @@ async function handleTask(task: { id: string; description: string }) {
     await agent.emit({ type: "task_complete", payload: { taskId: task.id, output } });
 
     console.log(`[daemon] task ${task.id} complete`);
-
-    if (config.managerAgentId && config.managerMultiaddr) {
-      const summary = `Task complete: ${task.description.slice(0, 60)} → ${output.slice(0, 80)}`;
-      await sendAxlMessage(config.managerMultiaddr, config.managerAgentId, summary).catch(
-        (err) => console.warn("[daemon] AXL manager notify failed:", err),
-      );
-    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await agent.emit({ type: "error", payload: { message: msg } });
@@ -653,7 +695,9 @@ tool calls across turns — don't stack more than one block per response.
 | \`write_file\` | \`path\`, \`content\` | Create or overwrite a file |
 | \`list_directory\` | \`path?\` | List directory (default: workspace root) |
 | \`run_command\` | \`command\`, \`cwd?\` | Run any shell command |
-| \`search_files\` | \`pattern\`, \`path?\` | Find files matching a glob pattern |
+| \`search_files\`     | \`pattern\`, \`path?\`       | Find files matching a glob pattern                    |
+| \`resolve_agent\`    | \`name\`                   | Resolve another agent's AXL address via ENS/registry  |
+| \`send_axl_message\` | \`to_name\`, \`message\`    | Send a P2P message to a named agent via Gensyn AXL    |
 
 **Rules:** All paths are relative to \`${rootDir}\`. Commands run with your pod's full \
 environment (bun, node, python, git, etc.). No user confirmation required.
@@ -783,8 +827,12 @@ async function executeTool(call: { tool: string; args: Record<string, unknown> }
       return await toolRunCommand(args as { command: string; cwd?: string });
     case "search_files":
       return await toolSearchFiles(args as { pattern: string; path?: string });
+    case "resolve_agent":
+      return await toolResolveAgent(args as { name: string });
+    case "send_axl_message":
+      return await toolSendAxlMessage(args as { to_name: string; message: string });
     default:
-      return `[error: unknown tool "${tool}". Available: read_file, write_file, list_directory, run_command, search_files]`;
+      return `[error: unknown tool "${tool}". Available: read_file, write_file, list_directory, run_command, search_files, resolve_agent, send_axl_message]`;
   }
 }
 
