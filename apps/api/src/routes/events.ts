@@ -106,6 +106,18 @@ router.post("/", async (c) => {
 					$set: { updatedAt: now },
 				},
 			);
+		} else if (event.type === "workspace_snapshot") {
+			await agentCol.updateOne(
+				{ _id: agentId },
+				{
+					$set: {
+						"workspace.snapshot": event.payload.snapshot,
+						"workspace.rootDir": event.payload.rootDir,
+						"workspace.updatedAt": now,
+						updatedAt: now,
+					},
+				},
+			);
 		} else if (event.type === "heartbeat") {
 			await agentCol.updateOne(
 				{ _id: agentId },

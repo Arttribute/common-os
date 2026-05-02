@@ -162,6 +162,9 @@ async function main() {
   await agent.emit({ type: "state_change", payload: { status: "online" } });
   console.log("[daemon] online");
 
+  // Push initial workspace snapshot so the UI can show the pod filesystem immediately
+  await emitWorkspaceSnapshot().catch(() => {});
+
   await registerAxlPeer();
   await discoverFleetPeers();
 
@@ -178,7 +181,19 @@ async function main() {
   await pollTasks();
 }
 
+// ─── Workspace snapshot ────────────────────────────────────────────────────
+
+async function emitWorkspaceSnapshot(): Promise<void> {
+  const snapshot = buildWorkspaceSnapshot(WORKSPACE_DIR);
+  await agent
+    .emit({ type: "workspace_snapshot", payload: { snapshot, rootDir: WORKSPACE_DIR } })
+    .catch(() => {});
+  console.log(`[daemon] workspace snapshot emitted (${snapshot.split("\n").length} lines)`);
+}
+
 // ─── File watcher ──────────────────────────────────────────────────────────
+
+let snapshotDebounce: ReturnType<typeof setTimeout> | null = null;
 
 function startFileWatcher() {
   try {
@@ -200,6 +215,12 @@ function startFileWatcher() {
 
 function emitFileChange(path: string, op: "create" | "modify" | "delete") {
   agent.emit({ type: "file_changed", payload: { path, op } }).catch(() => {});
+  // Debounce snapshot refresh so rapid file writes don't flood the API
+  if (snapshotDebounce) clearTimeout(snapshotDebounce);
+  snapshotDebounce = setTimeout(() => {
+    snapshotDebounce = null;
+    emitWorkspaceSnapshot().catch(() => {});
+  }, 4_000);
 }
 
 // ─── Health monitor ────────────────────────────────────────────────────────

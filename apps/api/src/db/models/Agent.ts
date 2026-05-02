@@ -29,6 +29,11 @@ const AgentSchema = new Schema<AgentDoc>(
     },
     world: { room: String, x: Number, y: Number, facing: String },
     axl: { peerId: String, multiaddr: String },
+    workspace: {
+      snapshot: String,
+      rootDir: String,
+      updatedAt: Date,
+    },
     lastHeartbeatAt: Date,
     startedAt: Date,
     createdAt: { type: Date, required: true },

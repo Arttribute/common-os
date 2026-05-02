@@ -3,6 +3,7 @@ import { FleetPanel } from './FleetPanel'
 import { Inspector } from './Inspector'
 import { CommandBar } from './CommandBar'
 import { WorldCustomizer } from './WorldCustomizer'
+import { AgentDetailModal } from './AgentDetailModal'
 import { useSocketStore } from '@/store/socketStore'
 
 export function HUD() {
@@ -64,6 +65,9 @@ export function HUD() {
 
       {/* Bottom: command bar */}
       <CommandBar />
+
+      {/* Agent detail modal — rendered outside the canvas layer */}
+      <AgentDetailModal />
     </div>
   )
 }

@@ -28,6 +28,7 @@ function toUiStatus(s: string): AgentStatus {
 // If neither getToken nor a NEXT_PUBLIC_API_KEY env var is present, the world runs in mock mode.
 export function useWorldConnection(fleetId?: string, getToken?: () => Promise<string | null>) {
   const upsertAgent = useAgentStore((s) => s.upsertAgent)
+  const setPodInfo  = useAgentStore((s) => s.setPodInfo)
   const updateStatus = useAgentStore((s) => s.updateStatus)
   const updatePosition = useAgentStore((s) => s.updatePosition)
   const setCurrentAction = useAgentStore((s) => s.setCurrentAction)
@@ -64,17 +65,53 @@ export function useWorldConnection(fleetId?: string, getToken?: () => Promise<st
           return
         }
 
-        const res = await fetch(`${apiUrl}/fleets/${fleetId}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        })
-        if (res.ok) {
-          const fleet = await res.json() as {
+        const [fleetRes, agentsRes] = await Promise.all([
+          fetch(`${apiUrl}/fleets/${fleetId}`, { headers: { Authorization: `Bearer ${token}` } }),
+          fetch(`${apiUrl}/fleets/${fleetId}/agents`, { headers: { Authorization: `Bearer ${token}` } }),
+        ])
+        if (fleetRes.ok) {
+          const fleet = await fleetRes.json() as {
             _id: string
             name: string
             worldType: string
             worldConfig: { rooms: Array<{ id: string; label: string; bounds: { x: number; y: number; w: number; h: number } }> }
           }
           setFleet(fleet._id, fleet.name, fleet.worldConfig.rooms, fleet.worldType)
+        }
+        // Seed pod + createdAt into store from the full agent list (richer than worldState snapshot).
+        // We first upsert basic entries so setPodInfo finds them, then set pod info after the
+        // snapshot message arrives. We defer this so the snapshot processes first.
+        if (agentsRes.ok) {
+          const fullAgents = await agentsRes.json() as Array<{
+            _id: string
+            role?: string
+            permissionTier?: 'manager' | 'worker'
+            status?: string
+            world?: { room: string; x: number; y: number; facing: string }
+            pod?: { provider?: string; region?: string; namespaceId?: string | null }
+            createdAt?: string
+          }>
+          // Upsert agents with full info; snapshot events will overwrite live status/position
+          for (const a of fullAgents) {
+            upsertAgent({
+              agentId:        a._id,
+              role:           a.role ?? 'unknown',
+              permissionTier: a.permissionTier ?? 'worker',
+              status:         toUiStatus(a.status ?? 'idle'),
+              world: {
+                room:   a.world?.room   ?? 'dev-room',
+                x:      a.world?.x      ?? 0,
+                y:      a.world?.y      ?? 0,
+                facing: (a.world?.facing ?? 'south') as 'north' | 'south' | 'east' | 'west',
+              },
+              pod: a.pod ? {
+                provider:    a.pod.provider    ?? 'unknown',
+                region:      a.pod.region      ?? 'unknown',
+                namespaceId: a.pod.namespaceId ?? null,
+              } : undefined,
+              createdAt: a.createdAt ? new Date(a.createdAt).getTime() : undefined,
+            })
+          }
         }
 
         const wsBase = apiUrl!.replace(/^http/, 'ws')

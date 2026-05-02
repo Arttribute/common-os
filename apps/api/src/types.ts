@@ -90,6 +90,11 @@ export interface AgentDoc {
     peerId: string | null
     multiaddr: string | null
   }
+  workspace?: {
+    snapshot: string
+    rootDir: string
+    updatedAt: Date
+  } | null
   lastHeartbeatAt: Date | null
   startedAt: Date | null
   createdAt: Date

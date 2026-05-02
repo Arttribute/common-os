@@ -99,6 +99,14 @@ const HeartbeatEvent = z.object({
   payload: z.object({}).optional(),
 });
 
+const WorkspaceSnapshotEvent = z.object({
+  type: z.literal("workspace_snapshot"),
+  payload: z.object({
+    snapshot: z.string(),
+    rootDir: z.string(),
+  }),
+});
+
 export const AgentEventSchema = z.discriminatedUnion("type", [
   StateChangeEvent,
   TaskStartEvent,
@@ -112,6 +120,7 @@ export const AgentEventSchema = z.discriminatedUnion("type", [
   FileChangedEvent,
   ErrorEvent,
   HeartbeatEvent,
+  WorkspaceSnapshotEvent,
 ]);
 
 export type AgentEvent = z.infer<typeof AgentEventSchema>;
@@ -129,3 +138,4 @@ export type ErrorEvent = z.infer<typeof ErrorEvent>;
 export type HeartbeatEvent = z.infer<typeof HeartbeatEvent>;
 export type WorldInteractEvent = z.infer<typeof WorldInteractEvent>;
 export type WorldCreateObjectEvent = z.infer<typeof WorldCreateObjectEvent>;
+export type WorkspaceSnapshotEvent = z.infer<typeof WorkspaceSnapshotEvent>;

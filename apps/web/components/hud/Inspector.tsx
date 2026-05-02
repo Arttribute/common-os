@@ -1,15 +1,33 @@
 'use client'
 import { useAgentStore } from '@/store/agentStore'
 
+const CREATION_STEPS = [
+  { maxMs: 20_000,  label: 'allocating pod' },
+  { maxMs: 60_000,  label: 'starting container' },
+  { maxMs: 120_000, label: 'registering agent' },
+  { maxMs: Infinity, label: 'waiting for daemon' },
+]
+
+function creationStep(createdAt?: number): string {
+  if (!createdAt) return 'provisioning'
+  const elapsed = Date.now() - createdAt
+  for (const step of CREATION_STEPS) {
+    if (elapsed < step.maxMs) return step.label
+  }
+  return 'waiting for daemon'
+}
+
 export function Inspector() {
-  const agents = useAgentStore((s) => s.agents)
-  const selectedId = useAgentStore((s) => s.selectedAgentId)
-  const selectAgent = useAgentStore((s) => s.selectAgent)
+  const agents       = useAgentStore((s) => s.agents)
+  const selectedId   = useAgentStore((s) => s.selectedAgentId)
+  const selectAgent  = useAgentStore((s) => s.selectAgent)
+  const openModal    = useAgentStore((s) => s.openDetailModal)
 
   const agent = selectedId ? agents[selectedId] : null
   if (!agent) return null
 
   const shortRole = agent.role.replace(/-/g, ' ')
+  const isProvisioning = agent.status === 'provisioning'
 
   return (
     <div
@@ -17,8 +35,8 @@ export function Inspector() {
         position: 'absolute',
         top: 16,
         right: 272,
-        width: 220,
-        background: 'rgba(6, 11, 20, 0.9)',
+        width: 230,
+        background: 'rgba(6, 11, 20, 0.92)',
         backdropFilter: 'blur(12px)',
         border: '1px solid rgba(255,255,255,0.08)',
         borderRadius: 10,
@@ -46,13 +64,8 @@ export function Inspector() {
         <button
           onClick={() => selectAgent(null)}
           style={{
-            background: 'none',
-            border: 'none',
-            color: '#475569',
-            cursor: 'pointer',
-            fontSize: 12,
-            lineHeight: 1,
-            padding: '0 2px',
+            background: 'none', border: 'none', color: '#475569',
+            cursor: 'pointer', fontSize: 12, lineHeight: 1, padding: '0 2px',
           }}
         >
           ×
@@ -62,13 +75,28 @@ export function Inspector() {
       <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
         {/* ID + Room */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-          <Row label="id"     value={agent.agentId} mono />
-          <Row label="room"   value={`${agent.world.room} (${agent.world.x}, ${agent.world.y})`} mono />
+          <Row label="id"   value={agent.agentId} mono truncate />
+          <Row label="room" value={`${agent.world.room} (${agent.world.x}, ${agent.world.y})`} mono />
         </div>
 
-        {/* Status */}
+        {/* Pod info */}
+        {agent.pod && (
+          <Section title="Pod">
+            <Row label="cloud"  value={agent.pod.provider} mono />
+            <Row label="region" value={agent.pod.region}   mono />
+            {agent.pod.namespaceId && (
+              <Row label="ns" value={agent.pod.namespaceId} mono truncate />
+            )}
+          </Section>
+        )}
+
+        {/* Status — with animated creation steps */}
         <Section title="Status">
-          <StatusBadge status={agent.status} />
+          {isProvisioning ? (
+            <CreationStatus createdAt={agent.createdAt} />
+          ) : (
+            <StatusBadge status={agent.status} />
+          )}
         </Section>
 
         {/* Current task */}
@@ -100,17 +128,102 @@ export function Inspector() {
           </Section>
         )}
       </div>
+
+      {/* Footer — "View Internals" button */}
+      <div
+        style={{
+          borderTop: '1px solid rgba(255,255,255,0.04)',
+          padding: '8px 12px',
+          display: 'flex',
+          justifyContent: 'flex-end',
+        }}
+      >
+        <button
+          onClick={openModal}
+          style={{
+            background: 'rgba(59, 130, 246, 0.1)',
+            border: '1px solid rgba(59, 130, 246, 0.3)',
+            borderRadius: 5,
+            color: '#93c5fd',
+            cursor: 'pointer',
+            fontSize: 9,
+            fontFamily: 'monospace',
+            padding: '4px 10px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 5,
+            transition: 'background 0.15s',
+          }}
+          onMouseEnter={(e) => {
+            ;(e.currentTarget as HTMLButtonElement).style.background = 'rgba(59, 130, 246, 0.2)'
+          }}
+          onMouseLeave={(e) => {
+            ;(e.currentTarget as HTMLButtonElement).style.background = 'rgba(59, 130, 246, 0.1)'
+          }}
+        >
+          <span style={{ fontSize: 10 }}>🖥️</span>
+          view internals
+        </button>
+      </div>
     </div>
   )
 }
 
-function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+// Animated creation-step display for provisioning agents
+function CreationStatus({ createdAt }: { createdAt?: number }) {
+  const step = creationStep(createdAt)
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <PulsingDot color="#6366f1" />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+        <span style={{ fontSize: 9, color: '#6366f1', fontFamily: 'monospace' }}>provisioning</span>
+        <span style={{ fontSize: 8, color: '#334155', fontFamily: 'monospace' }}>· {step}</span>
+      </div>
+    </div>
+  )
+}
+
+function PulsingDot({ color }: { color: string }) {
+  return (
+    <span
+      style={{
+        width: 6,
+        height: 6,
+        borderRadius: '50%',
+        background: color,
+        display: 'inline-block',
+        boxShadow: `0 0 6px ${color}`,
+        animation: 'inspectorPulse 1.4s ease-in-out infinite',
+        flexShrink: 0,
+      }}
+    >
+      <style>{`
+        @keyframes inspectorPulse {
+          0%, 100% { opacity: 1; }
+          50%       { opacity: 0.35; }
+        }
+      `}</style>
+    </span>
+  )
+}
+
+function Row({ label, value, mono, truncate }: {
+  label: string; value: string; mono?: boolean; truncate?: boolean
+}) {
   return (
     <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
-      <span style={{ fontSize: 8, color: '#334155', fontFamily: 'monospace', minWidth: 32, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+      <span style={{
+        fontSize: 8, color: '#334155', fontFamily: 'monospace',
+        minWidth: 32, textTransform: 'uppercase', letterSpacing: 0.5, flexShrink: 0,
+      }}>
         {label}
       </span>
-      <span style={{ fontSize: 9, color: '#64748b', fontFamily: mono ? 'monospace' : 'inherit', wordBreak: 'break-all' }}>
+      <span style={{
+        fontSize: 9,
+        color: '#64748b',
+        fontFamily: mono ? 'monospace' : 'inherit',
+        ...(truncate ? { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 140 } : { wordBreak: 'break-all' }),
+      }}>
         {value}
       </span>
     </div>
@@ -120,7 +233,10 @@ function Row({ label, value, mono }: { label: string; value: string; mono?: bool
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <div style={{ fontSize: 8, color: '#334155', fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>
+      <div style={{
+        fontSize: 8, color: '#334155', fontFamily: 'monospace',
+        textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4,
+      }}>
         {title}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -138,7 +254,10 @@ function StatusBadge({ status }: { status: string }) {
   const color = colors[status] ?? '#4b5563'
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-      <span style={{ width: 6, height: 6, borderRadius: '50%', background: color, display: 'inline-block', boxShadow: `0 0 4px ${color}` }} />
+      <span style={{
+        width: 6, height: 6, borderRadius: '50%',
+        background: color, display: 'inline-block', boxShadow: `0 0 4px ${color}`,
+      }} />
       <span style={{ fontSize: 9, color, fontFamily: 'monospace' }}>{status}</span>
     </div>
   )

@@ -1,3 +1,4 @@
+'use client'
 import { create } from 'zustand'
 
 export type AgentStatus = 'online' | 'idle' | 'working' | 'error' | 'offline' | 'provisioning'
@@ -9,12 +10,20 @@ export interface AgentWorld {
   facing: 'north' | 'south' | 'east' | 'west'
 }
 
+export interface AgentPod {
+  provider: string
+  region: string
+  namespaceId?: string | null
+}
+
 export interface Agent {
   agentId: string
   role: string
   permissionTier: 'manager' | 'worker'
   status: AgentStatus
   world: AgentWorld
+  pod?: AgentPod
+  createdAt?: number  // unix ms — used to infer creation step
   currentAction?: string
   currentTask?: { taskId: string; description: string }
   speechBubble?: { text: string; expiresAt: number }
@@ -24,8 +33,12 @@ export interface Agent {
 interface AgentStore {
   agents: Record<string, Agent>
   selectedAgentId: string | null
+  detailModalOpen: boolean
   selectAgent: (id: string | null) => void
+  openDetailModal: () => void
+  closeDetailModal: () => void
   upsertAgent: (agent: Omit<Agent, 'recentActions'>) => void
+  setPodInfo: (agentId: string, pod: AgentPod, createdAt?: number) => void
   updateStatus: (agentId: string, status: AgentStatus) => void
   updatePosition: (agentId: string, room: string, x: number, y: number) => void
   setCurrentAction: (agentId: string, action: string | undefined) => void
@@ -38,8 +51,27 @@ interface AgentStore {
 export const useAgentStore = create<AgentStore>((set) => ({
   agents: {},
   selectedAgentId: null,
+  detailModalOpen: false,
 
   selectAgent: (id) => set({ selectedAgentId: id }),
+  openDetailModal: () => set({ detailModalOpen: true }),
+  closeDetailModal: () => set({ detailModalOpen: false }),
+
+  setPodInfo: (agentId, pod, createdAt) =>
+    set((state) => {
+      const existing = state.agents[agentId]
+      if (!existing) return state
+      return {
+        agents: {
+          ...state.agents,
+          [agentId]: {
+            ...existing,
+            pod,
+            ...(createdAt !== undefined ? { createdAt } : {}),
+          },
+        },
+      }
+    }),
 
   upsertAgent: (agent) =>
     set((state) => ({
