@@ -1,0 +1,77 @@
+name: Build agent image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/daemon/**'
+      - 'packages/sdk/**'
+      - 'packages/events/**'
+      - 'apps/api/agent/**'
+
+concurrency:
+  group: agent-image-build
+  cancel-in-progress: false
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Get pnpm store directory
+        id: pnpm-cache
+        run: echo "store=$(pnpm store path)" >> $GITHUB_OUTPUT
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache.outputs.store }}
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build daemon bundle
+        run: |
+          pnpm --filter @common-os/events build
+          pnpm --filter @common-os/sdk build
+          pnpm --filter @common-os/daemon build
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push agent Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./apps/api/agent/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/arttribute/common-os/agent:latest
+            ghcr.io/arttribute/common-os/agent:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
