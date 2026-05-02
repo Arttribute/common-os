@@ -274,7 +274,13 @@ router.post('/:agentId/bootstrap', async (c) => {
     if (commons.agentId) {
       await col.updateOne(
         { _id: agentId },
-        { $set: { 'commons.agentId': commons.agentId, updatedAt: new Date() } },
+        {
+          $set: {
+            'commons.agentId': commons.agentId,
+            'commons.walletAddress': commons.walletAddress,
+            updatedAt: new Date(),
+          },
+        },
       )
     }
 

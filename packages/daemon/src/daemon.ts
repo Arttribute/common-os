@@ -79,12 +79,12 @@ async function bootstrapCommons(): Promise<void> {
       commonsAgentId?: string | null;
       commonsApiKey?: string | null;
     };
-    if (data.commonsApiKey) {
+    if (data.commonsApiKey && data.commonsAgentId) {
       config.commonsApiKey = data.commonsApiKey;
-      config.commonsAgentId = data.commonsAgentId ?? config.agentId;
+      config.commonsAgentId = data.commonsAgentId;
       console.log(`[daemon] Agent Commons ready  agentId=${config.commonsAgentId}`);
     } else {
-      console.warn("[daemon] bootstrap: no Agent Commons credentials returned — AGENTCOMMONS_API_KEY may not be configured");
+      console.warn("[daemon] bootstrap: no complete Agent Commons credentials returned — AGENTCOMMONS_API_KEY or commonsAgentId may be missing");
     }
   } catch (err) {
     console.warn("[daemon] bootstrap failed:", err instanceof Error ? err.message : err);
