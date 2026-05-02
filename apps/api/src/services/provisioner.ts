@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "crypto";
 import { agents, fleets, worldStates } from "../db/mongo.js";
 import type { AgentDoc, FleetDoc } from "../types.js";
-import { launchAgentPod, launchAgentPodEks } from "./cloud-init.js";
+import { launchAgentPod, launchAgentServiceAws } from "./cloud-init.js";
 
 interface ProvisionAgentOptions {
 	fleetId: string;
@@ -16,6 +16,19 @@ interface ProvisionAgentOptions {
 	openclawConfig: AgentDoc["config"]["openclawConfig"];
 }
 
+function resolveCloudProvider(): "gcp" | "aws" {
+	const configured = process.env.CLOUD_PROVIDER;
+	if (configured === "gcp" || configured === "aws") return configured;
+	if (process.env.AWS_ECS_CLUSTER || process.env.AWS_REGION) return "aws";
+	return "gcp";
+}
+
+function resolveCloudRegion(provider: "gcp" | "aws"): string {
+	return provider === "aws"
+		? process.env.AWS_REGION ?? process.env.CLOUD_REGION ?? "us-east-1"
+		: process.env.GCP_REGION ?? process.env.CLOUD_REGION ?? "europe-west1";
+}
+
 export async function provisionAgent(
 	opts: ProvisionAgentOptions,
 ): Promise<AgentDoc & { agentToken: string }> {
@@ -28,8 +41,8 @@ export async function provisionAgent(
 	const startX = roomDef ? roomDef.bounds.x + 2 : 2;
 	const startY = roomDef ? roomDef.bounds.y + 2 : 2;
 
-	const provider = (process.env.CLOUD_PROVIDER as "gcp" | "aws") ?? "gcp";
-	const region = process.env.GCP_REGION ?? process.env.CLOUD_REGION ?? "europe-west1";
+	const provider = resolveCloudProvider();
+	const region = resolveCloudRegion(provider);
 
 	const commons =
 		opts.integrationPath === "openclaw"
@@ -153,7 +166,7 @@ async function launchCloudInstance(
 		dockerImage: opts.dockerImage,
 		commonsApiKey: commonsApiKey ?? "",
 		commonsAgentId: agentDoc.commons.agentId ?? "",
-		runnerUrl: process.env.RUNNER_URL,
+		runnerUrl: agentDoc.pod.provider === "gcp" ? process.env.RUNNER_URL : undefined,
 		worldRoom: agentDoc.world.room,
 		worldX: agentDoc.world.x,
 		worldY: agentDoc.world.y,
@@ -166,7 +179,7 @@ async function launchCloudInstance(
 	try {
 		const launch = agentDoc.pod.provider === "gcp"
 			? launchAgentPod(podOpts)
-			: launchAgentPodEks(podOpts);
+			: launchAgentServiceAws(podOpts);
 
 		const result = await Promise.race([launch, deadline]);
 

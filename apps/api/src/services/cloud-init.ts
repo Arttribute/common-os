@@ -9,7 +9,9 @@ import {
 } from "@aws-sdk/client-ec2";
 import {
 	CreateServiceCommand,
+	DeleteServiceCommand,
 	DescribeServicesCommand,
+	DescribeTaskDefinitionCommand,
 	DescribeTasksCommand,
 	ECSClient,
 	ListTasksCommand,
@@ -47,7 +49,7 @@ export interface LaunchOptions {
 }
 
 export interface LaunchedService {
-	/** Kubernetes namespace name — stored as namespaceId in agent.pod */
+	/** Cloud service identifier — stored as namespaceId in agent.pod */
 	serviceId: string;
 	sessionId: string;
 }
@@ -71,6 +73,11 @@ export interface DeployAgentOptions {
 	command?: string[];
 	entryPoint?: string[];
 	environment?: Record<string, string>;
+	logGroupName?: string;
+	logStreamPrefix?: string;
+	createLogGroup?: boolean;
+	enableExecuteCommand?: boolean;
+	reuseLatestTaskDefinition?: boolean;
 	healthCheckGracePeriodSeconds?: number;
 	loadBalancer?: {
 		targetGroupArn: string;
@@ -99,6 +106,60 @@ export interface DeployAgentResult {
 	containerName: string;
 	containerUrl: string;
 	access: DeployAgentAccessDetails;
+}
+
+export interface EcsServiceDetails {
+	serviceArn: string;
+	taskDefinitionArn: string;
+	taskArn: string | null;
+	access: DeployAgentAccessDetails;
+}
+
+const DEFAULT_AWS_ECS_CLUSTER = "agent-runners";
+const DEFAULT_AWS_ECS_TASK_FAMILY = "agent-task";
+const DEFAULT_AWS_ECS_SUBNET_IDS = [
+	"subnet-07372d05f0aa0dd46",
+	"subnet-0aae7bc5d0171679f",
+	"subnet-0b60ee1b737f96a7c",
+];
+const DEFAULT_AWS_ECS_SECURITY_GROUP_IDS = ["sg-094ec5336de285f27"];
+const DEFAULT_AWS_ECS_EXECUTION_ROLE_ARN =
+	"arn:aws:iam::286273777416:role/ecsTaskExecutionRole";
+const DEFAULT_AWS_ECS_TASK_ROLE_ARN = DEFAULT_AWS_ECS_EXECUTION_ROLE_ARN;
+const DEFAULT_AWS_ECS_CPU = 1024;
+const DEFAULT_AWS_ECS_MEMORY = 3072;
+const DEFAULT_AWS_ECS_LOG_GROUP = "/ecs/agent-task";
+const DEFAULT_AWS_ECS_LOG_STREAM_PREFIX = "ecs";
+const DEFAULT_AWS_RUNNER_IMAGE_URL = "ghcr.io/arttribute/common-os/runner:latest";
+const DEFAULT_AWS_RUNNER_TASK_FAMILY = "runner-session";
+const DEFAULT_AWS_RUNNER_CONTAINER_NAME = "runner";
+const DEFAULT_AWS_RUNNER_LOG_GROUP = "/ecs/runner-session";
+
+function splitCsv(value?: string): string[] {
+	return (value ?? "")
+		.split(",")
+		.map((entry) => entry.trim())
+		.filter(Boolean);
+}
+
+function parseOptionalBoolean(value?: string): boolean | undefined {
+	if (!value) return undefined;
+	const normalized = value.trim().toLowerCase();
+	if (["1", "true", "yes", "on"].includes(normalized)) return true;
+	if (["0", "false", "no", "off"].includes(normalized)) return false;
+	return undefined;
+}
+
+function parseOptionalNumber(value?: string): number | undefined {
+	if (!value) return undefined;
+	const parsed = Number(value);
+	return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+export interface RunnerSessionServiceOptions {
+	agentId: string;
+	sessionId: string;
+	region?: string;
 }
 
 // ─── GCS storage bootstrap ────────────────────────────────────────────────
@@ -428,6 +489,220 @@ export async function terminateAgentPod(
 	}
 }
 
+function getAwsAgentServiceDefaults(opts: LaunchOptions): DeployAgentOptions {
+	const executionRoleArn =
+		process.env.AWS_ECS_TASK_EXECUTION_ROLE_ARN ??
+		DEFAULT_AWS_ECS_EXECUTION_ROLE_ARN;
+	const taskRoleArn =
+		process.env.AWS_ECS_TASK_ROLE_ARN ??
+		executionRoleArn ??
+		DEFAULT_AWS_ECS_TASK_ROLE_ARN;
+
+	return {
+		cluster: process.env.AWS_ECS_CLUSTER ?? DEFAULT_AWS_ECS_CLUSTER,
+		containerUrl:
+			process.env.AGENT_IMAGE_URL ??
+			"ghcr.io/arttribute/common-os/agent:latest",
+		serviceName: sanitizeAwsName(`agent-task-service-${opts.agentId}`),
+		taskFamily: process.env.AWS_ECS_TASK_FAMILY ?? DEFAULT_AWS_ECS_TASK_FAMILY,
+		containerName: process.env.AWS_ECS_CONTAINER_NAME ?? "agent",
+		region: process.env.AWS_REGION ?? "eu-west-1",
+		cpu: parseOptionalNumber(process.env.AWS_ECS_TASK_CPU) ?? DEFAULT_AWS_ECS_CPU,
+		memory:
+			parseOptionalNumber(process.env.AWS_ECS_TASK_MEMORY) ??
+			DEFAULT_AWS_ECS_MEMORY,
+		desiredCount: 1,
+		subnetIds:
+			splitCsv(process.env.AWS_ECS_SUBNET_IDS).length > 0
+				? splitCsv(process.env.AWS_ECS_SUBNET_IDS)
+				: DEFAULT_AWS_ECS_SUBNET_IDS,
+		securityGroupIds:
+			splitCsv(process.env.AWS_ECS_SECURITY_GROUP_IDS).length > 0
+				? splitCsv(process.env.AWS_ECS_SECURITY_GROUP_IDS)
+				: DEFAULT_AWS_ECS_SECURITY_GROUP_IDS,
+		assignPublicIp:
+			parseOptionalBoolean(process.env.AWS_ECS_ASSIGN_PUBLIC_IP) ?? true,
+		executionRoleArn,
+		taskRoleArn,
+		logGroupName: process.env.AWS_ECS_LOG_GROUP ?? DEFAULT_AWS_ECS_LOG_GROUP,
+		logStreamPrefix:
+			process.env.AWS_ECS_LOG_STREAM_PREFIX ??
+			DEFAULT_AWS_ECS_LOG_STREAM_PREFIX,
+		enableExecuteCommand: true,
+		environment: {
+			AGENT_ID: opts.agentId,
+			AGENT_TOKEN: opts.agentToken,
+			FLEET_ID: opts.fleetId,
+			TENANT_ID: opts.tenantId,
+			API_URL: opts.apiUrl,
+			ROLE: opts.role,
+			INTEGRATION_PATH: opts.integrationPath,
+			COMMONS_API_KEY: opts.commonsApiKey,
+			COMMONS_AGENT_ID: opts.commonsAgentId,
+			OPENCLAW_GATEWAY_URL:
+				opts.openclawGatewayUrl ?? "http://localhost:18789",
+			WORKSPACE_DIR: opts.workspaceDir ?? "/mnt/shared",
+			DOCKER_IMAGE: opts.dockerImage ?? "",
+			RUNNER_URL: opts.runnerUrl ?? "",
+			WORLD_ROOM: opts.worldRoom ?? "dev-room",
+			WORLD_X: String(opts.worldX ?? 2),
+			WORLD_Y: String(opts.worldY ?? 2),
+		},
+	};
+}
+
+function buildRunnerSessionServiceName(agentId: string, sessionId: string): string {
+	return sanitizeAwsName(`runner-session-${agentId}-${sessionId}`);
+}
+
+function getAwsRunnerServiceDefaults(
+	opts: RunnerSessionServiceOptions,
+): DeployAgentOptions {
+	const executionRoleArn =
+		process.env.AWS_ECS_RUNNER_TASK_EXECUTION_ROLE_ARN ??
+		process.env.AWS_ECS_TASK_EXECUTION_ROLE_ARN ??
+		DEFAULT_AWS_ECS_EXECUTION_ROLE_ARN;
+	const taskRoleArn =
+		process.env.AWS_ECS_RUNNER_TASK_ROLE_ARN ??
+		process.env.AWS_ECS_TASK_ROLE_ARN ??
+		executionRoleArn ??
+		DEFAULT_AWS_ECS_TASK_ROLE_ARN;
+
+	return {
+		cluster: process.env.AWS_ECS_RUNNER_CLUSTER ?? process.env.AWS_ECS_CLUSTER ?? DEFAULT_AWS_ECS_CLUSTER,
+		containerUrl:
+			process.env.AWS_ECS_RUNNER_IMAGE_URL ??
+			process.env.TEST_ECS_CONTAINER_URL ??
+			DEFAULT_AWS_RUNNER_IMAGE_URL,
+		serviceName: buildRunnerSessionServiceName(opts.agentId, opts.sessionId),
+		taskFamily:
+			process.env.AWS_ECS_RUNNER_TASK_FAMILY ?? DEFAULT_AWS_RUNNER_TASK_FAMILY,
+		containerName:
+			process.env.AWS_ECS_RUNNER_CONTAINER_NAME ??
+			DEFAULT_AWS_RUNNER_CONTAINER_NAME,
+		region: opts.region ?? process.env.AWS_REGION ?? "eu-west-1",
+		cpu:
+			parseOptionalNumber(process.env.AWS_ECS_RUNNER_TASK_CPU) ??
+			parseOptionalNumber(process.env.AWS_ECS_TASK_CPU) ??
+			DEFAULT_AWS_ECS_CPU,
+		memory:
+			parseOptionalNumber(process.env.AWS_ECS_RUNNER_TASK_MEMORY) ??
+			parseOptionalNumber(process.env.AWS_ECS_TASK_MEMORY) ??
+			DEFAULT_AWS_ECS_MEMORY,
+		desiredCount: 1,
+		subnetIds:
+			splitCsv(process.env.AWS_ECS_RUNNER_SUBNET_IDS ?? process.env.AWS_ECS_SUBNET_IDS)
+				.length > 0
+				? splitCsv(
+					process.env.AWS_ECS_RUNNER_SUBNET_IDS ?? process.env.AWS_ECS_SUBNET_IDS,
+				)
+				: DEFAULT_AWS_ECS_SUBNET_IDS,
+		securityGroupIds:
+			splitCsv(
+				process.env.AWS_ECS_RUNNER_SECURITY_GROUP_IDS ??
+					process.env.AWS_ECS_SECURITY_GROUP_IDS,
+			).length > 0
+				? splitCsv(
+					process.env.AWS_ECS_RUNNER_SECURITY_GROUP_IDS ??
+						process.env.AWS_ECS_SECURITY_GROUP_IDS,
+				)
+				: DEFAULT_AWS_ECS_SECURITY_GROUP_IDS,
+		assignPublicIp:
+			parseOptionalBoolean(
+				process.env.AWS_ECS_RUNNER_ASSIGN_PUBLIC_IP ??
+					process.env.AWS_ECS_ASSIGN_PUBLIC_IP,
+			) ?? true,
+		executionRoleArn,
+		taskRoleArn,
+		containerPort: 80,
+		logGroupName:
+			process.env.AWS_ECS_RUNNER_LOG_GROUP ??
+			process.env.AWS_ECS_LOG_GROUP ??
+			DEFAULT_AWS_RUNNER_LOG_GROUP,
+		logStreamPrefix:
+			process.env.AWS_ECS_RUNNER_LOG_STREAM_PREFIX ??
+			process.env.AWS_ECS_LOG_STREAM_PREFIX ??
+			DEFAULT_AWS_ECS_LOG_STREAM_PREFIX,
+		enableExecuteCommand: true,
+		reuseLatestTaskDefinition: true,
+		environment: {
+			HOST: process.env.AWS_ECS_RUNNER_HOST ?? "0.0.0.0",
+			PORT: String(
+				parseOptionalNumber(process.env.AWS_ECS_RUNNER_PORT) ?? 80,
+			),
+			AGC_API_KEY: process.env.AGC_API_KEY ?? "",
+			AGC_INITIATOR: process.env.AGC_INITIATOR ?? "",
+		},
+	};
+}
+
+export async function launchAgentServiceAws(
+	opts: LaunchOptions,
+): Promise<LaunchedService> {
+	const sessionId = uuidv4();
+	const deployment = await deployAgent(getAwsAgentServiceDefaults(opts));
+
+	console.log(
+		`[cloud-init] ECS service ${deployment.serviceName} created for ${opts.agentId}`,
+	);
+
+	return { serviceId: deployment.serviceName, sessionId };
+}
+
+export async function deployRunnerSessionAws(
+	opts: RunnerSessionServiceOptions,
+): Promise<DeployAgentResult> {
+	const defaults = getAwsRunnerServiceDefaults(opts);
+	const existing = await getEcsServiceDetails({
+		cluster: defaults.cluster,
+		serviceName: defaults.serviceName ?? buildRunnerSessionServiceName(opts.agentId, opts.sessionId),
+		region: defaults.region,
+		containerPort: defaults.containerPort,
+	});
+
+	if (existing) {
+		return {
+			region: defaults.region ?? process.env.AWS_REGION ?? "eu-west-1",
+			cluster: defaults.cluster,
+			serviceName: defaults.serviceName ?? buildRunnerSessionServiceName(opts.agentId, opts.sessionId),
+			serviceArn: existing.serviceArn,
+			taskDefinitionArn: existing.taskDefinitionArn,
+			taskArn: existing.taskArn,
+			containerName: defaults.containerName ?? DEFAULT_AWS_RUNNER_CONTAINER_NAME,
+			containerUrl: defaults.containerUrl,
+			access: existing.access,
+		};
+	}
+
+	return deployAgent(defaults);
+}
+
+export async function terminateAgentServiceAws(
+	serviceName: string,
+): Promise<void> {
+	const region = process.env.AWS_REGION ?? "eu-west-1";
+	const cluster = process.env.AWS_ECS_CLUSTER ?? DEFAULT_AWS_ECS_CLUSTER;
+	const ecsClient = new ECSClient({ region });
+
+	try {
+		await ecsClient.send(
+			new DeleteServiceCommand({
+				cluster,
+				service: serviceName,
+				force: true,
+			}),
+		);
+		console.log(`[cloud-init] ECS service ${serviceName} deleted`);
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		if (message.includes("ServiceNotFoundException")) {
+			console.warn(`[cloud-init] ECS service ${serviceName} already deleted`);
+			return;
+		}
+		throw err;
+	}
+}
+
 // ─── EKS — per-agent pod (AWS equivalent of GKE path) ────────────────────
 
 // SHA256 implementation using Node.js crypto — satisfies @smithy/signature-v4 HashConstructor
@@ -722,6 +997,67 @@ async function getServiceTask(
 	return null;
 }
 
+export async function getEcsServiceDetails(opts: {
+	cluster: string;
+	serviceName: string;
+	region?: string;
+	containerPort?: number;
+}): Promise<EcsServiceDetails | null> {
+	const region = opts.region ?? process.env.AWS_REGION ?? "us-east-1";
+	const ecsClient = new ECSClient({ region });
+	const { failures, services } = await ecsClient.send(
+		new DescribeServicesCommand({
+			cluster: opts.cluster,
+			services: [opts.serviceName],
+		}),
+	);
+
+	if (failures?.length) {
+		const missing = failures.some((failure) => failure.reason === "MISSING");
+		if (missing) return null;
+		const failure = failures[0];
+		throw new Error(
+			`ECS service lookup failed: ${failure?.reason ?? failure?.arn ?? "unknown error"}`,
+		);
+	}
+
+	const service = services?.[0];
+	if (!service?.serviceArn || !service.taskDefinition) return null;
+
+	const task = await getServiceTask(ecsClient, opts.cluster, opts.serviceName);
+	let access: DeployAgentAccessDetails;
+	if (opts.containerPort && task) {
+		access = await resolveTaskNetworkAccess(region, task, opts.containerPort);
+	} else if (opts.containerPort) {
+		access = {
+			mode: "public-ip",
+			url: null,
+			hostname: null,
+			publicIp: null,
+			privateIp: null,
+			port: opts.containerPort,
+			instructions: `The ECS service is active, but the task address could not be resolved yet. Check service ${opts.serviceName} in cluster ${opts.cluster}.`,
+		};
+	} else {
+		access = {
+			mode: "private-network",
+			url: null,
+			hostname: null,
+			publicIp: null,
+			privateIp: null,
+			port: 0,
+			instructions: `The ECS service is active with no exposed port. Use ECS Exec or logs for service ${opts.serviceName}.`,
+		};
+	}
+
+	return {
+		serviceArn: service.serviceArn,
+		taskDefinitionArn: service.taskDefinition,
+		taskArn: task?.taskArn ?? null,
+		access,
+	};
+}
+
 async function resolveTaskNetworkAccess(
 	region: string,
 	task: EcsTaskShape,
@@ -825,6 +1161,24 @@ async function resolveLoadBalancerAccess(
 	};
 }
 
+async function getLatestTaskDefinitionArn(
+	ecsClient: ECSClient,
+	taskFamily: string,
+): Promise<string | null> {
+	try {
+		const { taskDefinition } = await ecsClient.send(
+			new DescribeTaskDefinitionCommand({ taskDefinition: taskFamily }),
+		);
+		return taskDefinition?.taskDefinitionArn ?? null;
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		if (message.includes("Unable to describe task definition")) {
+			return null;
+		}
+		throw err;
+	}
+}
+
 /**
  * Deploys a single-container ECS/Fargate service and returns how to reach it.
  * The caller provides the cluster and networking so the helper can be reused
@@ -835,55 +1189,99 @@ export async function deployAgent(
 ): Promise<DeployAgentResult> {
 	if (!opts.cluster) throw new Error("cluster is required");
 	if (!opts.containerUrl) throw new Error("containerUrl is required");
+	if (opts.loadBalancer && !opts.containerPort) {
+		throw new Error("containerPort is required when loadBalancer is configured");
+	}
 	if (!opts.subnetIds.length) throw new Error("at least one subnetId is required");
 	if (!opts.securityGroupIds.length) {
 		throw new Error("at least one securityGroupId is required");
 	}
 
 	const region = opts.region ?? process.env.AWS_REGION ?? "us-east-1";
-	const containerPort = opts.containerPort ?? 80;
+	const containerPort = opts.containerPort;
 	const serviceName = sanitizeAwsName(
 		opts.serviceName ?? `agent-${uuidv4().slice(0, 8)}`,
 	);
 	const taskFamily = sanitizeAwsName(opts.taskFamily ?? serviceName);
 	const containerName = sanitizeAwsName(opts.containerName ?? "agent");
 	const assignPublicIp = opts.assignPublicIp ?? !opts.loadBalancer;
+	const executionRoleArn =
+		opts.executionRoleArn ??
+		process.env.AWS_ECS_TASK_EXECUTION_ROLE_ARN ??
+		undefined;
+	const taskRoleArn =
+		opts.taskRoleArn ??
+		process.env.AWS_ECS_TASK_ROLE_ARN ??
+		executionRoleArn ??
+		undefined;
+	const logGroupName = opts.logGroupName ?? process.env.AWS_ECS_LOG_GROUP;
+	const logStreamPrefix =
+		opts.logStreamPrefix ??
+		process.env.AWS_ECS_LOG_STREAM_PREFIX ??
+		DEFAULT_AWS_ECS_LOG_STREAM_PREFIX;
 	const ecsClient = new ECSClient({ region });
 
-	console.log(`[cloud-init] registering ECS task definition ${taskFamily}...`);
-	const { taskDefinition } = await ecsClient.send(
-		new RegisterTaskDefinitionCommand({
-			family: taskFamily,
-			requiresCompatibilities: ["FARGATE"],
-			networkMode: "awsvpc",
-			cpu: String(opts.cpu ?? 256),
-			memory: String(opts.memory ?? 512),
-			executionRoleArn:
-				opts.executionRoleArn ?? process.env.AWS_ECS_TASK_EXECUTION_ROLE_ARN,
-			taskRoleArn: opts.taskRoleArn ?? process.env.AWS_ECS_TASK_ROLE_ARN,
-			containerDefinitions: [
-				{
-					name: containerName,
-					image: opts.containerUrl,
-					essential: true,
-					entryPoint: opts.entryPoint,
-					command: opts.command,
-					environment: Object.entries(opts.environment ?? {}).map(
-						([name, value]) => ({ name, value }),
-					),
-					portMappings: [
-						{
-							containerPort,
-							hostPort: containerPort,
-							protocol: "tcp",
-						},
-					],
-				},
-			],
-		}),
-	);
+	let taskDefinitionArn = opts.reuseLatestTaskDefinition
+		? await getLatestTaskDefinitionArn(ecsClient, taskFamily)
+		: null;
 
-	const taskDefinitionArn = taskDefinition?.taskDefinitionArn;
+	if (taskDefinitionArn) {
+		console.log(`[cloud-init] reusing ECS task definition ${taskDefinitionArn}...`);
+	} else {
+		console.log(`[cloud-init] registering ECS task definition ${taskFamily}...`);
+		const { taskDefinition } = await ecsClient.send(
+			new RegisterTaskDefinitionCommand({
+				family: taskFamily,
+				requiresCompatibilities: ["FARGATE"],
+				networkMode: "awsvpc",
+				cpu: String(opts.cpu ?? 256),
+				memory: String(opts.memory ?? 512),
+				executionRoleArn,
+				taskRoleArn,
+				runtimePlatform: {
+					cpuArchitecture: "X86_64",
+					operatingSystemFamily: "LINUX",
+				},
+				containerDefinitions: [
+					{
+						name: containerName,
+						image: opts.containerUrl,
+						essential: true,
+						entryPoint: opts.entryPoint,
+						command: opts.command,
+						environment: Object.entries(opts.environment ?? {}).map(
+							([name, value]) => ({ name, value }),
+						),
+						portMappings: containerPort
+							? [
+									{
+										containerPort,
+										hostPort: containerPort,
+										protocol: "tcp",
+										name: `${containerName}-${containerPort}-tcp`,
+										appProtocol: containerPort === 80 ? "http" : undefined,
+									},
+								]
+							: undefined,
+						logConfiguration: logGroupName
+							? {
+									logDriver: "awslogs",
+									options: {
+										"awslogs-group": logGroupName,
+										"awslogs-create-group": opts.createLogGroup === false ? "false" : "true",
+										"awslogs-region": region,
+										"awslogs-stream-prefix": logStreamPrefix,
+									},
+								}
+							: undefined,
+					},
+				],
+			}),
+		);
+
+		taskDefinitionArn = taskDefinition?.taskDefinitionArn ?? null;
+	}
+
 	if (!taskDefinitionArn) {
 		throw new Error(`Task definition registration failed for ${taskFamily}`);
 	}
@@ -895,7 +1293,22 @@ export async function deployAgent(
 			serviceName,
 			taskDefinition: taskDefinitionArn,
 			desiredCount: opts.desiredCount ?? 1,
-			launchType: "FARGATE",
+			capacityProviderStrategy: [
+				{
+					capacityProvider: "FARGATE",
+					weight: 1,
+					base: 0,
+				},
+			],
+			platformVersion: "LATEST",
+			deploymentConfiguration: {
+				deploymentCircuitBreaker: {
+					enable: true,
+					rollback: true,
+				},
+				maximumPercent: 200,
+				minimumHealthyPercent: 100,
+			},
 			networkConfiguration: {
 				awsvpcConfiguration: {
 					subnets: opts.subnetIds,
@@ -903,12 +1316,15 @@ export async function deployAgent(
 					assignPublicIp: assignPublicIp ? "ENABLED" : "DISABLED",
 				},
 			},
+			enableECSManagedTags: true,
+			enableExecuteCommand: opts.enableExecuteCommand ?? true,
+			availabilityZoneRebalancing: "ENABLED",
 			loadBalancers: opts.loadBalancer
 				? [
 						{
 							targetGroupArn: opts.loadBalancer.targetGroupArn,
 							containerName,
-							containerPort,
+							containerPort: containerPort!,
 						},
 					]
 				: undefined,
@@ -925,19 +1341,36 @@ export async function deployAgent(
 	);
 	const task = await getServiceTask(ecsClient, opts.cluster, serviceName);
 
-	const access: DeployAgentAccessDetails = opts.loadBalancer
-		? await resolveLoadBalancerAccess(region, containerPort, opts.loadBalancer)
-		: task
-			? await resolveTaskNetworkAccess(region, task, containerPort)
-			: {
-				mode: assignPublicIp ? "public-ip" : "private-network",
-				url: null,
-				hostname: null,
-				publicIp: null,
-				privateIp: null,
-				port: containerPort,
-				instructions: `The ECS service is running, but the task address could not be resolved yet. Check the service ${serviceName} in cluster ${opts.cluster}.`,
-			};
+	let access: DeployAgentAccessDetails;
+	if (opts.loadBalancer) {
+		access = await resolveLoadBalancerAccess(
+			region,
+			containerPort!,
+			opts.loadBalancer,
+		);
+	} else if (containerPort && task) {
+		access = await resolveTaskNetworkAccess(region, task, containerPort);
+	} else if (containerPort) {
+		access = {
+			mode: assignPublicIp ? "public-ip" : "private-network",
+			url: null,
+			hostname: null,
+			publicIp: null,
+			privateIp: null,
+			port: containerPort,
+			instructions: `The ECS service is running, but the task address could not be resolved yet. Check the service ${serviceName} in cluster ${opts.cluster}.`,
+		};
+	} else {
+		access = {
+			mode: assignPublicIp ? "public-ip" : "private-network",
+			url: null,
+			hostname: null,
+			publicIp: null,
+			privateIp: null,
+			port: 0,
+			instructions: `The ECS service is running with no exposed container port. Use ECS Exec or CloudWatch logs for service ${serviceName} in cluster ${opts.cluster}.`,
+		};
+	}
 
 	return {
 		region,

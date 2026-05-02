@@ -3,7 +3,11 @@ import { Hono } from "hono";
 import { agents, fleets, messages } from "../db/mongo.js";
 import { broadcastToFleet } from "../db/memory.js";
 import { provisionAgent } from "../services/provisioner.js";
-import { terminateAgentPod, terminateAgentPodEks } from "../services/cloud-init.js";
+import {
+	terminateAgentPod,
+	terminateAgentServiceAws,
+} from "../services/cloud-init.js";
+import { listRunnerSessions, terminateRunnerSession } from "../services/runner-sessions.js";
 import { removeAgentFromWorldState } from "../services/world.js";
 import type { Env, MessageDoc } from "../types.js";
 
@@ -141,10 +145,24 @@ router.delete("/:id/agents/:agentId", async (c) => {
 				if (agent.pod.provider === "gcp") {
 					await terminateAgentPod(agent.pod.namespaceId);
 				} else {
-					await terminateAgentPodEks(agent.pod.namespaceId);
+					await terminateAgentServiceAws(agent.pod.namespaceId);
 				}
 			} catch {
 				// Don't block if cloud call fails
+			}
+		}
+
+		const sessions = await listRunnerSessions(agent.fleetId, agent._id, agent.tenantId)
+		for (const session of sessions) {
+			try {
+				await terminateRunnerSession(
+					agent.fleetId,
+					agent._id,
+					session.sessionId,
+					agent.tenantId,
+				)
+			} catch {
+				// Don't block if runner session cleanup fails
 			}
 		}
 

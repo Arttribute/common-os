@@ -8,7 +8,7 @@ const router = new Hono<Env>()
 
 // POST /fleets/:id/agents/:agentId/task
 router.post('/:id/agents/:agentId/task', async (c) => {
-  const body = await c.req.json<{ description: string }>().catch(() => ({ description: '' }))
+  const body = await c.req.json<{ description: string; sessionId?: string }>().catch(() => ({ description: '' }))
   if (!body.description) return c.json({ error: 'description is required' }, 400)
 
   const agentId = c.req.param('agentId')
@@ -33,6 +33,7 @@ router.post('/:id/agents/:agentId/task', async (c) => {
       assignedBy: c.get('authType') === 'agent' ? 'manager-agent' : 'human',
       assignedByAgentId: c.get('agentId') ?? null,
       description: body.description,
+      sessionId: body.sessionId?.trim() || null,
       status: 'queued',
       output: null,
       error: null,
@@ -48,6 +49,7 @@ router.post('/:id/agents/:agentId/task', async (c) => {
       agentId,
       taskId,
       description: body.description,
+      sessionId: body.sessionId?.trim() || null,
       ts: now.toISOString(),
     })
 

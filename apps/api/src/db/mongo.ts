@@ -4,6 +4,7 @@ import {
   FleetModel,
   AgentModel,
   TaskModel,
+  RunnerSessionModel,
   EventModel,
   WorldStateModel,
   MessageModel,
@@ -50,6 +51,7 @@ export async function ensureIndexes(): Promise<void> {
       FleetModel.syncIndexes(),
       AgentModel.syncIndexes(),
       TaskModel.syncIndexes(),
+      RunnerSessionModel.syncIndexes(),
       EventModel.syncIndexes(),
       WorldStateModel.syncIndexes(),
       MessageModel.syncIndexes(),
@@ -69,6 +71,7 @@ export async function tenants() { await connect(); return TenantModel }
 export async function fleets()  { await connect(); return FleetModel  }
 export async function agents()  { await connect(); return AgentModel  }
 export async function tasks()   { await connect(); return TaskModel   }
+export async function runnerSessions() { await connect(); return RunnerSessionModel }
 export async function events()  { await connect(); return EventModel  }
 export async function worldStates() { await connect(); return WorldStateModel }
 export async function messages()    { await connect(); return MessageModel    }

@@ -12,6 +12,7 @@ import { agentsRouter } from './routes/agents.js'
 import { tasksRouter } from './routes/tasks.js'
 import { eventsRouter } from './routes/events.js'
 import { agentRuntimeRouter } from './routes/agentRuntime.js'
+import { runnerSessionsFleetRouter, runnerSessionsAgentRouter } from './routes/runnerSessions.js'
 import { streamRouter } from './routes/stream.js'
 import { testRouter } from './routes/test.js'
 import { tenants, agents, worldStates, ensureIndexes } from './db/mongo.js'
@@ -39,8 +40,10 @@ app.use('/events', authMiddleware)
 app.route('/fleets', fleetsRouter)
 app.route('/fleets', agentsRouter)
 app.route('/fleets', tasksRouter)
+app.route('/fleets', runnerSessionsFleetRouter)
 app.route('/fleets', streamRouter)
 app.route('/agents', agentRuntimeRouter)
+app.route('/agents', runnerSessionsAgentRouter)
 app.route('/test', testRouter)
 app.route('/events', eventsRouter)
 

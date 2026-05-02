@@ -365,7 +365,7 @@ async function pollTasks() {
   }
 }
 
-async function handleTask(task: { id: string; description: string }) {
+async function handleTask(task: { id: string; description: string; sessionId?: string | null }) {
   if (!task?.id || !task?.description) {
     console.warn(`[daemon] skipping malformed task:`, task);
     return;
@@ -391,7 +391,7 @@ async function handleTask(task: { id: string; description: string }) {
   await worldInteract(workObjectId, truncate(task.description, 40), pos.room, pos.x, pos.y);
 
   try {
-    const output = await executeTask(task.description);
+    const output = await executeTask(task.description, task.sessionId ?? null);
 
     // Create an artifact in the world representing the completed work
     await worldCreateObject(
@@ -431,12 +431,12 @@ async function handleTask(task: { id: string; description: string }) {
 
 // ─── Task execution ────────────────────────────────────────────────────────
 
-async function executeTask(description: string): Promise<string> {
+async function executeTask(description: string, sessionId?: string | null): Promise<string> {
   if (config.integrationPath === "openclaw") {
     return await runViaOpenClaw(description);
   }
   if (config.integrationPath === "native") {
-    return await runViaNative(description);
+    return await runViaNative(description, sessionId);
   }
   // Guest path: the container running alongside handles execution.
   // Daemon signals readiness — actual output arrives via file_changed events.
@@ -445,17 +445,23 @@ async function executeTask(description: string): Promise<string> {
   return `completed: ${description}`;
 }
 
-async function runViaNative(description: string): Promise<string> {
+async function runViaNative(description: string, sessionId?: string | null): Promise<string> {
+  const normalizedSessionId = sessionId?.trim() || "default";
+  const targetUrl = RUNNER_URL
+    ? `${RUNNER_URL.replace(/\/$/, "")}/run`
+    : `${config.apiUrl}/agents/${config.agentId}/runner-sessions/${encodeURIComponent(normalizedSessionId)}/run`;
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (!RUNNER_URL) {
-    throw new Error("RUNNER_URL not configured for native path");
+    headers.Authorization = `Bearer ${config.agentToken}`;
   }
 
-  const res = await fetch(`${RUNNER_URL}/run`, {
+  const res = await fetch(targetUrl, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({
       agentId: config.commonsAgentId || config.agentId,
       prompt: description,
+      sessionId: normalizedSessionId,
     }),
   });
 

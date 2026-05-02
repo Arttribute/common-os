@@ -9,8 +9,9 @@ export interface DaemonConfig {
   // native path
   commonsApiKey: string;
   commonsAgentId: string;
-  // native path — runner service
-  runnerUrl: string;           // URL of the shared runner Cloud Run service
+  // native path — optional direct runner URL; when omitted, the daemon uses
+  // the control plane's session-scoped runner proxy.
+  runnerUrl: string;
   // openclaw path
   openclawGatewayUrl: string;  // defaults to http://localhost:18789
   // guest path

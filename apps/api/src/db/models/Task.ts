@@ -10,6 +10,7 @@ const TaskSchema = new Schema<TaskDoc>(
     assignedBy: String,
     assignedByAgentId: String,
     description: { type: String, required: true },
+    sessionId: String,
     status: { type: String, default: 'queued' },
     output: String,
     error: String,

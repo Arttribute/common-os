@@ -87,7 +87,7 @@ router.post('/agents/:agentId/deploy', async (c) => {
 		}).lean()
 		if (!agent) return c.json({ error: 'agent not found' }, 404)
 
-		const cluster = body.cluster ?? process.env.TEST_ECS_CLUSTER
+		const cluster = body.cluster ?? process.env.TEST_ECS_CLUSTER ?? process.env.AWS_ECS_CLUSTER
 		const containerUrl =
 			body.containerUrl ??
 			agent.config.dockerImage ??
@@ -96,16 +96,16 @@ router.post('/agents/:agentId/deploy', async (c) => {
 			body.containerPort ?? parseOptionalNumber(process.env.TEST_ECS_CONTAINER_PORT) ?? 80
 		const subnetIds = body.subnetIds?.length
 			? body.subnetIds
-			: splitCsv(process.env.TEST_ECS_SUBNET_IDS)
+			: splitCsv(process.env.TEST_ECS_SUBNET_IDS ?? process.env.AWS_ECS_SUBNET_IDS)
 		const securityGroupIds = body.securityGroupIds?.length
 			? body.securityGroupIds
-			: splitCsv(process.env.TEST_ECS_SECURITY_GROUP_IDS)
+			: splitCsv(process.env.TEST_ECS_SECURITY_GROUP_IDS ?? process.env.AWS_ECS_SECURITY_GROUP_IDS)
 		const targetGroupArn =
 			body.loadBalancer?.targetGroupArn ?? process.env.TEST_ECS_TARGET_GROUP_ARN
 
 		if (!cluster) {
 			return c.json({
-				error: 'cluster is required; set TEST_ECS_CLUSTER or pass cluster in the request body',
+				error: 'cluster is required; set TEST_ECS_CLUSTER, set AWS_ECS_CLUSTER, or pass cluster in the request body',
 			}, 400)
 		}
 		if (!containerUrl) {
@@ -115,12 +115,12 @@ router.post('/agents/:agentId/deploy', async (c) => {
 		}
 		if (!subnetIds.length) {
 			return c.json({
-				error: 'subnetIds are required; set TEST_ECS_SUBNET_IDS or pass subnetIds in the request body',
+				error: 'subnetIds are required; set TEST_ECS_SUBNET_IDS, set AWS_ECS_SUBNET_IDS, or pass subnetIds in the request body',
 			}, 400)
 		}
 		if (!securityGroupIds.length) {
 			return c.json({
-				error: 'securityGroupIds are required; set TEST_ECS_SECURITY_GROUP_IDS or pass securityGroupIds in the request body',
+				error: 'securityGroupIds are required; set TEST_ECS_SECURITY_GROUP_IDS, set AWS_ECS_SECURITY_GROUP_IDS, or pass securityGroupIds in the request body',
 			}, 400)
 		}
 
@@ -142,19 +142,23 @@ router.post('/agents/:agentId/deploy', async (c) => {
 			containerPort,
 			serviceName:
 				body.serviceName ?? `test-${agent._id}-${Date.now().toString(36)}`,
-			taskFamily: body.taskFamily,
+			taskFamily: body.taskFamily ?? process.env.AWS_ECS_TASK_FAMILY,
 			region: process.env.AWS_REGION,
 			subnetIds,
 			securityGroupIds,
 			assignPublicIp:
 				body.assignPublicIp ??
-				parseOptionalBoolean(process.env.TEST_ECS_ASSIGN_PUBLIC_IP),
+				parseOptionalBoolean(
+					process.env.TEST_ECS_ASSIGN_PUBLIC_IP ?? process.env.AWS_ECS_ASSIGN_PUBLIC_IP,
+				),
 			executionRoleArn:
 				body.executionRoleArn ?? process.env.AWS_ECS_TASK_EXECUTION_ROLE_ARN,
 			taskRoleArn: body.taskRoleArn ?? process.env.AWS_ECS_TASK_ROLE_ARN,
-			cpu: body.cpu,
-			memory: body.memory,
+			cpu: body.cpu ?? parseOptionalNumber(process.env.AWS_ECS_TASK_CPU),
+			memory: body.memory ?? parseOptionalNumber(process.env.AWS_ECS_TASK_MEMORY),
 			desiredCount: body.desiredCount,
+			logGroupName: process.env.AWS_ECS_LOG_GROUP,
+			logStreamPrefix: process.env.AWS_ECS_LOG_STREAM_PREFIX,
 			environment: {
 				AGENT_ID: agent._id,
 				FLEET_ID: agent.fleetId,

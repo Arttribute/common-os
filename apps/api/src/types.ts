@@ -104,12 +104,42 @@ export interface TaskDoc {
   assignedBy: 'human' | 'manager-agent'
   assignedByAgentId: string | null
   description: string
+  sessionId?: string | null
   status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
   output: string | null
   error: string | null
   startedAt: Date | null
   completedAt: Date | null
   createdAt: Date
+}
+
+export interface RunnerSessionDoc {
+  _id: string
+  agentId: string
+  fleetId: string
+  tenantId: string
+  sessionId: string
+  provider: 'aws' | 'gcp'
+  region: string
+  cluster: string | null
+  serviceName: string | null
+  serviceArn: string | null
+  taskDefinitionArn: string | null
+  taskArn: string | null
+  status: 'provisioning' | 'running' | 'stopping' | 'terminated' | 'failed'
+  access: {
+    mode: 'load-balancer' | 'public-ip' | 'private-network'
+    url: string | null
+    hostname: string | null
+    publicIp: string | null
+    privateIp: string | null
+    port: number
+    instructions: string
+    proxyPath: string
+  } | null
+  lastResolvedAt: Date | null
+  createdAt: Date
+  updatedAt: Date
 }
 
 export interface EventDoc {

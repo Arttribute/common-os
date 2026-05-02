@@ -46,7 +46,7 @@ export class CommonOSClient {
 	};
 
 	readonly tasks = {
-		send: (fleetId: string, agentId: string, body: { description: string }) =>
+		send: (fleetId: string, agentId: string, body: { description: string; sessionId?: string }) =>
 			this.post(`/fleets/${fleetId}/agents/${agentId}/task`, body),
 		list: (fleetId: string, agentId: string) =>
 			this.get(`/fleets/${fleetId}/agents/${agentId}/tasks`),
@@ -140,16 +140,16 @@ export class CommonOSAgentClient {
 		});
 	}
 
-	async nextTask(): Promise<{ id: string; description: string } | null> {
+	async nextTask(): Promise<{ id: string; description: string; sessionId?: string | null } | null> {
 		const res = await fetch(
 			`${this.apiUrl}/agents/${this.agentId}/tasks/next`,
 			{ headers: { Authorization: `Bearer ${this.agentToken}` } },
 		);
 		if (res.status === 204) return null;
 		if (!res.ok) return null;
-		const data = await res.json() as { id?: string; description?: string };
+		const data = await res.json() as { id?: string; description?: string; sessionId?: string | null };
 		if (!data.id || !data.description) return null;
-		return data as { id: string; description: string };
+		return data as { id: string; description: string; sessionId?: string | null };
 	}
 
 	async completeTask(taskId: string, output?: string): Promise<void> {

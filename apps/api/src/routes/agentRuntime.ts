@@ -21,7 +21,7 @@ router.get('/:agentId/tasks/next', async (c) => {
   try {
     const task = await (await tasks()).findOne({ _id: taskId, agentId }).lean()
     if (!task) return c.body(null, 204)
-    return c.json({ id: task._id, description: task.description })
+    return c.json({ id: task._id, description: task.description, sessionId: task.sessionId ?? null })
   } catch {
     return c.json({ error: 'database error' }, 503)
   }
