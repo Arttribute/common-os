@@ -245,8 +245,8 @@ async function main() {
   // Push initial workspace snapshot so the UI can show the pod filesystem immediately
   await emitWorkspaceSnapshot().catch(() => {});
 
-  await registerAxlPeer();
-  await discoverFleetPeers();
+  void registerAxlPeer();
+  void discoverFleetPeers();
 
   setInterval(() => {
     agent.emit({ type: "heartbeat" }).catch((err) => {
@@ -395,6 +395,13 @@ async function discoverFleetPeers(): Promise<void> {
       permissionTier: string;
     }>;
 
+    for (const peer of peers) {
+      if (peer.peerId && peer.agentId !== config.agentId) {
+        peerIdToAgentId.set(peer.peerId, peer.agentId);
+      }
+    }
+    console.log(`[daemon] fleet peer map updated  ${peerIdToAgentId.size} peer(s)`);
+
     const manager = peers.find(
       (p) => p.permissionTier === "manager" && p.agentId !== config.agentId && p.multiaddr,
     );
@@ -414,6 +421,7 @@ async function discoverFleetPeers(): Promise<void> {
 // ─── AXL inbox loop ────────────────────────────────────────────────────────
 
 let lastSeenAxlMessageTs = 0;
+const peerIdToAgentId = new Map<string, string>();
 
 async function startAxlInboxLoop(): Promise<void> {
   console.log("[daemon] AXL inbox loop started");
@@ -450,17 +458,30 @@ async function pollAxlInbox(): Promise<void> {
     const content = msg.data ?? msg.content ?? "";
     const fromPeerId = msg.from ?? msg.fromPeerId ?? "unknown";
 
-    console.log(`[daemon] AXL message from ${fromPeerId}: ${content.slice(0, 80)}`);
+    // Resolve peerId → agentId: fleet cache first, then API (which falls back to ENS for
+    // cross-fleet agents). Result is cached so repeat messages from the same peer are free.
+    let resolvedAgentId = peerIdToAgentId.get(fromPeerId);
+    if (!resolvedAgentId && fromPeerId !== "unknown") {
+      const resolved = await resolveAgentByName(fromPeerId).catch(() => null);
+      if (resolved) {
+        resolvedAgentId = resolved.agentId;
+        peerIdToAgentId.set(fromPeerId, resolved.agentId);
+      }
+    }
+    const senderLabel = resolvedAgentId ?? fromPeerId;
+
+    console.log(`[daemon] AXL message from ${senderLabel}: ${content.slice(0, 80)}`);
 
     await agent
       .emit({
         type: "message_recv",
-        payload: { fromAgentId: fromPeerId, preview: content.slice(0, 100) },
+        payload: { fromAgentId: senderLabel, preview: content.slice(0, 100) },
       })
       .catch(() => {});
 
     if (content && config.integrationPath !== "guest") {
-      void handleTask({ id: `axl_${Date.now()}`, description: content }).catch(() => {});
+      const taskDescription = `[AXL from ${senderLabel}]\n${content}`;
+      void handleTask({ id: `axl_${Date.now()}`, description: taskDescription }).catch(() => {});
     }
 
     if (ts > lastSeenAxlMessageTs) lastSeenAxlMessageTs = ts;
@@ -534,6 +555,38 @@ async function sendAxlMessage(
     .catch(() => {});
 
   console.log(`[daemon] AXL message sent → ${toAgentId}  "${content.slice(0, 60)}"`);
+}
+
+// ─── AXL agent resolution ─────────────────────────────────────────────────
+
+async function resolveAgentByName(name: string): Promise<{
+  agentId: string;
+  multiaddr: string;
+  peerId?: string;
+  role?: string;
+  fleetId?: string;
+} | null> {
+  try {
+    const res = await fetch(
+      `${config.apiUrl}/agents/resolve/${encodeURIComponent(name)}`,
+      {
+        headers: { Authorization: `Bearer ${config.agentToken}` },
+        signal: AbortSignal.timeout(5_000),
+      },
+    );
+    if (!res.ok) return null;
+    const data = await res.json() as {
+      agentId?: string;
+      multiaddr?: string;
+      peerId?: string;
+      role?: string;
+      fleetId?: string;
+    };
+    if (!data.agentId || !data.multiaddr) return null;
+    return data as { agentId: string; multiaddr: string; peerId?: string; role?: string; fleetId?: string };
+  } catch {
+    return null;
+  }
 }
 
 // ─── Human message polling loop ───────────────────────────────────────────
@@ -651,13 +704,6 @@ async function handleTask(task: { id: string; description: string }) {
     await agent.emit({ type: "task_complete", payload: { taskId: task.id, output } });
 
     console.log(`[daemon] task ${task.id} complete`);
-
-    if (config.managerAgentId && config.managerMultiaddr) {
-      const summary = `Task complete: ${task.description.slice(0, 60)} → ${output.slice(0, 80)}`;
-      await sendAxlMessage(config.managerMultiaddr, config.managerAgentId, summary).catch(
-        (err) => console.warn("[daemon] AXL manager notify failed:", err),
-      );
-    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await agent.emit({ type: "error", payload: { message: msg } });
