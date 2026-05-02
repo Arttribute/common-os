@@ -1,10 +1,10 @@
 import { createHash, randomBytes } from "crypto";
 import { agents, fleets, worldStates } from "../db/mongo.js";
 import type { AgentDoc, FleetDoc } from "../types.js";
+import { ETH_ADDRESS_RE } from "./agentCommonsIdentity.js";
 import { launchAgentPod, launchAgentPodEks } from "./cloud-init.js";
 
 const AGC_BASE_URL = (process.env.AGC_API_URL ?? "https://api.agentcommons.io").replace(/\/$/, "");
-const ETH_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 
 interface ProvisionAgentOptions {
 	fleetId: string;

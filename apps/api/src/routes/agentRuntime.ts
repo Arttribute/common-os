@@ -1,10 +1,9 @@
 import { Hono } from 'hono'
-import { agents, tasks, humanMessages, agentSessions } from '../db/mongo.js'
+import { agents, tasks, humanMessages, agentSessions, worldStates } from '../db/mongo.js'
 import { dequeueTask, dequeueHumanMessage, broadcastToFleet } from '../db/memory.js'
 import { registerWithAgentCommons } from '../services/provisioner.js'
+import { isWalletAddress, persistNormalizedCommonsIdentity } from '../services/agentCommonsIdentity.js'
 import type { Env } from '../types.js'
-
-const ETH_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/
 
 // Helper to resolve the Agent Commons sessionId for a CommonOS/Mongo session.
 // This value is passed as `sessionId` to /v1/agents/run/stream.
@@ -257,28 +256,20 @@ router.post('/:agentId/bootstrap', async (c) => {
     // The platform key is used by daemons to run agents (never stored in DB)
     const platformKey = process.env.AGENTCOMMONS_API_KEY ?? null
 
-    // Agent already registered in Agent Commons — return the address-form id.
-    if (agent.commons.agentId) {
-      const runtimeAgentId = ETH_ADDRESS_RE.test(agent.commons.agentId)
-        ? agent.commons.agentId
-        : ETH_ADDRESS_RE.test(agent.commons.walletAddress ?? '')
-          ? agent.commons.walletAddress
-          : null
+    // Agent already registered in Agent Commons — normalize Mongo so
+    // commons.agentId and commons.walletAddress are both the wallet address.
+    if (agent.commons.agentId || agent.commons.walletAddress) {
+      const commons = await persistNormalizedCommonsIdentity(agent)
 
-      if (!runtimeAgentId) {
+      if (!isWalletAddress(commons.agentId)) {
         return c.json({ error: 'agent is missing Agent Commons wallet address identity' }, 409)
-      }
-      if (runtimeAgentId !== agent.commons.agentId) {
-        await col.updateOne(
-          { _id: agentId },
-          { $set: { 'commons.agentId': runtimeAgentId, updatedAt: new Date() } },
-        )
       }
 
       return c.json({
-        commonsAgentId: runtimeAgentId,
+        commonsAgentId: commons.agentId,
         commonsApiKey: platformKey,
-        walletAddress: runtimeAgentId,
+        walletAddress: commons.walletAddress,
+        registryAgentId: commons.registryAgentId ?? null,
       })
     }
 
@@ -301,12 +292,26 @@ router.post('/:agentId/bootstrap', async (c) => {
           },
         },
       )
+      await (await worldStates()).updateOne(
+        { fleetId: agent.fleetId, 'agents.agentId': agentId },
+        {
+          $set: {
+            'agents.$.commons': {
+              agentId: commons.agentId,
+              walletAddress: commons.walletAddress,
+              registryAgentId: commons.registryAgentId ?? null,
+            },
+            updatedAt: new Date(),
+          },
+        },
+      ).catch(() => {})
     }
 
     return c.json({
       commonsAgentId: commons.agentId,
       commonsApiKey: platformKey,
       walletAddress: commons.walletAddress,
+      registryAgentId: commons.registryAgentId ?? null,
     })
   } catch {
     return c.json({ error: 'database error' }, 503)

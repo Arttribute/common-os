@@ -2,10 +2,10 @@ import { Hono } from 'hono'
 import { randomBytes } from 'crypto'
 import { agents, agentSessions, humanMessages } from '../db/mongo.js'
 import { enqueueHumanMessage, broadcastToFleet } from '../db/memory.js'
+import { ETH_ADDRESS_RE, persistNormalizedCommonsIdentity } from '../services/agentCommonsIdentity.js'
 import type { Env, HumanMessageDoc } from '../types.js'
 
 const AGC_BASE_URL = (process.env.AGC_API_URL ?? 'https://api.agentcommons.io').replace(/\/$/, '')
-const ETH_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/
 
 async function createAgcSession(commonsAgentId: string, title: string): Promise<string> {
   const apiKey = process.env.AGENTCOMMONS_API_KEY
@@ -84,7 +84,8 @@ router.post('/:id/agents/:agentId/human-message', async (c) => {
       if (!sess.agcSessionId) return c.json({ error: 'session is missing Agent Commons sessionId' }, 409)
       sessionId = sess._id
     } else {
-      sessionId = await ensureDefaultSession(agentId, fleetId, tenantId, agent.commons.agentId ?? null)
+      const commons = await persistNormalizedCommonsIdentity(agent)
+      sessionId = await ensureDefaultSession(agentId, fleetId, tenantId, commons.agentId)
     }
 
     const msgId = `hmsg_${Date.now().toString(36)}${randomBytes(4).toString('hex')}`
