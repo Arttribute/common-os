@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { agents, tasks, humanMessages, agentSessions, worldStates } from '../db/mongo.js'
 import { dequeueTask, dequeueHumanMessage, broadcastToFleet } from '../db/memory.js'
 import { registerWithAgentCommons } from '../services/provisioner.js'
-import { isWalletAddress, persistNormalizedCommonsIdentity } from '../services/agentCommonsIdentity.js'
+import { persistNormalizedCommonsIdentity } from '../services/agentCommonsIdentity.js'
 import type { Env } from '../types.js'
 
 // Helper to resolve the Agent Commons sessionId for a CommonOS/Mongo session.
@@ -256,13 +256,12 @@ router.post('/:agentId/bootstrap', async (c) => {
     // The platform key is used by daemons to run agents (never stored in DB)
     const platformKey = process.env.AGENTCOMMONS_API_KEY ?? null
 
-    // Agent already registered in Agent Commons — normalize Mongo so
-    // commons.agentId and commons.walletAddress are both the wallet address.
-    if (agent.commons.agentId || agent.commons.walletAddress) {
+    // Agent already registered in Agent Commons — normalize and return identity
+    if (agent.commons.agentId || agent.commons.registryAgentId) {
       const commons = await persistNormalizedCommonsIdentity(agent)
 
-      if (!isWalletAddress(commons.agentId)) {
-        return c.json({ error: 'agent is missing Agent Commons wallet address identity' }, 409)
+      if (!commons.agentId) {
+        return c.json({ error: 'agent is missing Agent Commons identity' }, 409)
       }
 
       return c.json({

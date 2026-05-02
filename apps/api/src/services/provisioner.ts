@@ -1,7 +1,6 @@
 import { createHash, randomBytes } from "crypto";
 import { agents, fleets, worldStates } from "../db/mongo.js";
 import type { AgentDoc, FleetDoc } from "../types.js";
-import { ETH_ADDRESS_RE } from "./agentCommonsIdentity.js";
 import { launchAgentPod, launchAgentPodEks } from "./cloud-init.js";
 
 const AGC_BASE_URL = (process.env.AGC_API_URL ?? "https://api.agentcommons.io").replace(/\/$/, "");
@@ -40,7 +39,7 @@ export async function provisionAgent(
 			: await registerWithAgentCommons(agentId, opts.role, opts.systemPrompt);
 
 	if (opts.integrationPath === "native" && !commons.agentId) {
-		throw new Error("Agent Commons registration failed; native agents require a commons agentId");
+		console.warn("[provisioner] Agent Commons registration returned no agentId; native agent will run without AGC identity");
 	}
 
 	const agentDoc: AgentDoc = {
@@ -115,34 +114,12 @@ export async function registerWithAgentCommons(
 		return { agentId: null, apiKey: null, walletAddress: null, registryAgentId: null };
 	}
 
-	// SDK uses Authorization: Bearer + x-initiator (wallet address of the platform user)
-	const baseHeaders = {
+	const headers = {
 		"Authorization": `Bearer ${platformKey}`,
 		"Content-Type": "application/json",
 	};
 
 	try {
-		// Resolve our platform principal (wallet address) so agents are owned correctly
-		let owner: string | null = null;
-		try {
-			const meRes = await fetch(`${AGC_BASE_URL}/v1/auth/me`, {
-				headers: baseHeaders,
-				signal: AbortSignal.timeout(8_000),
-			});
-			if (meRes.ok) {
-				const raw = (await meRes.json()) as Record<string, unknown>;
-				const me = (raw.data ?? raw) as { principalId?: string | null; principalType?: string | null };
-				owner = me.principalId ?? null;
-			}
-		} catch {
-			// Non-fatal — owner is optional
-		}
-
-		const headers = owner
-			? { ...baseHeaders, "x-initiator": owner }
-			: baseHeaders;
-
-		// Step 1: create the agent
 		const agentRes = await fetch(`${AGC_BASE_URL}/v1/agents`, {
 			method: "POST",
 			headers,
@@ -151,82 +128,27 @@ export async function registerWithAgentCommons(
 				instructions: systemPrompt,
 				modelProvider: "openai",
 				modelId: "gpt-4o",
-				...(owner && { owner }),
 			}),
 			signal: AbortSignal.timeout(15_000),
 		});
 		if (!agentRes.ok) {
-			const body = await agentRes.text().catch(() => '')
+			const body = await agentRes.text().catch(() => "");
 			console.error(`[provisioner] Agent Commons create agent failed: ${agentRes.status} ${body}`);
 			return { agentId: null, apiKey: null, walletAddress: null, registryAgentId: null };
 		}
+
 		const rawAgentData = (await agentRes.json()) as Record<string, unknown>;
-		const agentData = (rawAgentData.data ?? rawAgentData) as {
-			agentId?: string;
-			id?: string;
-			walletAddress?: string | null;
-			address?: string | null;
-			primaryWalletAddress?: string | null;
-			wallet?: { address?: string | null };
-		};
+		const agentData = (rawAgentData.data ?? rawAgentData) as { agentId?: string; id?: string };
 		const registryAgentId = agentData.agentId ?? agentData.id ?? null;
-		console.log(`[provisioner] Agent Commons registry agent created: ${registryAgentId}`);
+		console.log(`[provisioner] Agent Commons agent created: ${registryAgentId}`);
 		if (!registryAgentId) return { agentId: null, apiKey: null, walletAddress: null, registryAgentId: null };
 
-		let walletAddress =
-			agentData.walletAddress ??
-			agentData.primaryWalletAddress ??
-			agentData.address ??
-			agentData.wallet?.address ??
-			null;
-		try {
-			const walletRes = await fetch(`${AGC_BASE_URL}/v1/wallets/agent/${registryAgentId}/primary`, {
-				headers,
-				signal: AbortSignal.timeout(8_000),
-			});
-			if (walletRes.ok) {
-				const raw = (await walletRes.json()) as Record<string, unknown>;
-				const wallet = (raw.data ?? raw) as { address?: string | null };
-				walletAddress = wallet.address ?? null;
-			}
-		} catch {
-			// Non-fatal — some agents may not have a primary wallet immediately.
-		}
-
-		if (!walletAddress) {
-			try {
-				const createWalletRes = await fetch(`${AGC_BASE_URL}/v1/wallets`, {
-					method: "POST",
-					headers,
-					body: JSON.stringify({
-						agentId: registryAgentId,
-						type: "eoa",
-						label: "Primary",
-					}),
-					signal: AbortSignal.timeout(10_000),
-				});
-				if (createWalletRes.ok) {
-					const raw = (await createWalletRes.json()) as Record<string, unknown>;
-					const wallet = (raw.data ?? raw) as { address?: string | null };
-					walletAddress = wallet.address ?? null;
-				}
-			} catch {
-				// Handled below.
-			}
-		}
-
-		if (!walletAddress || !ETH_ADDRESS_RE.test(walletAddress)) {
-			console.error(`[provisioner] Agent Commons agent ${registryAgentId} has no 0x wallet address`);
-			return { agentId: null, apiKey: null, walletAddress: null, registryAgentId };
-		}
-
-		// Agent Commons only allows creating API keys for yourself, so per-agent keys
-		// aren't possible. The platform key is returned so the daemon can run this agent.
-		// We do NOT store the platform key in MongoDB — bootstrap always injects it from env.
+		// The registryAgentId (UUID from POST /v1/agents) is the runtime identity used
+		// in all AGC API calls. Wallet routes are not yet available.
 		return {
-			agentId: walletAddress,
-			apiKey: null,  // intentionally null in DB; bootstrap provides the platform key at runtime
-			walletAddress,
+			agentId: registryAgentId,
+			apiKey: null, // platform key injected at runtime by bootstrap; never stored in DB
+			walletAddress: null,
 			registryAgentId,
 		};
 	} catch (err) {

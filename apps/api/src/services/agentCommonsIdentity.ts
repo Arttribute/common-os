@@ -7,23 +7,25 @@ export function isWalletAddress(value: string | null | undefined): value is stri
 	return Boolean(value && ETH_ADDRESS_RE.test(value));
 }
 
+// The AGC runtime identity is the registryAgentId (UUID) returned from POST /v1/agents.
+// Wallet routes are not available, so commons.agentId stores the registry UUID.
 export function normalizeCommonsIdentity(
 	commons: AgentDoc["commons"],
 ): AgentDoc["commons"] {
-	const runtimeWallet = isWalletAddress(commons.agentId)
-		? commons.agentId
-		: isWalletAddress(commons.walletAddress)
-			? commons.walletAddress
-			: null;
-
-	const registryAgentId =
+	// Prefer registryAgentId as the canonical runtime identity.
+	// Fall back to whatever is stored in agentId (may already be a UUID or wallet).
+	const runtimeId =
 		commons.registryAgentId ??
-		(commons.agentId && !isWalletAddress(commons.agentId) ? commons.agentId : null);
+		(commons.agentId && !isWalletAddress(commons.agentId) ? commons.agentId : null) ??
+		commons.agentId ??
+		null;
+
+	const registryAgentId = commons.registryAgentId ?? runtimeId;
 
 	return {
-		agentId: runtimeWallet,
+		agentId: runtimeId,
 		apiKey: null,
-		walletAddress: runtimeWallet,
+		walletAddress: commons.walletAddress ?? null,
 		registryAgentId,
 	};
 }

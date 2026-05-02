@@ -81,10 +81,6 @@ async function bootstrapCommons(): Promise<void> {
       commonsApiKey?: string | null;
     };
     if (data.commonsApiKey && data.commonsAgentId) {
-      if (!ETH_ADDRESS_RE.test(data.commonsAgentId)) {
-        console.warn(`[daemon] bootstrap: Agent Commons agentId is not a wallet address: ${data.commonsAgentId}`);
-        return;
-      }
       config.commonsApiKey = data.commonsApiKey;
       config.commonsAgentId = data.commonsAgentId;
       console.log(`[daemon] Agent Commons ready  agentId=${config.commonsAgentId}`);
@@ -144,10 +140,6 @@ async function recoverSessionFromApi(): Promise<string | null> {
 async function initSession(): Promise<void> {
   if (!config.commonsAgentId || !config.commonsApiKey) {
     console.log("[daemon] AGC not configured — skipping session init");
-    return;
-  }
-  if (!ETH_ADDRESS_RE.test(config.commonsAgentId)) {
-    console.warn(`[daemon] AGC agent id must be wallet address; got ${config.commonsAgentId}`);
     return;
   }
 
@@ -1143,6 +1135,9 @@ async function runViaNative(description: string, agcSessionId?: string, messages
     reader.releaseLock();
   }
 
+  if (!finalContent && !tokens) {
+    console.warn(`[daemon] AGC stream returned empty response  agent=${agentId.slice(0, 20)}  session=${sessionIdToUse?.slice(0, 12) ?? "none"}`);
+  }
   return finalContent || tokens || "done";
 }
 
