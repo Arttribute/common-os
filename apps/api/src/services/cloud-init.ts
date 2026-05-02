@@ -243,7 +243,8 @@ async function ensurePodWithRetry(
  * Pod contains:
  *   - agent container: common-os-agent image (entrypoint.sh → bunx common-os-daemon)
  * AXL runs as a background process inside the agent container (started in entrypoint.sh).
- * Storage: GCS FUSE CSI driver mounts agent-session bucket at /mnt/shared.
+ * Storage: GCS FUSE CSI volume when GCP_AGENT_STORAGE_MODE=gcsfuse,
+ * otherwise emptyDir. Both mount at /mnt/shared.
  */
 export async function launchAgentPod(
 	opts: LaunchOptions,
@@ -255,6 +256,9 @@ export async function launchAgentPod(
 		process.env.AGENT_IMAGE_URL ??
 		`${region}-docker.pkg.dev/${projectId}/common-os/agent:latest`;
 	const bucketName = process.env.GCS_BUCKET_NAME ?? "agent-session-state-bucket";
+	const useGcsFuse =
+		process.env.GCP_AGENT_STORAGE_MODE === "gcsfuse" ||
+		process.env.GCS_FUSE_ENABLED === "true";
 
 	const sessionId = uuidv4();
 	// Kubernetes names must be RFC 1123: lowercase alphanumeric + '-' only
@@ -296,6 +300,24 @@ export async function launchAgentPod(
 		{ name: "WORLD_Y",              value: String(opts.worldY ?? 2) },
 	];
 
+	const volume: k8s.V1Volume = useGcsFuse
+		? {
+			name: "agent-storage",
+			csi: {
+				driver: "gcsfuse.csi.storage.gke.io",
+				readOnly: false,
+				volumeAttributes: {
+					bucketName,
+					mountOptions: `implicit-dirs,only-dir=agents/${opts.agentId}/sessions/${sessionId}`,
+				},
+			},
+		}
+		: { name: "agent-storage", emptyDir: {} };
+
+	if (useGcsFuse) {
+		await ensureAgentStorage(projectId, bucketName, opts.agentId, sessionId);
+	}
+
 	const podBody: k8s.V1Pod = {
 		metadata: {
 			name: podName,
@@ -325,11 +347,7 @@ export async function launchAgentPod(
 					],
 				},
 			],
-			volumes: [
-				// emptyDir for now — avoids GCS FUSE Workload Identity setup.
-				// Swap back to gcsfuse.csi.storage.gke.io once WI is wired up.
-				{ name: "agent-storage", emptyDir: {} },
-			],
+			volumes: [volume],
 		},
 	};
 
