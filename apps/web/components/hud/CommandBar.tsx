@@ -44,7 +44,7 @@ export function CommandBar() {
     if (isLive && activeFleetId) {
       try {
         const token = await resolveToken()
-        await fetch(`${apiUrl}/fleets/${activeFleetId}/agents/${selectedId}/message`, {
+        await fetch(`${apiUrl}/fleets/${activeFleetId}/agents/${selectedId}/human-message`, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${token}`,

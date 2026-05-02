@@ -6,8 +6,8 @@ import type { Env, HumanMessageDoc } from '../types.js'
 
 const router = new Hono<Env>()
 
-// POST /fleets/:id/agents/:agentId/message — human sends a message to an agent
-router.post('/:id/agents/:agentId/message', async (c) => {
+// POST /fleets/:id/agents/:agentId/human-message — human sends a message to an agent
+router.post('/:id/agents/:agentId/human-message', async (c) => {
   const body = await c.req.json<{ content: string }>().catch(() => ({ content: '' }))
   if (!body.content) return c.json({ error: 'content is required' }, 400)
 
@@ -53,8 +53,8 @@ router.post('/:id/agents/:agentId/message', async (c) => {
   }
 })
 
-// GET /fleets/:id/agents/:agentId/messages — list recent conversation
-router.get('/:id/agents/:agentId/messages', async (c) => {
+// GET /fleets/:id/agents/:agentId/human-messages — list recent conversation
+router.get('/:id/agents/:agentId/human-messages', async (c) => {
   try {
     const list = await (await humanMessages())
       .find({
