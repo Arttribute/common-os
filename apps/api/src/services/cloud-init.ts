@@ -297,7 +297,7 @@ export async function launchAgentPod(
 	const clusterName = process.env.GKE_CLUSTER ?? "common-os-agents";
 	const imageUrl =
 		process.env.AGENT_IMAGE_URL ??
-		`${region}-docker.pkg.dev/${projectId}/common-os/agent:latest`;
+		"ghcr.io/arttribute/common-os/agent:latest";
 	const bucketName = process.env.GCS_BUCKET_NAME ?? "agent-session-state-bucket";
 	const useGcsFuse =
 		process.env.GCP_AGENT_STORAGE_MODE === "gcsfuse" ||
