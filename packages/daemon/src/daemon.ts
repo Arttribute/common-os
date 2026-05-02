@@ -53,8 +53,7 @@ async function firstTimeSetup(): Promise<void> {
   if (config.integrationPath === "native") {
     if (!config.commonsApiKey) await bootstrapCommons();
     await setupAgcAuth();
-    await initSession();
-    await registerSessionWithApi();
+    await initSession(); // recover only — new sessions created lazily on first run
   }
 }
 
@@ -184,36 +183,8 @@ async function initSession(): Promise<void> {
     return;
   }
 
-  // 3. Create a new session via the agc CLI
-  agentSessionId = await createSessionViaCli();
-  if (agentSessionId) {
-    try {
-      writeFileSync(SESSION_FILE, JSON.stringify({ sessionId: agentSessionId, agentId: config.commonsAgentId }));
-    } catch {}
-    console.log(`[daemon] created session ${agentSessionId}`);
-  } else {
-    console.warn("[daemon] could not create AGC session — agent will run without persistent memory");
-  }
-}
-
-async function createSessionViaCli(): Promise<string | null> {
-  try {
-    const proc = Bun.spawn(
-      ["agc", "run", "--agent", config.commonsAgentId, "--new-session", "--yes", "--no-stream", "init"],
-      { cwd: WORKSPACE_DIR, env: agcEnv(), stdout: "pipe", stderr: "pipe" },
-    );
-    await Promise.race([proc.exited, sleep(30_000).then(() => proc.kill())]);
-    const stdout = await new Response(proc.stdout).text();
-    const stderr = await new Response(proc.stderr).text();
-    const sessionId = parseAgcSessionId(stdout + "\n" + stderr);
-    if (!sessionId) {
-      console.warn("[daemon] agc --new-session: could not find session ID in output:", (stdout + stderr).slice(0, 300));
-    }
-    return sessionId;
-  } catch (err) {
-    console.warn("[daemon] createSessionViaCli failed:", err instanceof Error ? err.message : err);
-    return null;
-  }
+  // No existing session found — a new one will be created lazily on first agc run.
+  console.log("[daemon] no prior session found — will create on first run");
 }
 
 function parseAgcSessionId(output: string): string | null {
@@ -745,12 +716,17 @@ function buildWorkspaceSnapshot(dir: string, maxDepth = 2): string {
 
 async function runViaNative(description: string, agcSessionId?: string, _messages?: AgcMessage[]): Promise<string> {
   const sessionIdToUse = agcSessionId ?? agentSessionId;
+  const isFirstRun = !sessionIdToUse;
   const agentId = config.commonsAgentId || config.agentId;
 
-  console.log(`[daemon] agc run  agent=${agentId.slice(0, 12)}  session=${sessionIdToUse?.slice(0, 12) ?? "none"}`);
+  console.log(`[daemon] agc run  agent=${agentId.slice(0, 12)}  session=${sessionIdToUse?.slice(0, 12) ?? (isFirstRun ? "new" : "none")}`);
 
   const args = ["run", "--agent", agentId, "--local", "--yes", "--no-stream"];
-  if (sessionIdToUse) args.push("--session", sessionIdToUse);
+  if (sessionIdToUse) {
+    args.push("--session", sessionIdToUse);
+  } else {
+    args.push("--new-session"); // first run: create and persist session
+  }
   args.push(description);
 
   const proc = Bun.spawn(["agc", ...args], {
@@ -768,7 +744,24 @@ async function runViaNative(description: string, agcSessionId?: string, _message
   ]);
 
   if (err) console.warn("[daemon] agc run stderr:", err.slice(0, 300));
-  const result = out.trim();
+
+  // On first run, extract and persist the new session ID from output
+  if (isFirstRun) {
+    const newId = parseAgcSessionId(out + "\n" + err);
+    if (newId) {
+      agentSessionId = newId;
+      try {
+        writeFileSync(SESSION_FILE, JSON.stringify({ sessionId: newId, agentId: config.commonsAgentId }));
+      } catch {}
+      void registerSessionWithApi().catch(() => {});
+      console.log(`[daemon] session created on first run: ${agentSessionId}`);
+    } else {
+      console.warn("[daemon] --new-session did not yield a session ID — future runs will be sessionless");
+    }
+  }
+
+  // Strip any "Session: <id>" header line printed by --new-session
+  const result = out.replace(/^Session(?:\s+ID)?\s*[=:]\s*\S+\s*\n?/i, "").trim();
   console.log(`[daemon] agc run done  length=${result.length}`);
   return result || "done";
 }
