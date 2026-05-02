@@ -119,8 +119,8 @@ importers:
         version: 4.12.15
     devDependencies:
       '@agent-commons/cli':
-        specifier: ^0.1.17
-        version: 0.1.17
+        specifier: ^0.1.18
+        version: 0.1.18
       '@types/bun':
         specifier: ^1.3.13
         version: 1.3.13
@@ -316,8 +316,8 @@ packages:
   '@adraffy/ens-normalize@1.11.1':
     resolution: {integrity: sha512-nhCBV3quEgesuf7c7KYfperqSS14T8bYuvJ8PcLJp6znkZpFc0AuW4qBtr8eKVyPPe/8RSr7sglCWPU5eaxwKQ==}
 
-  '@agent-commons/cli@0.1.17':
-    resolution: {integrity: sha512-67afnQywiCeEIqNa9dbM8UKpZS5XMDkI+Z8hcX/i1A6r7b2Qq/xFPy4kdSD0oKeBOHoss4Q9KHJFNHrwe7gzqA==}
+  '@agent-commons/cli@0.1.18':
+    resolution: {integrity: sha512-peXjtUyX5aljad2ImSZP34BA0yb82WH5PIT1iz7FzmewCtEFmmvqdg2GXQ7sAVONAiOFj4w8KTn9bLob66Q4YA==}
     engines: {node: '>=18'}
     hasBin: true
 
@@ -3188,7 +3188,6 @@ packages:
 
   bun@1.3.13:
     resolution: {integrity: sha512-b9T4xZ8KqCHs4+TkHJv540LG1B8OD7noKu0Qaizusx3jFtMDHY6osNqgbaOlwW2B8RB2AKzz+sjzlGKIGxIjZw==}
-    cpu: [arm64, x64]
     os: [darwin, linux, win32]
     hasBin: true
 
@@ -5848,7 +5847,7 @@ snapshots:
 
   '@adraffy/ens-normalize@1.11.1': {}
 
-  '@agent-commons/cli@0.1.17':
+  '@agent-commons/cli@0.1.18':
     dependencies:
       '@agent-commons/sdk': 0.1.13
       '@types/pdf-parse': 1.1.5
@@ -11818,7 +11817,7 @@ snapshots:
     dependencies:
       ws: 8.18.2(bufferutil@4.1.0)
 
-  isows@1.0.7(ws@8.18.3(bufferutil@4.1.0)(utf-8-validate@6.0.6)):
+  isows@1.0.7(ws@8.18.3(bufferutil@4.1.0)):
     dependencies:
       ws: 8.18.3(bufferutil@4.1.0)(utf-8-validate@6.0.6)
 
@@ -13726,7 +13725,7 @@ snapshots:
       '@scure/bip32': 1.7.0
       '@scure/bip39': 1.6.0
       abitype: 1.2.3(typescript@5.9.3)(zod@3.25.76)
-      isows: 1.0.7(ws@8.18.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))
+      isows: 1.0.7(ws@8.18.3(bufferutil@4.1.0))
       ox: 0.14.20(typescript@5.9.3)(zod@3.25.76)
       ws: 8.18.3(bufferutil@4.1.0)(utf-8-validate@6.0.6)
     optionalDependencies:
@@ -13743,7 +13742,7 @@ snapshots:
       '@scure/bip32': 1.7.0
       '@scure/bip39': 1.6.0
       abitype: 1.2.3(typescript@5.9.3)(zod@3.22.4)
-      isows: 1.0.7(ws@8.18.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))
+      isows: 1.0.7(ws@8.18.3(bufferutil@4.1.0))
       ox: 0.14.20(typescript@5.9.3)(zod@3.22.4)
       ws: 8.18.3(bufferutil@4.1.0)(utf-8-validate@6.0.6)
     optionalDependencies:

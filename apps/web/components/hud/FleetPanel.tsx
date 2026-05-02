@@ -41,6 +41,16 @@ function provisioningStep(createdAt?: number): string {
   return 'waiting for daemon'
 }
 
+function shortId(value: string | null | undefined): string {
+  if (!value) return 'agc missing'
+  if (value.length <= 16) return value
+  return `${value.slice(0, 10)}…${value.slice(-4)}`
+}
+
+function hasWalletIdentity(value: string | null | undefined): boolean {
+  return Boolean(value && /^0x[a-fA-F0-9]{40}$/.test(value))
+}
+
 function AgentRow({ agent, selected, onSelect }: {
   agent: Agent
   selected: boolean
@@ -49,6 +59,8 @@ function AgentRow({ agent, selected, onSelect }: {
   const shortRole = agent.role.replace('-engineer', '').replace(/-/g, ' ')
   const isProvisioning = agent.status === 'provisioning'
   const dotColor = statusDotColor(agent.status)
+  const agcId = agent.commons?.agentId ?? agent.commons?.walletAddress ?? null
+  const agcOk = hasWalletIdentity(agcId)
 
   return (
     <div
@@ -113,6 +125,12 @@ function AgentRow({ agent, selected, onSelect }: {
       {!isProvisioning && agent.currentAction && (
         <div style={{ fontSize: 9, color: '#64748b', paddingLeft: 13, fontFamily: 'monospace' }}>
           · {agent.currentAction}
+        </div>
+      )}
+
+      {!isProvisioning && (
+        <div style={{ fontSize: 8, color: agcOk ? '#14532d' : '#7f1d1d', paddingLeft: 13, fontFamily: 'monospace' }} title={agcId ?? 'Agent Commons wallet not resolved'}>
+          agc {shortId(agcId)}
         </div>
       )}
 

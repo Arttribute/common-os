@@ -19,6 +19,11 @@ interface Fleet {
 interface Agent {
   _id: string
   config: { role: string; integrationPath: string }
+  commons?: {
+    agentId: string | null
+    walletAddress: string | null
+    registryAgentId?: string | null
+  }
   permissionTier: 'manager' | 'worker'
   status: string
   createdAt: string
@@ -66,6 +71,16 @@ function statusDot(status: string) {
       }}
     />
   )
+}
+
+function shortId(value: string | null | undefined): string {
+  if (!value) return 'missing'
+  if (value.length <= 16) return value
+  return `${value.slice(0, 10)}…${value.slice(-4)}`
+}
+
+function hasWalletIdentity(value: string | null | undefined): boolean {
+  return Boolean(value && /^0x[a-fA-F0-9]{40}$/.test(value))
 }
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
@@ -480,6 +495,10 @@ function FleetCard({
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
               {agents.map((agent) => (
+                (() => {
+                  const agcId = agent.commons?.agentId ?? agent.commons?.walletAddress ?? null
+                  const agcOk = hasWalletIdentity(agcId)
+                  return (
                 <div
                   key={agent._id}
                   style={{
@@ -499,6 +518,14 @@ function FleetCard({
                     {agent.permissionTier}
                   </span>
                   <span style={badge('#4b5563')}>{agent.config.integrationPath}</span>
+                  {agent.config.integrationPath === 'native' && (
+                    <span
+                      style={badge(agcOk ? '#10b981' : '#ef4444')}
+                      title={agcId ?? 'Agent Commons wallet not resolved'}
+                    >
+                      agc {shortId(agcId)}
+                    </span>
+                  )}
                   <span style={{ marginLeft: 'auto', fontSize: 9, color: '#334155' }}>
                     {agent.status}
                   </span>
@@ -518,6 +545,8 @@ function FleetCard({
                     ×
                   </button>
                 </div>
+                  )
+                })()
               ))}
             </div>
           )}

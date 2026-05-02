@@ -1,8 +1,47 @@
 import { Hono } from 'hono'
-import { agents, tasks, humanMessages } from '../db/mongo.js'
+import { agents, tasks, humanMessages, agentSessions, worldStates } from '../db/mongo.js'
 import { dequeueTask, dequeueHumanMessage, broadcastToFleet } from '../db/memory.js'
 import { registerWithAgentCommons } from '../services/provisioner.js'
+import { persistNormalizedCommonsIdentity } from '../services/agentCommonsIdentity.js'
 import type { Env } from '../types.js'
+
+// Session documents now use the AGC session ID as _id — no indirection needed.
+function resolveAgcSessionId(sessionId: string | null | undefined): string | null {
+  return sessionId ?? null
+}
+
+async function buildMessageHistory(
+  agentId: string,
+  sessionId: string | null | undefined,
+  currentMsgId: string,
+  currentContent: string,
+): Promise<Array<{ role: 'user' | 'assistant'; content: string }>> {
+  if (!sessionId) return [{ role: 'user', content: currentContent }]
+
+  try {
+    const recent = await (await humanMessages())
+      .find({
+        agentId,
+        sessionId,
+        _id: { $ne: currentMsgId },
+        status: 'responded',
+        response: { $ne: null },
+      })
+      .sort({ createdAt: -1 })
+      .limit(12)
+      .lean()
+
+    const history: Array<{ role: 'user' | 'assistant'; content: string }> = []
+    for (const msg of recent.reverse()) {
+      history.push({ role: 'user', content: msg.content })
+      if (msg.response) history.push({ role: 'assistant', content: msg.response })
+    }
+    history.push({ role: 'user', content: currentContent })
+    return history
+  } catch {
+    return [{ role: 'user', content: currentContent }]
+  }
+}
 
 const router = new Hono<Env>()
 
@@ -160,7 +199,17 @@ router.get('/:agentId/messages/next', async (c) => {
         { sort: { createdAt: 1 }, new: false },
       ).lean()
       if (!claimed) return c.body(null, 204)
-      return c.json({ id: claimed._id, content: claimed.content })
+      const agcSessionId = await resolveAgcSessionId(claimed.sessionId)
+      if (!agcSessionId) {
+        console.warn(`[runtime] message ${claimed._id} has no Agent Commons sessionId; daemon will fall back to its boot session`)
+      }
+      return c.json({
+        id: claimed._id,
+        content: claimed.content,
+        messages: await buildMessageHistory(agentId, claimed.sessionId, claimed._id, claimed.content),
+        sessionId: claimed.sessionId ?? null,
+        agcSessionId,
+      })
     } catch {
       return c.json({ error: 'database error' }, 503)
     }
@@ -173,7 +222,17 @@ router.get('/:agentId/messages/next', async (c) => {
       { new: true },
     ).lean()
     if (!msg) return c.body(null, 204)
-    return c.json({ id: msg._id, content: msg.content })
+    const agcSessionId = await resolveAgcSessionId(msg.sessionId)
+    if (!agcSessionId) {
+      console.warn(`[runtime] message ${msg._id} has no Agent Commons sessionId; daemon will fall back to its boot session`)
+    }
+    return c.json({
+      id: msg._id,
+      content: msg.content,
+      messages: await buildMessageHistory(agentId, msg.sessionId, msg._id, msg.content),
+      sessionId: msg.sessionId ?? null,
+      agcSessionId,
+    })
   } catch {
     return c.json({ error: 'database error' }, 503)
   }
@@ -209,6 +268,14 @@ router.post('/:agentId/messages/:msgId/respond', async (c) => {
       ts: now.toISOString(),
     })
 
+    // After updating message, update session stats
+    if (msg.sessionId) {
+      await (await agentSessions()).updateOne(
+        { _id: msg.sessionId },
+        { $inc: { messageCount: 1 }, $set: { lastMessageAt: now } },
+      ).catch(() => {})
+    }
+
     return c.json({ ok: true })
   } catch {
     return c.json({ error: 'database error' }, 503)
@@ -235,12 +302,19 @@ router.post('/:agentId/bootstrap', async (c) => {
     // The platform key is used by daemons to run agents (never stored in DB)
     const platformKey = process.env.AGENTCOMMONS_API_KEY ?? null
 
-    // Agent already registered in Agent Commons — just return the platform key
-    if (agent.commons.agentId) {
+    // Agent already registered in Agent Commons — normalize and return identity
+    if (agent.commons.agentId || agent.commons.registryAgentId) {
+      const commons = await persistNormalizedCommonsIdentity(agent)
+
+      if (!commons.agentId) {
+        return c.json({ error: 'agent is missing Agent Commons identity' }, 409)
+      }
+
       return c.json({
-        commonsAgentId: agent.commons.agentId,
+        commonsAgentId: commons.agentId,
         commonsApiKey: platformKey,
-        walletAddress: agent.commons.walletAddress,
+        walletAddress: commons.walletAddress,
+        registryAgentId: commons.registryAgentId ?? null,
       })
     }
 
@@ -254,15 +328,93 @@ router.post('/:agentId/bootstrap', async (c) => {
     if (commons.agentId) {
       await col.updateOne(
         { _id: agentId },
-        { $set: { 'commons.agentId': commons.agentId, updatedAt: new Date() } },
+        {
+          $set: {
+            'commons.agentId': commons.agentId,
+            'commons.walletAddress': commons.walletAddress,
+            'commons.registryAgentId': commons.registryAgentId,
+            updatedAt: new Date(),
+          },
+        },
       )
+      await (await worldStates()).updateOne(
+        { fleetId: agent.fleetId, 'agents.agentId': agentId },
+        {
+          $set: {
+            'agents.$.commons': {
+              agentId: commons.agentId,
+              walletAddress: commons.walletAddress,
+              registryAgentId: commons.registryAgentId ?? null,
+            },
+            updatedAt: new Date(),
+          },
+        },
+      ).catch(() => {})
     }
 
     return c.json({
       commonsAgentId: commons.agentId,
       commonsApiKey: platformKey,
       walletAddress: commons.walletAddress,
+      registryAgentId: commons.registryAgentId ?? null,
     })
+  } catch {
+    return c.json({ error: 'database error' }, 503)
+  }
+})
+
+// GET /agents/:agentId/session/current — daemon recovers its session on restart
+router.get('/:agentId/session/current', async (c) => {
+  if (c.get('authType') !== 'agent') return c.json({ error: 'agent authorization required' }, 403)
+  const agentId = c.req.param('agentId')
+  if (c.get('agentId') !== agentId) return c.json({ error: 'forbidden' }, 403)
+
+  try {
+    const sess = await (await agentSessions()).findOne({ agentId, isDefault: true }).lean()
+    // _id is the AGC session ID — return it directly
+    return c.json({ agcSessionId: sess?._id ?? null })
+  } catch {
+    return c.json({ error: 'database error' }, 503)
+  }
+})
+
+// POST /agents/:agentId/session — daemon registers its AGC session
+router.post('/:agentId/session', async (c) => {
+  if (c.get('authType') !== 'agent') return c.json({ error: 'agent authorization required' }, 403)
+  const agentId = c.req.param('agentId')
+  if (c.get('agentId') !== agentId) return c.json({ error: 'forbidden' }, 403)
+
+  const body = await c.req.json<{ agcSessionId: string; title?: string }>().catch(() => ({ agcSessionId: '', title: undefined }))
+  if (!body.agcSessionId) return c.json({ error: 'agcSessionId is required' }, 400)
+
+  try {
+    const col = await agentSessions()
+    const agent = await (await agents()).findOne({ _id: agentId }).lean()
+    if (!agent) return c.json({ error: 'agent not found' }, 404)
+
+    // AGC session ID is the _id — idempotent upsert
+    const existing = await col.findOne({ _id: body.agcSessionId, agentId }).lean()
+    if (existing) {
+      await col.updateMany({ agentId, isDefault: true }, { $set: { isDefault: false } })
+      await col.updateOne({ _id: body.agcSessionId }, { $set: { isDefault: true } })
+      return c.json({ sessionId: body.agcSessionId, agcSessionId: body.agcSessionId })
+    }
+
+    await col.updateMany({ agentId, isDefault: true }, { $set: { isDefault: false } })
+    const title = body.title || `Session ${new Date().toLocaleString('en-US', { month: 'short', day: 'numeric' })}`
+    await col.create({
+      _id: body.agcSessionId,
+      agentId,
+      fleetId: agent.fleetId,
+      tenantId: agent.tenantId,
+      agcSessionId: body.agcSessionId,
+      title,
+      isDefault: true,
+      messageCount: 0,
+      lastMessageAt: null,
+      createdAt: new Date(),
+    } as never)
+    return c.json({ sessionId: body.agcSessionId, agcSessionId: body.agcSessionId }, 201)
   } catch {
     return c.json({ error: 'database error' }, 503)
   }
