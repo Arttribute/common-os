@@ -671,8 +671,22 @@ export function AgentDetailModal() {
     void fetchSessions()
   }, [isOpen, selectedId, fetchSessions])
 
+  // Auto-refresh sessions every 5 s while the modal is open on the sessions tab
+  useEffect(() => {
+    if (!isOpen || tab !== 'sessions') return
+    const id = setInterval(() => { void fetchSessions() }, 5_000)
+    return () => clearInterval(id)
+  }, [isOpen, tab, fetchSessions])
+
   useEffect(() => {
     if (isOpen && tab === 'computer') void fetchWorkspace()
+  }, [isOpen, tab, fetchWorkspace])
+
+  // Auto-refresh workspace every 10 s while the computer tab is active
+  useEffect(() => {
+    if (!isOpen || tab !== 'computer') return
+    const id = setInterval(() => { void fetchWorkspace() }, 10_000)
+    return () => clearInterval(id)
   }, [isOpen, tab, fetchWorkspace])
 
   // Close on Escape

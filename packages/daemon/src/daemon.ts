@@ -88,6 +88,20 @@ async function bootstrapCommons(): Promise<void> {
   }
 }
 
+// ─── AGC API ───────────────────────────────────────────────────────────────
+// Base URL and auth headers for direct calls to the Agent Commons REST API.
+// The daemon bypasses the agc CLI and calls the API directly for both session
+// creation and streaming execution — no subprocess overhead, clean output.
+
+const AGC_BASE_URL = (process.env.AGC_API_URL ?? "https://api.agentcommons.io").replace(/\/$/, "");
+
+function agcHeaders(): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${config.commonsApiKey}`,
+  };
+}
+
 // ─── Session management ────────────────────────────────────────────────────
 // One persistent AGC session per agent. The session ID is stored in the
 // workspace so it survives daemon restarts. All messages and tasks share
@@ -118,24 +132,22 @@ async function initSession(): Promise<void> {
     // Fall through to create a new session
   }
 
-  // Create a new session via the AGC CLI
+  // Create a new session via the AGC REST API directly
   try {
-    const proc = Bun.spawn(
-      ["agc", "sessions", "create", "--agent", config.commonsAgentId, "--json"],
-      {
-        env: { ...process.env, AGC_API_KEY: config.commonsApiKey },
-        stdout: "pipe",
-        stderr: "pipe",
-      },
-    );
-    const [stdout] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ]);
-    const exit = await proc.exited;
+    const res = await fetch(`${AGC_BASE_URL}/v1/sessions`, {
+      method: "POST",
+      headers: agcHeaders(),
+      body: JSON.stringify({
+        agentId: config.commonsAgentId,
+        title: `daemon-${config.agentId.slice(0, 12)}`,
+        source: "daemon",
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
 
-    if (exit === 0 && stdout.trim()) {
-      const data = JSON.parse(stdout.trim()) as Record<string, unknown>;
+    if (res.ok) {
+      const raw = await res.json() as Record<string, unknown>;
+      const data = (raw.data ?? raw) as Record<string, unknown>;
       const sessionId = (data.sessionId ?? data.id ?? null) as string | null;
       if (sessionId) {
         agentSessionId = sessionId;
@@ -147,7 +159,7 @@ async function initSession(): Promise<void> {
         return;
       }
     }
-    console.warn("[daemon] session creation produced no sessionId — running without session");
+    console.warn(`[daemon] session creation failed: ${res.status} — running without session`);
   } catch (err) {
     console.warn("[daemon] session init error:", err instanceof Error ? err.message : err);
   }
@@ -626,48 +638,40 @@ function buildWorkspaceSnapshot(dir: string, maxDepth = 2): string {
 }
 
 function buildFilesystemManifest(rootDir: string, snapshot: string): string {
-  return `## Your Pod Workspace
+  return `## Pod Workspace Context
 
-You are running inside your own Kubernetes pod on CommonOS. You have full read/write \
-access to your workspace at \`${rootDir}\`. No confirmations are needed — you own this pod.
+You are running inside your own Kubernetes pod on CommonOS. The daemon handles all \
+local tool execution automatically.
 
-**Current workspace (live snapshot):**
+**Workspace root:** \`${rootDir}\`
+
+**Current workspace snapshot:**
 \`\`\`
 ${snapshot}
 \`\`\`
 
-### Using filesystem tools
+### Available local tools
 
-To use a tool, include **exactly one** tool-call block in your response:
+| Tool | Args | Description |
+|------|------|-------------|
+| cli_read_file | path | Read a file (relative to workspace root) |
+| cli_write_file | path, content | Create or overwrite a file |
+| cli_list_directory | path? | List directory contents |
+| cli_run_command | command, cwd? | Execute any shell command |
+| cli_search_files | pattern, path? | Find files matching a glob pattern |
 
-\`\`\`tool
-{"tool": "read_file", "args": {"path": "relative/path.txt"}}
-\`\`\`
-
-The system executes the tool immediately and sends the result back. Chain multiple \
-tool calls across turns — don't stack more than one block per response.
-
-| Tool | Args | What it does |
-|------|------|--------------|
-| \`read_file\` | \`path\` | Read a file |
-| \`write_file\` | \`path\`, \`content\` | Create or overwrite a file |
-| \`list_directory\` | \`path?\` | List directory (default: workspace root) |
-| \`run_command\` | \`command\`, \`cwd?\` | Run any shell command |
-| \`search_files\` | \`pattern\`, \`path?\` | Find files matching a glob pattern |
-
-**Rules:** All paths are relative to \`${rootDir}\`. Commands run with your pod's full \
-environment (bun, node, python, git, etc.). No user confirmation required.
-
----`;
+**Rules:**
+1. All paths are relative to \`${rootDir}\`
+2. Commands run with full pod environment (bun, node, python, git, curl, etc.)
+3. You own this pod — no confirmation needed for any operation
+4. cli_write_file and cli_run_command execute immediately — auto-approve is active
+5. Chain tool calls across turns to accomplish complex tasks`;
 }
 
 // ─── Local tool execution ──────────────────────────────────────────────────
-// The agent produces a ```tool block; the daemon executes it and returns
-// the result as a follow-up session message.  No interactive confirmation —
-// the agent is the owner of this pod.
-
-const TOOL_CALL_RE = /```tool\s*\n([\s\S]*?)\n```/;
-const MAX_TOOL_DEPTH = 5;
+// Tools are invoked via the AGC platform's cli_tool_request SSE event.
+// The daemon receives the event, executes the tool locally, and posts the
+// result back to AGC — no interactive confirmation, the agent owns this pod.
 
 function assertInWorkspace(userPath: string): string {
   const abs = resolve(WORKSPACE_DIR, userPath);
@@ -788,77 +792,110 @@ async function executeTool(call: { tool: string; args: Record<string, unknown> }
   }
 }
 
-// ─── Native execution via AGC ──────────────────────────────────────────────
-// Runs the agent via `agc run` with:
-//   - A persistent session ID so the agent has continuous memory
-//   - A live workspace snapshot + tool manifest prepended to the first message
-//   - A tool-call loop: after each response the daemon checks for a ```tool
-//     block, executes the tool locally, sends the result back in the same
-//     session, and repeats until the agent produces a plain text response.
+// ─── Native execution via AGC streaming API ────────────────────────────────
+// Calls the AGC streaming endpoint directly — no CLI subprocess.
+// SSE events handled:
+//   token            → accumulate streamed content
+//   cli_tool_request → execute tool locally, POST result to /cli-tool-result
+//   final            → return the completed response
+// The persistent sessionId gives the agent continuous cross-task memory.
 
 async function runViaNative(description: string): Promise<string> {
   const agentId = config.commonsAgentId || config.agentId;
-
-  // Build the enriched first message: tool manifest + user prompt
   const snapshot = buildWorkspaceSnapshot(WORKSPACE_DIR);
-  const manifest = buildFilesystemManifest(WORKSPACE_DIR, snapshot);
-  let currentPrompt = `${manifest}\n\n${description}`;
+  const cliContext = buildFilesystemManifest(WORKSPACE_DIR, snapshot);
 
-  let finalResponse = "";
+  console.log(`[daemon] AGC stream  agent=${agentId.slice(0, 12)}  session=${agentSessionId?.slice(0, 8) ?? "none"}`);
 
-  for (let depth = 0; depth < MAX_TOOL_DEPTH; depth++) {
-    const args = ["run", "--agent", agentId, "--no-stream", currentPrompt];
-    if (agentSessionId) args.push("--session", agentSessionId);
+  const res = await fetch(`${AGC_BASE_URL}/v1/agents/run/stream`, {
+    method: "POST",
+    headers: agcHeaders(),
+    body: JSON.stringify({
+      agentId,
+      ...(agentSessionId ? { sessionId: agentSessionId } : {}),
+      messages: [{ role: "user", content: description }],
+      cliContext,
+    }),
+    signal: AbortSignal.timeout(120_000),
+  });
 
-    console.log(`[daemon] agc run (depth=${depth}${agentSessionId ? ` session=${agentSessionId.slice(0, 8)}…` : ""})`);
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`AGC stream error ${res.status}: ${errText.slice(0, 200)}`);
+  }
+  if (!res.body) throw new Error("AGC stream: empty response body");
 
-    const proc = Bun.spawn(["agc", ...args], {
-      cwd: WORKSPACE_DIR,
-      env: {
-        ...process.env,
-        AGC_API_KEY: config.commonsApiKey,
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let tokens = "";
+  let finalContent = "";
 
-    const [stdout, stderr] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ]);
-    const exit = await proc.exited;
+  try {
+    outer: while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    if (exit !== 0) {
-      throw new Error(`agc exited ${exit}: ${stderr.trim() || stdout.trim()}`);
+      buf += decoder.decode(value, { stream: true });
+
+      // SSE messages are separated by double newlines
+      const parts = buf.split("\n\n");
+      buf = parts.pop() ?? "";
+
+      for (const part of parts) {
+        if (!part.trim()) continue;
+
+        const dataLine = part.split("\n").find((l) => l.startsWith("data: "));
+        if (!dataLine) continue;
+
+        const jsonStr = dataLine.slice(6).trim();
+        if (!jsonStr || jsonStr === "[DONE]") continue;
+
+        let event: Record<string, unknown>;
+        try {
+          event = JSON.parse(jsonStr) as Record<string, unknown>;
+        } catch {
+          continue;
+        }
+
+        const type = event.type as string;
+
+        if (type === "token") {
+          tokens += (event.content as string) ?? "";
+
+        } else if (type === "cli_tool_request") {
+          const requestId = event.requestId as string;
+          const toolName  = event.tool as string;
+          const toolArgs  = (event.args ?? {}) as Record<string, unknown>;
+
+          console.log(`[daemon] cli_tool_request: ${toolName}  args=${JSON.stringify(toolArgs).slice(0, 100)}`);
+          const toolResult = await executeTool({ tool: toolName, args: toolArgs });
+          console.log(`[daemon] tool result: ${toolResult.slice(0, 120)}`);
+
+          await fetch(`${AGC_BASE_URL}/v1/agents/cli-tool-result`, {
+            method: "POST",
+            headers: agcHeaders(),
+            body: JSON.stringify({ requestId, result: toolResult }),
+            signal: AbortSignal.timeout(15_000),
+          }).catch((err) =>
+            console.warn("[daemon] cli-tool-result post failed:", err instanceof Error ? err.message : err),
+          );
+
+        } else if (type === "final") {
+          finalContent = (event.content as string) ?? tokens;
+          console.log(`[daemon] AGC stream done  tokens=${tokens.length}  final=${finalContent.length}`);
+          break outer;
+
+        } else if (type === "error") {
+          throw new Error(`AGC error: ${(event.message as string) ?? JSON.stringify(event)}`);
+        }
+      }
     }
-
-    const response = stdout.trim() || "done";
-    finalResponse = response;
-
-    // Check for a tool call in the response
-    const match = response.match(TOOL_CALL_RE);
-    if (!match) {
-      // No tool call — agent is done
-      console.log(`[daemon] agc run complete (${depth + 1} turn(s))`);
-      break;
-    }
-
-    // Parse and execute the tool
-    let toolResult: string;
-    try {
-      const call = JSON.parse(match[1].trim()) as { tool: string; args: Record<string, unknown> };
-      console.log(`[daemon] tool call: ${call.tool}  args=${JSON.stringify(call.args).slice(0, 100)}`);
-      toolResult = await executeTool(call);
-      console.log(`[daemon] tool result: ${toolResult.slice(0, 120)}`);
-    } catch (err) {
-      toolResult = `[error parsing tool call: ${err instanceof Error ? err.message : String(err)}]`;
-    }
-
-    // Send the tool result back as a follow-up message in the same session
-    currentPrompt = `[Tool result: ${match[1].includes('"tool"') ? (JSON.parse(match[1].trim()) as { tool?: string }).tool ?? "tool" : "tool"}]\n\`\`\`\n${toolResult}\n\`\`\``;
+  } finally {
+    reader.releaseLock();
   }
 
-  return finalResponse || "done";
+  return finalContent || tokens || "done";
 }
 
 async function runViaOpenClaw(description: string): Promise<string> {

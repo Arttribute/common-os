@@ -7,7 +7,7 @@ RUN curl -fsSL https://install.axl.gensyn.ai | bash - || true
 ENV PATH="$PATH:/usr/local/bin"
 
 # Agent Commons CLI — used by the runner service for native task execution
-RUN bun install -g @agent-commons/cli
+RUN bun install -g @agent-commons/cli@0.1.18
 
 RUN mkdir -p /workspace /etc/common-os /app
 
