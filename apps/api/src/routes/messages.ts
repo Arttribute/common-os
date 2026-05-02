@@ -4,6 +4,45 @@ import { agents, agentSessions, humanMessages } from '../db/mongo.js'
 import { enqueueHumanMessage, broadcastToFleet } from '../db/memory.js'
 import type { Env, HumanMessageDoc } from '../types.js'
 
+const AGC_BASE_URL = (process.env.AGC_API_URL ?? 'https://api.agentcommons.io').replace(/\/$/, '')
+
+async function createAgcSession(commonsAgentId: string, title: string): Promise<string | null> {
+  const apiKey = process.env.AGENTCOMMONS_API_KEY
+  if (!apiKey || !commonsAgentId) return null
+  try {
+    const res = await fetch(`${AGC_BASE_URL}/v1/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ agentId: commonsAgentId, title, source: 'commonos' }),
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (!res.ok) return null
+    const raw = await res.json() as Record<string, unknown>
+    const data = (raw.data ?? raw) as Record<string, unknown>
+    return (data.sessionId ?? data.id ?? null) as string | null
+  } catch {
+    return null
+  }
+}
+
+async function ensureDefaultSession(
+  agentId: string, fleetId: string, tenantId: string, commonsAgentId: string | null
+): Promise<string | null> {
+  const existing = await (await agentSessions()).findOne({ agentId, isDefault: true }).lean()
+  if (existing) return existing._id as string
+
+  const title = `Chat ${new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`
+  const agcSessionId = await createAgcSession(commonsAgentId ?? '', title)
+  const sessId = `asess_${Date.now().toString(36)}${randomBytes(4).toString('hex')}`
+
+  await (await agentSessions()).create({
+    _id: sessId, agentId, fleetId, tenantId, agcSessionId,
+    title, isDefault: true, messageCount: 0, lastMessageAt: null, createdAt: new Date(),
+  } as never)
+
+  return sessId
+}
+
 const router = new Hono<Env>()
 
 // POST /fleets/:id/agents/:agentId/human-message — human sends a message to an agent
@@ -19,18 +58,13 @@ router.post('/:id/agents/:agentId/human-message', async (c) => {
     const agent = await (await agents()).findOne({ _id: agentId, fleetId, tenantId }).lean()
     if (!agent) return c.json({ error: 'agent not found' }, 404)
 
-    // Resolve or find the target session
+    // Resolve or find the target session — auto-create if none exists
     let sessionId: string | null = body.sessionId ?? null
     if (sessionId) {
       const sess = await (await agentSessions()).findOne({ _id: sessionId, agentId }).lean()
       if (!sess) return c.json({ error: 'session not found' }, 404)
     } else {
-      // Use the agent's default session if one exists
-      const defaultSess = await (await agentSessions())
-        .findOne({ agentId, isDefault: true })
-        .sort({ createdAt: -1 })
-        .lean()
-      sessionId = defaultSess?._id ?? null
+      sessionId = await ensureDefaultSession(agentId, fleetId, tenantId, agent.commons.agentId ?? null)
     }
 
     const msgId = `hmsg_${Date.now().toString(36)}${randomBytes(4).toString('hex')}`

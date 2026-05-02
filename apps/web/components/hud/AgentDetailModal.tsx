@@ -117,6 +117,7 @@ function statusColor(status: string): string {
 
 function SessionsView({
   sessions,
+  allMessages,
   loading,
   activeSessionId,
   sessionMessages,
@@ -127,6 +128,7 @@ function SessionsView({
   creating,
 }: {
   sessions: AgentSession[]
+  allMessages: SessionEntry[]
   loading: boolean
   activeSessionId: string | null
   sessionMessages: SessionEntry[]
@@ -213,11 +215,16 @@ function SessionsView({
         </button>
       </div>
 
-      {sessions.length === 0 ? (
+      {sessions.length === 0 && allMessages.length > 0 ? (
+        // No sessions yet but messages exist — show flat list
+        <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {allMessages.map(entry => <SessionCard key={entry.id} entry={entry} />)}
+        </div>
+      ) : sessions.length === 0 ? (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
           <div style={{ fontSize: 20 }}>📭</div>
-          <div style={{ fontSize: 10, color: '#334155', fontFamily: 'monospace' }}>no sessions yet</div>
-          <div style={{ fontSize: 9, color: '#1e3a5f', fontFamily: 'monospace' }}>sessions appear when the agent processes its first message</div>
+          <div style={{ fontSize: 10, color: '#334155', fontFamily: 'monospace' }}>no messages yet</div>
+          <div style={{ fontSize: 9, color: '#1e3a5f', fontFamily: 'monospace' }}>send a message to start chatting</div>
         </div>
       ) : (
         <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
@@ -762,6 +769,7 @@ export function AgentDetailModal() {
   const [sessionMessages, setSessionMessages] = useState<SessionEntry[]>([])
   const [msgsLoading, setMsgsLoading] = useState(false)
   const [creating, setCreating] = useState(false)
+  const [allMessages, setAllMessages] = useState<SessionEntry[]>([])
 
   const agent = selectedId ? agents[selectedId] : null
   const urlFleet = searchParams.get('fleet')
@@ -781,10 +789,19 @@ export function AgentDetailModal() {
     setSessLoading(true)
     try {
       const token = await resolveToken()
-      const res = await fetch(`${apiUrl}/fleets/${fleetId}/agents/${selectedId}/sessions`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (res.ok) setSessions(await res.json() as AgentSession[])
+      const [sessRes, msgsRes] = await Promise.all([
+        fetch(`${apiUrl}/fleets/${fleetId}/agents/${selectedId}/sessions`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        fetch(`${apiUrl}/fleets/${fleetId}/agents/${selectedId}/human-messages`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      ])
+      if (sessRes.ok) setSessions(await sessRes.json() as AgentSession[])
+      if (msgsRes.ok) {
+        const raw = await msgsRes.json() as Array<Record<string, unknown>>
+        setAllMessages(raw.map(m => ({ ...m, id: m._id as string, kind: 'message' as const }) as SessionEntry))
+      }
     } catch { /* ignore */ }
     finally { setSessLoading(false) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -799,8 +816,8 @@ export function AgentDetailModal() {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (res.ok) {
-        const data = await res.json() as { messages?: SessionEntry[] }
-        setSessionMessages(data.messages ?? [])
+        const data = await res.json() as { messages?: Array<Record<string, unknown>> }
+        setSessionMessages((data.messages ?? []).map(m => ({ ...m, id: m._id as string }) as SessionEntry))
       }
     } catch { /* ignore */ }
     finally { setMsgsLoading(false) }
@@ -843,6 +860,7 @@ export function AgentDetailModal() {
   useEffect(() => {
     if (!isOpen || !selectedId) return
     setSessions([])
+    setAllMessages([])
     setSnapshot(null)
     setTab('sessions')
     setActiveSessionId(null)
@@ -979,6 +997,7 @@ export function AgentDetailModal() {
           {tab === 'sessions' ? (
             <SessionsView
               sessions={sessions}
+              allMessages={allMessages}
               loading={sessLoading}
               activeSessionId={activeSessionId}
               sessionMessages={sessionMessages}

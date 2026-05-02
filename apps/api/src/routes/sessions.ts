@@ -99,7 +99,7 @@ router.get('/:id/agents/:agentId/sessions/:sessionId', async (c) => {
         .lean(),
     ])
     if (!session) return c.json({ error: 'session not found' }, 404)
-    return c.json({ ...session, messages: msgs })
+    return c.json({ ...session, messages: msgs.map(m => ({ ...m, kind: 'message' })) })
   } catch {
     return c.json({ error: 'database error' }, 503)
   }
