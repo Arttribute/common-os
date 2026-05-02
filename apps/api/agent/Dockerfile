@@ -1,8 +1,10 @@
 # Stage 1: Build AXL node binary from source
-FROM golang:alpine AS axl-builder
+FROM golang:1.25.9-alpine AS axl-builder
+ARG AXL_REF=9cba555ff0b8e14ebf1244ae02b274fbc4ec044e
 RUN apk add --no-cache git make
-RUN git clone https://github.com/gensyn-ai/axl.git /axl
+RUN git clone --depth 1 https://github.com/gensyn-ai/axl.git /axl
 WORKDIR /axl
+RUN git fetch --depth 1 origin "$AXL_REF" && git checkout "$AXL_REF"
 RUN go build -o /axl-node ./cmd/node/
 
 # Stage 2: Agent runtime image
