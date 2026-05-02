@@ -104,6 +104,7 @@ async function bootstrapCommons(): Promise<void> {
 // `agc run` calls inherit auth from that file via the AGC_API_KEY env var.
 
 const AGC_BASE_URL = (process.env.AGC_API_URL ?? "https://api.agentcommons.io").replace(/\/$/, "");
+const AGC_INITIATOR = process.env.AGC_INITIATOR ?? process.env.AGENTCOMMONS_INITIATOR ?? "";
 const AGC_HOME_CONFIG = join(process.env.HOME ?? "/root", ".agc", "config.json");
 
 async function setupAgcAuth(): Promise<void> {
@@ -112,7 +113,11 @@ async function setupAgcAuth(): Promise<void> {
     mkdirSync(dirname(AGC_HOME_CONFIG), { recursive: true });
     writeFileSync(
       AGC_HOME_CONFIG,
-      JSON.stringify({ apiKey: config.commonsApiKey, apiUrl: AGC_BASE_URL }),
+      JSON.stringify({
+        apiKey: config.commonsApiKey,
+        apiUrl: AGC_BASE_URL,
+        ...(AGC_INITIATOR ? { initiator: AGC_INITIATOR } : {}),
+      }),
       { mode: 0o600 },
     );
     console.log("[daemon] agc auth configured");
@@ -126,6 +131,7 @@ function agcEnv(): NodeJS.ProcessEnv {
     ...process.env,
     AGC_API_KEY: config.commonsApiKey ?? "",
     AGC_API_URL: AGC_BASE_URL,
+    ...(AGC_INITIATOR ? { AGC_INITIATOR } : {}),
   };
 }
 
@@ -877,31 +883,22 @@ function cleanAgcOutput(raw: string): string {
     .trim();
 }
 
-// ─── Native execution via agc CLI ──────────────────────────────────────────
-// `agc run --local --yes` is the only way to get cli_tool_request events from
-// AGC (direct REST calls do not trigger local-tool mode). The CLI binary is
-// pre-installed in the image; it handles auth, session memory, and all local
-// tool calls (read/write/run) automatically inside its own process. We just
-// capture stdout as the agent's final response.
+function buildRunPrompt(description: string, messages?: AgcMessage[]): string {
+  if (!messages || messages.length <= 1) return description;
 
-async function runViaNative(description: string, agcSessionId?: string, _messages?: AgcMessage[]): Promise<string> {
-  const sessionIdToUse = agcSessionId ?? agentSessionId;
-  const isFirstRun = !sessionIdToUse;
-  const agentId = config.commonsAgentId || config.agentId;
+  const transcript = messages
+    .slice(-12)
+    .map((msg) => `${msg.role === "assistant" ? "Assistant" : "User"}: ${msg.content}`)
+    .join("\n\n");
 
-  console.log(`[daemon] agc run  agent=${agentId.slice(0, 12)}  session=${sessionIdToUse?.slice(0, 12) ?? (isFirstRun ? "new" : "none")}`);
+  return [
+    "Continue this CommonOS conversation. Use the prior turns as context, but answer only the latest user request.",
+    "",
+    transcript,
+  ].join("\n");
+}
 
-  // --local --yes enables cli_* tools (handled internally by agc streaming loop).
-  // --no-stream is intentionally omitted: it calls run.once() which skips the
-  // cli_tool_request event loop entirely, leaving the agent without filesystem tools.
-  const args = ["run", "--agent", agentId, "--local", "--yes"];
-  if (sessionIdToUse) {
-    args.push("--session", sessionIdToUse);
-  } else {
-    args.push("--new-session"); // first run: create and persist session
-  }
-  args.push(description);
-
+async function spawnAgcRun(args: string[]): Promise<{ code: number; out: string; err: string; timedOut: boolean }> {
   const proc = Bun.spawn(["agc", ...args], {
     cwd: WORKSPACE_DIR,
     env: agcEnv(),
@@ -909,17 +906,66 @@ async function runViaNative(description: string, agcSessionId?: string, _message
     stderr: "pipe",
   });
 
-  await Promise.race([proc.exited, sleep(120_000).then(() => proc.kill())]);
+  let timedOut = false;
+  const code = await Promise.race([
+    proc.exited,
+    sleep(120_000).then(() => {
+      timedOut = true;
+      proc.kill();
+      return -1;
+    }),
+  ]);
 
   const [out, err] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
   ]);
 
-  if (err) console.warn("[daemon] agc run stderr:", err.slice(0, 300));
+  return { code, out, err, timedOut };
+}
 
-  // On first run, extract and persist the new session ID from output
-  if (isFirstRun) {
+// ─── Native execution via agc CLI ──────────────────────────────────────────
+// `agc run --local --yes` is the only way to get cli_tool_request events from
+// AGC (direct REST calls do not trigger local-tool mode). The CLI binary is
+// pre-installed in the image; it handles auth, session memory, and all local
+// tool calls (read/write/run) automatically inside its own process. We just
+// capture stdout as the agent's final response.
+
+async function runViaNative(description: string, agcSessionId?: string, messages?: AgcMessage[]): Promise<string> {
+  const sessionIdToUse = agcSessionId ?? agentSessionId;
+  const isFirstRun = !sessionIdToUse;
+  const agentId = config.commonsAgentId || config.agentId;
+  const prompt = buildRunPrompt(description, messages);
+
+  console.log(`[daemon] agc run  agent=${agentId.slice(0, 12)}  session=${sessionIdToUse?.slice(0, 12) ?? (isFirstRun ? "new" : "none")}`);
+
+  // --local --yes enables cli_* tools (handled internally by agc streaming loop).
+  // --no-stream is intentionally omitted: it calls run.once() which skips the
+  // cli_tool_request event loop entirely, leaving the agent without filesystem tools.
+  const args = ["run", "--agent", agentId, "--local", "--yes"];
+  let ranNewSession = isFirstRun;
+  if (sessionIdToUse) {
+    args.push("--session", sessionIdToUse);
+  } else {
+    args.push("--new-session"); // first run: create and persist session
+  }
+  args.push(prompt);
+
+  let { code, out, err, timedOut } = await spawnAgcRun(args);
+
+  if (code !== 0 && sessionIdToUse && /session|not found|invalid/i.test(out + "\n" + err)) {
+    console.warn(`[daemon] agc session ${sessionIdToUse.slice(0, 12)} invalid; retrying with --new-session`);
+    const retryArgs = ["run", "--agent", agentId, "--local", "--yes", "--new-session", prompt];
+    ranNewSession = true;
+    ({ code, out, err, timedOut } = await spawnAgcRun(retryArgs));
+  }
+
+  if (err) console.warn("[daemon] agc run stderr:", err.slice(0, 300));
+  if (timedOut) console.warn("[daemon] agc run timed out after 120s");
+  if (code !== 0) console.warn(`[daemon] agc run exited with code ${code}`);
+
+  // On first run or invalid-session retry, extract and persist the new session ID from output
+  if (ranNewSession) {
     const newId = parseAgcSessionId(out + "\n" + err);
     if (newId) {
       agentSessionId = newId;

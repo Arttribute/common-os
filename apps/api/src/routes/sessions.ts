@@ -1,10 +1,10 @@
-import { randomBytes } from 'crypto'
 import { Hono } from 'hono'
 import { agents, agentSessions, humanMessages } from '../db/mongo.js'
 import { persistNormalizedCommonsIdentity } from '../services/agentCommonsIdentity.js'
 import type { Env } from '../types.js'
 
 const AGC_BASE_URL = (process.env.AGC_API_URL ?? 'https://api.agentcommons.io').replace(/\/$/, '')
+const AGC_INITIATOR = process.env.AGC_INITIATOR ?? process.env.AGENTCOMMONS_INITIATOR ?? null
 
 async function createAgcSession(commonsAgentId: string, title: string): Promise<string> {
   const apiKey = process.env.AGENTCOMMONS_API_KEY
@@ -13,8 +13,13 @@ async function createAgcSession(commonsAgentId: string, title: string): Promise<
   try {
     const res = await fetch(`${AGC_BASE_URL}/v1/sessions`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ agentId: commonsAgentId, title, source: 'commonos' }),
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}`, 'x-api-key': apiKey },
+      body: JSON.stringify({
+        agentId: commonsAgentId,
+        title,
+        source: 'commonos',
+        ...(AGC_INITIATOR ? { initiator: AGC_INITIATOR } : {}),
+      }),
       signal: AbortSignal.timeout(10_000),
     })
     if (!res.ok) throw new Error(`Agent Commons session create failed: ${res.status}`)
@@ -62,10 +67,9 @@ router.post('/:id/agents/:agentId/sessions', async (c) => {
     const commons = await persistNormalizedCommonsIdentity(agent)
     const agcSessionId = await createAgcSession(commons.agentId ?? '', title)
 
-    const sessId = `asess_${Date.now().toString(36)}${randomBytes(4).toString('hex')}`
     const now = new Date()
     const doc = {
-      _id: sessId,
+      _id: agcSessionId,
       agentId,
       fleetId,
       tenantId,
@@ -103,8 +107,13 @@ router.get('/:id/agents/:agentId/sessions/:sessionId', async (c) => {
     }).lean()
     if (!session) return c.json({ error: 'session not found' }, 404)
 
+    const sessionIds = Array.from(new Set([
+      session._id as string,
+      session.agcSessionId ?? undefined,
+    ].filter((id): id is string => Boolean(id))))
+
     const msgs = await (await humanMessages())
-      .find({ sessionId: session._id, agentId, fleetId, tenantId })
+      .find({ sessionId: { $in: sessionIds }, agentId, fleetId, tenantId })
       .sort({ createdAt: 1 })
       .limit(200)
       .lean()

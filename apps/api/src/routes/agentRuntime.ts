@@ -6,9 +6,18 @@ import { registerWithAgentCommons } from '../services/provisioner.js'
 import { persistNormalizedCommonsIdentity } from '../services/agentCommonsIdentity.js'
 import type { Env, HumanMessageDoc } from '../types.js'
 
-// Session documents now use the AGC session ID as _id — no indirection needed.
-function resolveAgcSessionId(sessionId: string | null | undefined): string | null {
-  return sessionId ?? null
+async function resolveAgcSessionId(agentId: string, sessionId: string | null | undefined): Promise<string | null> {
+  if (!sessionId) return null
+
+  try {
+    const sess = await (await agentSessions()).findOne(
+      { agentId, $or: [{ _id: sessionId }, { agcSessionId: sessionId }] },
+      { _id: 1, agcSessionId: 1 },
+    ).lean()
+    return sess?.agcSessionId ?? sessionId
+  } catch {
+    return sessionId
+  }
 }
 
 async function buildMessageHistory(
@@ -20,10 +29,20 @@ async function buildMessageHistory(
   if (!sessionId) return [{ role: 'user', content: currentContent }]
 
   try {
+    const sess = await (await agentSessions()).findOne(
+      { agentId, $or: [{ _id: sessionId }, { agcSessionId: sessionId }] },
+      { _id: 1, agcSessionId: 1 },
+    ).lean()
+    const sessionIds = Array.from(new Set([
+      sessionId,
+      sess?._id as string | undefined,
+      sess?.agcSessionId ?? undefined,
+    ].filter((id): id is string => Boolean(id))))
+
     const recent = await (await humanMessages())
       .find({
         agentId,
-        sessionId,
+        sessionId: { $in: sessionIds },
         _id: { $ne: currentMsgId },
         status: 'responded',
         response: { $ne: null },
@@ -196,7 +215,7 @@ router.get('/:agentId/messages/next', async (c) => {
         { sort: { createdAt: 1 }, new: false },
       ).lean()
       if (!claimed) return c.body(null, 204)
-      const agcSessionId = await resolveAgcSessionId(claimed.sessionId)
+      const agcSessionId = await resolveAgcSessionId(agentId, claimed.sessionId)
       if (!agcSessionId) {
         console.warn(`[runtime] message ${claimed._id} has no Agent Commons sessionId; daemon will fall back to its boot session`)
       }
@@ -223,7 +242,7 @@ router.get('/:agentId/messages/next', async (c) => {
       { new: true },
     ).lean()
     if (!msg) return c.body(null, 204)
-    const agcSessionId = await resolveAgcSessionId(msg.sessionId)
+    const agcSessionId = await resolveAgcSessionId(agentId, msg.sessionId)
     if (!agcSessionId) {
       console.warn(`[runtime] message ${msg._id} has no Agent Commons sessionId; daemon will fall back to its boot session`)
     }
@@ -255,7 +274,12 @@ router.post('/:agentId/messages/axl', async (c) => {
     return c.json({ error: 'forbidden' }, 403)
   }
 
-  const body = await c.req.json<{
+  const body: {
+    content: string
+    fromAgentId?: string | null
+    axlPeerId?: string | null
+    axlMessageId?: string | null
+  } = await c.req.json<{
     content: string
     fromAgentId?: string | null
     axlPeerId?: string | null
@@ -338,7 +362,7 @@ router.post('/:agentId/messages/:msgId/respond', async (c) => {
     // After updating message, update session stats
     if (msg.sessionId) {
       await (await agentSessions()).updateOne(
-        { _id: msg.sessionId },
+        { agentId, $or: [{ _id: msg.sessionId }, { agcSessionId: msg.sessionId }] },
         { $inc: { messageCount: 1 }, $set: { lastMessageAt: now } },
       ).catch(() => {})
     }
@@ -438,8 +462,7 @@ router.get('/:agentId/session/current', async (c) => {
 
   try {
     const sess = await (await agentSessions()).findOne({ agentId, isDefault: true }).lean()
-    // _id is the AGC session ID — return it directly
-    return c.json({ agcSessionId: sess?._id ?? null })
+    return c.json({ agcSessionId: sess?.agcSessionId ?? sess?._id ?? null })
   } catch {
     return c.json({ error: 'database error' }, 503)
   }
@@ -460,10 +483,13 @@ router.post('/:agentId/session', async (c) => {
     if (!agent) return c.json({ error: 'agent not found' }, 404)
 
     // AGC session ID is the _id — idempotent upsert
-    const existing = await col.findOne({ _id: body.agcSessionId, agentId }).lean()
+    const existing = await col.findOne({
+      agentId,
+      $or: [{ _id: body.agcSessionId }, { agcSessionId: body.agcSessionId }],
+    }).lean()
     if (existing) {
       await col.updateMany({ agentId, isDefault: true }, { $set: { isDefault: false } })
-      await col.updateOne({ _id: body.agcSessionId }, { $set: { isDefault: true } })
+      await col.updateOne({ _id: existing._id }, { $set: { agcSessionId: body.agcSessionId, isDefault: true } })
       return c.json({ sessionId: body.agcSessionId, agcSessionId: body.agcSessionId })
     }
 

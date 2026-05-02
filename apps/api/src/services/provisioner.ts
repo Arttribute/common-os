@@ -116,6 +116,7 @@ export async function registerWithAgentCommons(
 
 	const headers = {
 		"Authorization": `Bearer ${platformKey}`,
+		"x-api-key": platformKey,
 		"Content-Type": "application/json",
 	};
 

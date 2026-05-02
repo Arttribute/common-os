@@ -6,6 +6,7 @@ import { persistNormalizedCommonsIdentity } from '../services/agentCommonsIdenti
 import type { Env, HumanMessageDoc } from '../types.js'
 
 const AGC_BASE_URL = (process.env.AGC_API_URL ?? 'https://api.agentcommons.io').replace(/\/$/, '')
+const AGC_INITIATOR = process.env.AGC_INITIATOR ?? process.env.AGENTCOMMONS_INITIATOR ?? null
 
 async function createAgcSession(commonsAgentId: string, title: string): Promise<string> {
   const apiKey = process.env.AGENTCOMMONS_API_KEY
@@ -14,8 +15,13 @@ async function createAgcSession(commonsAgentId: string, title: string): Promise<
   try {
     const res = await fetch(`${AGC_BASE_URL}/v1/sessions`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ agentId: commonsAgentId, title, source: 'commonos' }),
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}`, 'x-api-key': apiKey },
+      body: JSON.stringify({
+        agentId: commonsAgentId,
+        title,
+        source: 'commonos',
+        ...(AGC_INITIATOR ? { initiator: AGC_INITIATOR } : {}),
+      }),
       signal: AbortSignal.timeout(10_000),
     })
     if (!res.ok) throw new Error(`Agent Commons session create failed: ${res.status}`)
@@ -36,25 +42,24 @@ async function ensureDefaultSession(
   const title = `Chat ${new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`
 
   if (existing) {
-    if (existing.agcSessionId) return existing._id as string
+    if (existing.agcSessionId) return existing.agcSessionId
 
     const agcSessionId = await createAgcSession(commonsAgentId ?? '', title)
     await (await agentSessions()).updateOne(
       { _id: existing._id },
       { $set: { agcSessionId, isDefault: true } },
     )
-    return existing._id as string
+    return agcSessionId
   }
 
   const agcSessionId = await createAgcSession(commonsAgentId ?? '', title)
-  const sessId = `asess_${Date.now().toString(36)}${randomBytes(4).toString('hex')}`
 
   await (await agentSessions()).create({
-    _id: sessId, agentId, fleetId, tenantId, agcSessionId,
+    _id: agcSessionId, agentId, fleetId, tenantId, agcSessionId,
     title, isDefault: true, messageCount: 0, lastMessageAt: null, createdAt: new Date(),
   } as never)
 
-  return sessId
+  return agcSessionId
 }
 
 const router = new Hono<Env>()
@@ -81,7 +86,7 @@ router.post('/:id/agents/:agentId/human-message', async (c) => {
       }).lean()
       if (!sess) return c.json({ error: 'session not found' }, 404)
       if (!sess.agcSessionId) return c.json({ error: 'session is missing Agent Commons sessionId' }, 409)
-      sessionId = sess._id
+      sessionId = sess.agcSessionId
     } else {
       const commons = await persistNormalizedCommonsIdentity(agent)
       sessionId = await ensureDefaultSession(agentId, fleetId, tenantId, commons.agentId)
