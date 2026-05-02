@@ -187,8 +187,13 @@ async function initSession(): Promise<void> {
   console.log("[daemon] no prior session found — will create on first run");
 }
 
+function stripAnsi(s: string): string {
+  return s.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
+}
+
 function parseAgcSessionId(output: string): string | null {
-  for (const line of output.split("\n")) {
+  const clean = stripAnsi(output);
+  for (const line of clean.split("\n")) {
     const s = line.trim();
     if (!s) continue;
     // SSE line or plain JSON
@@ -200,12 +205,12 @@ function parseAgcSessionId(output: string): string | null {
         if (typeof id === "string" && id) return id;
       } catch {}
     }
-    // "Session: ses_xxx" or "Session ID: ses_xxx" header line
-    const kv = s.match(/(?:session(?:\s+id)?)\s*[=:]\s*(\S+)/i);
+    // "Session: ses_xxx" or "Session ID: ses_xxx" printed by --no-stream / --new-session
+    const kv = s.match(/(?:session(?:\s+id)?)\s*[=:]\s*([^\s(]+)/i);
     if (kv?.[1]) return kv[1];
   }
   // Fallback: any token that looks like a session identifier
-  const m = output.match(/\b(sess?[-_][a-zA-Z0-9_-]{6,}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\b/);
+  const m = clean.match(/\b(sess?[-_][a-zA-Z0-9_-]{6,}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\b/);
   return m?.[1] ?? null;
 }
 
@@ -707,6 +712,22 @@ function buildWorkspaceSnapshot(dir: string, maxDepth = 2): string {
   return lines.join("\n");
 }
 
+function cleanAgcOutput(raw: string): string {
+  const clean = stripAnsi(raw);
+  return clean
+    .split("\n")
+    .filter((line) => {
+      const t = line.trim();
+      // Drop tool-status lines printed by agc streaming: "  ─ write_file  ✓  (0.3s)"
+      if (/^\s*[─-]\s+\S/.test(t) && (/\([\d.]+s\)/.test(t) || /✓|✗|✘/.test(t))) return false;
+      // Drop the session footer: "Session: xxx  (resume with: …)"
+      if (/^Session\s*:/i.test(t) && /resume with/i.test(t)) return false;
+      return true;
+    })
+    .join("\n")
+    .trim();
+}
+
 // ─── Native execution via agc CLI ──────────────────────────────────────────
 // `agc run --local --yes` is the only way to get cli_tool_request events from
 // AGC (direct REST calls do not trigger local-tool mode). The CLI binary is
@@ -721,7 +742,10 @@ async function runViaNative(description: string, agcSessionId?: string, _message
 
   console.log(`[daemon] agc run  agent=${agentId.slice(0, 12)}  session=${sessionIdToUse?.slice(0, 12) ?? (isFirstRun ? "new" : "none")}`);
 
-  const args = ["run", "--agent", agentId, "--local", "--yes", "--no-stream"];
+  // --local --yes enables cli_* tools (handled internally by agc streaming loop).
+  // --no-stream is intentionally omitted: it calls run.once() which skips the
+  // cli_tool_request event loop entirely, leaving the agent without filesystem tools.
+  const args = ["run", "--agent", agentId, "--local", "--yes"];
   if (sessionIdToUse) {
     args.push("--session", sessionIdToUse);
   } else {
@@ -760,8 +784,8 @@ async function runViaNative(description: string, agcSessionId?: string, _message
     }
   }
 
-  // Strip any "Session: <id>" header line printed by --new-session
-  const result = out.replace(/^Session(?:\s+ID)?\s*[=:]\s*\S+\s*\n?/i, "").trim();
+  // Strip ANSI codes, tool-status lines (  ─ toolname ✓ ...), and the session footer
+  const result = cleanAgcOutput(out);
   console.log(`[daemon] agc run done  length=${result.length}`);
   return result || "done";
 }

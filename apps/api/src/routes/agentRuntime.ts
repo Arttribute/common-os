@@ -5,14 +5,9 @@ import { registerWithAgentCommons } from '../services/provisioner.js'
 import { persistNormalizedCommonsIdentity } from '../services/agentCommonsIdentity.js'
 import type { Env } from '../types.js'
 
-// Helper to resolve the Agent Commons sessionId for a CommonOS/Mongo session.
-// This value is passed as `sessionId` to /v1/agents/run/stream.
-async function resolveAgcSessionId(sessionId: string | null | undefined): Promise<string | null> {
-  if (!sessionId) return null
-  try {
-    const sess = await (await agentSessions()).findOne({ _id: sessionId }, { agcSessionId: 1 }).lean()
-    return sess?.agcSessionId ?? null
-  } catch { return null }
+// Session documents now use the AGC session ID as _id — no indirection needed.
+function resolveAgcSessionId(sessionId: string | null | undefined): string | null {
+  return sessionId ?? null
 }
 
 async function buildMessageHistory(
@@ -325,7 +320,8 @@ router.get('/:agentId/session/current', async (c) => {
 
   try {
     const sess = await (await agentSessions()).findOne({ agentId, isDefault: true }).lean()
-    return c.json({ agcSessionId: sess?.agcSessionId ?? null, sessionId: sess?._id ?? null })
+    // _id is the AGC session ID — return it directly
+    return c.json({ agcSessionId: sess?._id ?? null })
   } catch {
     return c.json({ error: 'database error' }, 503)
   }
@@ -345,33 +341,18 @@ router.post('/:agentId/session', async (c) => {
     const agent = await (await agents()).findOne({ _id: agentId }).lean()
     if (!agent) return c.json({ error: 'agent not found' }, 404)
 
-    const existing = await col.findOne({ agentId, agcSessionId: body.agcSessionId }).lean()
+    // AGC session ID is the _id — idempotent upsert
+    const existing = await col.findOne({ _id: body.agcSessionId, agentId }).lean()
     if (existing) {
-      // Already registered — just ensure it's marked default
       await col.updateMany({ agentId, isDefault: true }, { $set: { isDefault: false } })
-      await col.updateOne({ _id: existing._id }, { $set: { isDefault: true } })
-      return c.json({ sessionId: existing._id, agcSessionId: existing.agcSessionId })
+      await col.updateOne({ _id: body.agcSessionId }, { $set: { isDefault: true } })
+      return c.json({ sessionId: body.agcSessionId, agcSessionId: body.agcSessionId })
     }
 
-    const pendingDefault = await col.findOne({ agentId, isDefault: true, agcSessionId: null }).lean()
-    if (pendingDefault) {
-      await col.updateMany(
-        { agentId, _id: { $ne: pendingDefault._id }, isDefault: true },
-        { $set: { isDefault: false } },
-      )
-      await col.updateOne(
-        { _id: pendingDefault._id },
-        { $set: { agcSessionId: body.agcSessionId, isDefault: true } },
-      )
-      return c.json({ sessionId: pendingDefault._id, agcSessionId: body.agcSessionId })
-    }
-
-    // Clear old defaults and create new session record
     await col.updateMany({ agentId, isDefault: true }, { $set: { isDefault: false } })
-    const sessId = `asess_${Date.now().toString(36)}`
     const title = body.title || `Session ${new Date().toLocaleString('en-US', { month: 'short', day: 'numeric' })}`
     await col.create({
-      _id: sessId,
+      _id: body.agcSessionId,
       agentId,
       fleetId: agent.fleetId,
       tenantId: agent.tenantId,
@@ -382,7 +363,7 @@ router.post('/:agentId/session', async (c) => {
       lastMessageAt: null,
       createdAt: new Date(),
     } as never)
-    return c.json({ sessionId: sessId, agcSessionId: body.agcSessionId }, 201)
+    return c.json({ sessionId: body.agcSessionId, agcSessionId: body.agcSessionId }, 201)
   } catch {
     return c.json({ error: 'database error' }, 503)
   }
