@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { agents, tasks, humanMessages, agentSessions } from '../db/mongo.js'
 import { dequeueTask, dequeueHumanMessage, broadcastToFleet } from '../db/memory.js'
+import { buildAgentEnsName, lookupAgentENS } from '../services/ens.js'
 import { registerWithAgentCommons } from '../services/provisioner.js'
 import type { Env } from '../types.js'
 
@@ -14,6 +15,43 @@ async function resolveAgcSessionId(sessionId: string | null | undefined): Promis
 }
 
 const router = new Hono<Env>()
+
+// GET /agents/resolve/:name — resolve agent details from DB first, then ENS
+router.get('/resolve/:name', async (c) => {
+  const rawName = decodeURIComponent(c.req.param('name'))
+
+  try {
+    if (!rawName.includes('.')) {
+      const agent = await (await agents()).findOne({
+        _id: rawName,
+        tenantId: c.get('tenantId'),
+      }).lean()
+
+      if (agent) {
+        return c.json({
+          name: buildAgentEnsName(agent._id),
+          agentId: agent._id,
+          commonsAgentId: agent.commons.agentId,
+          fleetId: agent.fleetId,
+          role: agent.config.role,
+          status: agent.status,
+          peerId: agent.axl.peerId,
+          multiaddr: agent.axl.multiaddr,
+          walletAddress: agent.commons.walletAddress,
+          url: null,
+          description: null,
+          source: 'db',
+        })
+      }
+    }
+
+    const record = await lookupAgentENS(rawName)
+    if (!record) return c.json({ error: 'agent not found' }, 404)
+    return c.json({ ...record, source: 'ens' })
+  } catch {
+    return c.json({ error: 'lookup failed' }, 503)
+  }
+})
 
 // GET /agents/:agentId/tasks/next
 router.get('/:agentId/tasks/next', async (c) => {

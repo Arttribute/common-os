@@ -47,6 +47,9 @@ function AgentRow({ agent, selected, onSelect }: {
   onSelect: () => void
 }) {
   const shortRole = agent.role.replace('-engineer', '').replace(/-/g, ' ')
+  const displayLabel = agent.ensName
+    ? agent.ensName.split('.')[0] ?? shortRole
+    : shortRole
   const isProvisioning = agent.status === 'provisioning'
   const dotColor = statusDotColor(agent.status)
 
@@ -77,9 +80,12 @@ function AgentRow({ agent, selected, onSelect }: {
             }}
           />
         )}
-        <span style={{ fontSize: 11, color: '#e2e8f0', fontWeight: 500, textTransform: 'capitalize' }}>
-          {shortRole}
+        <span style={{ fontSize: 11, color: agent.ensName ? '#10b981' : '#e2e8f0', fontWeight: 500, textTransform: 'capitalize' }}>
+          {displayLabel}
         </span>
+        {agent.ensStatus === 'resolved' && agent.ensName && (
+          <span style={{ fontSize: 8, color: '#10b981', fontFamily: 'monospace', opacity: 0.8 }}>ens</span>
+        )}
         <span
           style={{
             marginLeft: 'auto', fontSize: 9, color: dotColor,

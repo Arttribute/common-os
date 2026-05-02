@@ -3,6 +3,7 @@ import { randomBytes } from "crypto";
 import { Hono } from "hono";
 import { broadcastToFleet } from "../db/memory.js";
 import { agents, events, tasks, worldStates } from "../db/mongo.js";
+import { registerAgentENS } from "../services/ens.js";
 import type { Env } from "../types.js";
 
 const router = new Hono<Env>();
@@ -84,6 +85,18 @@ router.post("/", async (c) => {
 			await (await worldStates()).updateOne(
 				{ fleetId: agentDoc.fleetId, "agents.agentId": agentId },
 				{ $set: { "agents.$.status": agentStatus, updatedAt: now } },
+			);
+			void registerAgentENS(
+				agentId,
+				{
+					fleetId: agentDoc.fleetId,
+					role: agentDoc.config.role,
+					status: agentStatus,
+					peerId: agentDoc.axl.peerId,
+					multiaddr: agentDoc.axl.multiaddr,
+					commonsAgentId: agentDoc.commons.agentId,
+				},
+				agentDoc.commons.walletAddress,
 			);
 		} else if (event.type === "world_interact") {
 			// Log the interaction — no state mutation needed (object state is ephemeral)

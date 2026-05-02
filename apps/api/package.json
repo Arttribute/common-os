@@ -26,11 +26,13 @@
 		"@kubernetes/client-node": "^1.4.0",
 		"@privy-io/server-auth": "^1.32.5",
 		"@smithy/signature-v4": "^5.3.14",
+		"dotenv": "^17.4.2",
 		"google-auth-library": "^10.6.2",
 		"hono": "^4.12.14",
 		"mongodb": "^6.15.0",
 		"mongoose": "^9.6.1",
 		"uuid": "^14.0.0",
+		"viem": "^2.48.4",
 		"ws": "^8.20.0",
 		"zod": "^3.24.2"
 	},

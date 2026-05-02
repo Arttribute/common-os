@@ -18,6 +18,7 @@ import { sessionsRouter } from './routes/sessions.js'
 import { worldStates, ensureIndexes } from './db/mongo.js'
 import { subscribeToFleet, unsubscribeFromFleet } from './db/memory.js'
 import type { Env } from './types.js'
+import 'dotenv/config';
 
 const app = new Hono<Env>()
 

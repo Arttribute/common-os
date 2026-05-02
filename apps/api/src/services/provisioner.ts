@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "crypto";
 import { agents, fleets, worldStates } from "../db/mongo.js";
 import type { AgentDoc, FleetDoc } from "../types.js";
 import { launchAgentPod, launchAgentPodEks } from "./cloud-init.js";
+import { registerAgentENS } from "./ens.js";
 
 interface ProvisionAgentOptions {
 	fleetId: string;
@@ -88,6 +89,17 @@ export async function provisionAgent(
 		},
 	);
 
+	void registerAgentENS(
+		agentId,
+		{
+			fleetId: opts.fleetId,
+			role: opts.role,
+			status: agentDoc.status,
+			commonsAgentId: agentDoc.commons.agentId,
+		},
+		agentDoc.commons.walletAddress,
+	);
+
 	void launchCloudInstance(agentDoc, opts, agentToken, commons.apiKey);
 
 	return { ...agentDoc, agentToken };
@@ -147,8 +159,13 @@ export async function registerWithAgentCommons(
 			console.error(`[provisioner] Agent Commons create agent failed: ${agentRes.status} ${body}`);
 			return { agentId: null, apiKey: null, walletAddress: null };
 		}
-		const agentData = (await agentRes.json()) as { agentId?: string; data?: { agentId?: string } };
+		const agentData = (await agentRes.json()) as {
+			agentId?: string
+			walletAddress?: string | null
+			data?: { agentId?: string; walletAddress?: string | null }
+		};
 		const commonsAgentId = agentData.agentId ?? agentData.data?.agentId ?? null;
+		const walletAddress = agentData.walletAddress ?? agentData.data?.walletAddress ?? null;
 		console.log(`[provisioner] Agent Commons agent created: ${commonsAgentId}`);
 		if (!commonsAgentId) return { agentId: null, apiKey: null, walletAddress: null };
 
@@ -158,7 +175,7 @@ export async function registerWithAgentCommons(
 		return {
 			agentId: commonsAgentId,
 			apiKey: null,  // intentionally null in DB; bootstrap provides the platform key at runtime
-			walletAddress: null,
+			walletAddress,
 		};
 	} catch (err) {
 		console.error("[provisioner] Agent Commons registration error:", err);

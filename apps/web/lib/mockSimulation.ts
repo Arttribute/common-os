@@ -19,6 +19,21 @@ const MOCK_AGENTS = [
     permissionTier: 'manager' as const,
     status: 'idle' as const,
     world: { room: 'meeting-room', x: 2, y: 11, facing: 'south' as const },
+    ensName: 'engineering-manager.commonos.eth',
+    ensRecords: {
+      name: 'engineering-manager.commonos.eth',
+      agentId: 'agt_mgr_01',
+      fleetId: 'flt_demo_01',
+      role: 'engineering-manager',
+      status: 'online',
+      peerId: '12D3KooWMgr01',
+      multiaddr: '/ip4/10.0.1.5/tcp/9001/p2p/12D3KooWMgr01',
+      commonsAgentId: null,
+      walletAddress: '0x1234...',
+      url: 'http://localhost:3000/world?fleet=flt_demo_01',
+      description: 'CommonOS engineering-manager agent',
+    },
+    ensStatus: 'resolved' as const,
   },
   {
     agentId: 'agt_backend_01',
@@ -26,6 +41,21 @@ const MOCK_AGENTS = [
     permissionTier: 'worker' as const,
     status: 'idle' as const,
     world: { room: 'dev-room', x: 4, y: 3, facing: 'south' as const },
+    ensName: 'backend.commonos.eth',
+    ensRecords: {
+      name: 'backend.commonos.eth',
+      agentId: 'agt_backend_01',
+      fleetId: 'flt_demo_01',
+      role: 'backend-engineer',
+      status: 'online',
+      peerId: '12D3KooWBack01',
+      multiaddr: '/ip4/10.0.1.6/tcp/9001/p2p/12D3KooWBack01',
+      commonsAgentId: null,
+      walletAddress: '0x5678...',
+      url: 'http://localhost:3000/world?fleet=flt_demo_01',
+      description: 'CommonOS backend-engineer agent',
+    },
+    ensStatus: 'resolved' as const,
   },
   {
     agentId: 'agt_frontend_01',
@@ -33,6 +63,21 @@ const MOCK_AGENTS = [
     permissionTier: 'worker' as const,
     status: 'idle' as const,
     world: { room: 'dev-room', x: 7, y: 3, facing: 'south' as const },
+    ensName: 'frontend.commonos.eth',
+    ensRecords: {
+      name: 'frontend.commonos.eth',
+      agentId: 'agt_frontend_01',
+      fleetId: 'flt_demo_01',
+      role: 'frontend-engineer',
+      status: 'online',
+      peerId: '12D3KooWFront01',
+      multiaddr: '/ip4/10.0.1.7/tcp/9001/p2p/12D3KooWFront01',
+      commonsAgentId: null,
+      walletAddress: '0x90ab...',
+      url: 'http://localhost:3000/world?fleet=flt_demo_01',
+      description: 'CommonOS frontend-engineer agent',
+    },
+    ensStatus: 'resolved' as const,
   },
 ]
 
@@ -41,7 +86,11 @@ export function startMockSimulation(): () => void {
   const agents = useAgentStore.getState()
 
   world.setFleet(MOCK_FLEET.fleetId, MOCK_FLEET.name, MOCK_FLEET.rooms)
-  MOCK_AGENTS.forEach((a) => agents.upsertAgent(a))
+  for (const a of MOCK_AGENTS) {
+    const { ensName, ensRecords, ensStatus, ...agent } = a
+    agents.upsertAgent(agent)
+    agents.setEnsInfo(a.agentId, a.ensName ?? null, a.ensRecords ?? null, a.ensStatus ?? null)
+  }
 
   const timers: ReturnType<typeof setTimeout>[] = []
   const t = (ms: number, fn: () => void) => timers.push(setTimeout(fn, ms))

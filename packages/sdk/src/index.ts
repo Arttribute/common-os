@@ -165,4 +165,13 @@ export class CommonOSAgentClient {
 			},
 		);
 	}
+
+	async resolveAgent(name: string) {
+		const res = await fetch(
+			`${this.apiUrl}/agents/resolve/${encodeURIComponent(name)}`,
+			{ headers: { Authorization: `Bearer ${this.agentToken}` } },
+		);
+		if (!res.ok) return null;
+		return res.json();
+	}
 }

@@ -16,6 +16,22 @@ export interface AgentPod {
   namespaceId?: string | null
 }
 
+export interface AgentENSRecord {
+  name: string
+  agentId: string | null
+  fleetId: string | null
+  role: string | null
+  status: string | null
+  peerId: string | null
+  multiaddr: string | null
+  commonsAgentId: string | null
+  walletAddress: string | null
+  url: string | null
+  description: string | null
+}
+
+export type ENSStatus = 'resolving' | 'resolved' | 'error'
+
 export interface Agent {
   agentId: string
   role: string
@@ -28,6 +44,9 @@ export interface Agent {
   currentTask?: { taskId: string; description: string }
   speechBubble?: { text: string; expiresAt: number }
   recentActions: string[]
+  ensName?: string | null
+  ensRecords?: AgentENSRecord | null
+  ensStatus?: ENSStatus | null
 }
 
 interface AgentStore {
@@ -46,6 +65,7 @@ interface AgentStore {
   clearSpeechBubble: (agentId: string) => void
   setCurrentTask: (agentId: string, task: Agent['currentTask']) => void
   completeTask: (agentId: string) => void
+  setEnsInfo: (agentId: string, ensName: string | null, ensRecords?: AgentENSRecord | null, ensStatus?: ENSStatus | null) => void
 }
 
 export const useAgentStore = create<AgentStore>((set) => ({
@@ -162,6 +182,18 @@ export const useAgentStore = create<AgentStore>((set) => ({
         agents: {
           ...state.agents,
           [agentId]: { ...agent, currentTask: undefined, status: 'idle' },
+        },
+      }
+    }),
+
+  setEnsInfo: (agentId, ensName, ensRecords, ensStatus) =>
+    set((state) => {
+      const agent = state.agents[agentId]
+      if (!agent) return state
+      return {
+        agents: {
+          ...state.agents,
+          [agentId]: { ...agent, ensName, ensRecords, ensStatus },
         },
       }
     }),

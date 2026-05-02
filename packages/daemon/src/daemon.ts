@@ -197,11 +197,11 @@ async function main() {
   // Push initial workspace snapshot so the UI can show the pod filesystem immediately
   await emitWorkspaceSnapshot().catch(() => {});
 
-  await registerAxlPeer();
-  await discoverFleetPeers();
+  void registerAxlPeer();
+  void discoverFleetPeers();
 
   setInterval(() => {
-    agent.emit({ type: "heartbeat" }).catch((err) => {
+    agent.emit({ type: "heartbeat" }).catch((err: unknown) => {
       console.error("[daemon] heartbeat error:", err);
     });
   }, HEARTBEAT_MS);
@@ -427,7 +427,7 @@ async function worldMove(room: string, x: number, y: number): Promise<void> {
   worldPos.y = y;
   await agent
     .emit({ type: "world_move", payload: { room, x, y } })
-    .catch((err) => console.warn("[world] move emit failed:", err));
+    .catch((err: unknown) => console.warn("[world] move emit failed:", err));
 }
 
 async function worldInteract(
@@ -439,7 +439,7 @@ async function worldInteract(
 ): Promise<void> {
   await agent
     .emit({ type: "world_interact", payload: { objectId, action, room, x, y } })
-    .catch((err) => console.warn("[world] interact emit failed:", err));
+    .catch((err: unknown) => console.warn("[world] interact emit failed:", err));
   console.log(`[world] interact  obj=${objectId}  action=${action}`);
 }
 
@@ -453,7 +453,7 @@ async function worldCreateObject(
   const objectId = `obj_${Date.now().toString(36)}${randomBytes(3).toString("hex")}`;
   await agent
     .emit({ type: "world_create_object", payload: { objectId, objectType, room, x, y, label } })
-    .catch((err) => console.warn("[world] create_object emit failed:", err));
+    .catch((err: unknown) => console.warn("[world] create_object emit failed:", err));
   console.log(`[world] created object  type=${objectType}  id=${objectId}  label=${label ?? ""}`);
   return objectId;
 }
@@ -471,6 +471,7 @@ async function sendAxlMessage(
   toMultiaddr: string,
   toAgentId: string,
   content: string,
+  options: { emitEvent?: boolean } = {},
 ): Promise<void> {
   const res = await fetch(`${AXL_API_URL}/send`, {
     method: "POST",
@@ -481,11 +482,62 @@ async function sendAxlMessage(
 
   if (!res.ok) throw new Error(`AXL send failed: ${res.status}`);
 
-  await agent
-    .emit({ type: "message_sent", payload: { toAgentId, preview: content.slice(0, 100) } })
-    .catch(() => {});
+  if (options.emitEvent !== false) {
+    await agent
+      .emit({ type: "message_sent", payload: { toAgentId, preview: content.slice(0, 100) } })
+      .catch(() => {});
+  }
 
   console.log(`[daemon] AXL message sent → ${toAgentId}  "${content.slice(0, 60)}"`);
+}
+
+interface ResolvedAgent {
+  name: string
+  agentId: string | null
+  commonsAgentId?: string | null
+  fleetId: string | null
+  role: string | null
+  status: string | null
+  peerId: string | null
+  multiaddr: string | null
+  walletAddress?: string | null
+  source: 'db' | 'ens'
+}
+
+async function resolveAgentByName(name: string): Promise<ResolvedAgent | null> {
+  const res = await fetch(
+    `${config.apiUrl}/agents/resolve/${encodeURIComponent(name)}`,
+    {
+      headers: { Authorization: `Bearer ${config.agentToken}` },
+      signal: AbortSignal.timeout(10_000),
+    },
+  );
+
+  if (!res.ok) return null;
+  return await res.json() as ResolvedAgent;
+}
+
+async function recordAgentMessage(toAgentId: string, content: string): Promise<void> {
+  const res = await fetch(
+    `${config.apiUrl}/fleets/${config.fleetId}/agents/${toAgentId}/message`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.agentToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        fromAgentId: config.agentId,
+        toAgentId,
+        content,
+      }),
+      signal: AbortSignal.timeout(10_000),
+    },
+  );
+
+  if (!res.ok) {
+    throw new Error(`message registry write failed: ${res.status}`);
+  }
 }
 
 // ─── Human message polling loop ───────────────────────────────────────────
@@ -594,7 +646,7 @@ async function handleTask(task: { id: string; description: string }) {
 
     if (config.managerAgentId && config.managerMultiaddr) {
       const summary = `Task complete: ${task.description.slice(0, 60)} → ${output.slice(0, 80)}`;
-      await sendAxlMessage(config.managerMultiaddr, config.managerAgentId, summary).catch(
+      void sendAxlMessage(config.managerMultiaddr, config.managerAgentId, summary).catch(
         (err) => console.warn("[daemon] AXL manager notify failed:", err),
       );
     }
@@ -674,6 +726,8 @@ ${snapshot}
 | cli_list_directory | path? | List directory contents |
 | cli_run_command | command, cwd? | Execute any shell command |
 | cli_search_files | pattern, path? | Find files matching a glob pattern |
+| resolve_agent | name | Resolve another CommonOS agent via DB/ENS |
+| send_axl_message | to_name, message | Record a message and attempt AXL delivery |
 
 **Rules:**
 1. All paths are relative to \`${rootDir}\`
@@ -787,6 +841,51 @@ async function toolSearchFiles(args: { pattern: string; path?: string }): Promis
   }
 }
 
+async function toolResolveAgent(args: { name: string }): Promise<string> {
+  if (!args.name) return '[error: name is required]';
+  const resolved = await resolveAgentByName(args.name);
+  if (!resolved) return `[agent not found: ${args.name}]`;
+  return JSON.stringify(resolved, null, 2);
+}
+
+async function toolSendAxlMessage(args: { to_name: string; message: string }): Promise<string> {
+  if (!args.to_name) return '[error: to_name is required]';
+  if (!args.message) return '[error: message is required]';
+
+  const resolved = await resolveAgentByName(args.to_name);
+  if (!resolved?.agentId) return `[agent not found: ${args.to_name}]`;
+
+  let recorded = false;
+  if (resolved.fleetId === config.fleetId) {
+    try {
+      await recordAgentMessage(resolved.agentId, args.message);
+      recorded = true;
+    } catch (err) {
+      console.warn("[daemon] message registry write failed:", err instanceof Error ? err.message : err);
+    }
+  }
+
+  if (!resolved.multiaddr) {
+    if (recorded) {
+      return `[message recorded for ${args.to_name}; target has no live AXL route yet]`;
+    }
+    return `[agent found but no AXL route for ${args.to_name}]`;
+  }
+
+  try {
+    await sendAxlMessage(resolved.multiaddr, resolved.agentId, args.message, { emitEvent: !recorded });
+    return recorded
+      ? `[message recorded and sent to ${args.to_name} via AXL]`
+      : `[message sent to ${args.to_name} via AXL]`;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (recorded) {
+      return `[message recorded for ${args.to_name}; AXL unavailable: ${message}]`;
+    }
+    return `[AXL send failed: ${message}]`;
+  }
+}
+
 async function executeTool(call: { tool: string; args: Record<string, unknown> }): Promise<string> {
   const tool = call.tool.replace(/^cli_/, ""); // strip optional cli_ prefix
   const args = call.args ?? {};
@@ -802,8 +901,12 @@ async function executeTool(call: { tool: string; args: Record<string, unknown> }
       return await toolRunCommand(args as { command: string; cwd?: string });
     case "search_files":
       return await toolSearchFiles(args as { pattern: string; path?: string });
+    case "resolve_agent":
+      return await toolResolveAgent(args as { name: string });
+    case "send_axl_message":
+      return await toolSendAxlMessage(args as { to_name: string; message: string });
     default:
-      return `[error: unknown tool "${tool}". Available: read_file, write_file, list_directory, run_command, search_files]`;
+      return `[error: unknown tool "${tool}". Available: read_file, write_file, list_directory, run_command, search_files, resolve_agent, send_axl_message]`;
   }
 }
 

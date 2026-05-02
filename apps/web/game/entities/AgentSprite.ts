@@ -47,6 +47,7 @@ export class AgentSprite {
   private lastTileY: number;
   private lastSpeechText: string | undefined;
   private lastActionText: string | undefined;
+  private lastEnsName: string | undefined;
   private isSelected = false;
 
   constructor(
@@ -175,6 +176,19 @@ export class AgentSprite {
     if (bubbleText !== this.lastSpeechText) {
       this.lastSpeechText = bubbleText;
       bubbleText ? this.showBubble(bubbleText) : this.hideBubble();
+    }
+
+    const ensName = agent.ensName ?? undefined
+    if (ensName !== this.lastEnsName) {
+      this.lastEnsName = ensName
+      if (ensName) {
+        this.nameLabel.setText(ensName.split('.')[0] ?? ensName)
+        this.nameLabel.setColor('#10b981')
+      } else {
+        const shortRole = this.role.replace("-engineer", "").replace(/-/g, " ")
+        this.nameLabel.setText(shortRole)
+        this.nameLabel.setColor('#f1f5f9')
+      }
     }
   }
 

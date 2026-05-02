@@ -753,7 +753,7 @@ export function AgentDetailModal() {
   const searchParams = useSearchParams()
   const { getAccessToken, authenticated } = usePrivy()
 
-  const [tab, setTab] = useState<'sessions' | 'computer'>('sessions')
+  const [tab, setTab] = useState<'sessions' | 'computer' | 'ens'>('sessions')
   const [sessions, setSessions]   = useState<AgentSession[]>([])
   const [snapshot, setSnapshot]   = useState<string | null>(null)
   const [sessLoading, setSessLoading] = useState(false)
@@ -972,6 +972,9 @@ export function AgentDetailModal() {
           <TabButton active={tab === 'computer'} onClick={() => setTab('computer')}>
             🖥️ Computer
           </TabButton>
+          <TabButton active={tab === 'ens'} onClick={() => setTab('ens')}>
+            🔗 ENS Passport
+          </TabButton>
         </div>
 
         {/* Content */}
@@ -991,13 +994,15 @@ export function AgentDetailModal() {
               onNewSession={() => void createSession()}
               creating={creating}
             />
-          ) : (
+          ) : tab === 'computer' ? (
             <ComputerView
               agentRole={shortRole}
               pod={agent.pod}
               snapshot={snapshot}
               loading={snapLoading}
             />
+          ) : (
+            <ENSPassportView agent={agent} />
           )}
         </div>
       </div>
@@ -1072,5 +1077,222 @@ function TabButton({ active, onClick, children }: {
     >
       {children}
     </button>
+  )
+}
+
+// ─── ENS Passport view ────────────────────────────────────────────────────
+
+function ENSPassportView({ agent }: { agent: import('@/store/agentStore').Agent }) {
+  if (!agent.ensName && !agent.ensRecords) {
+    return (
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: 32, marginBottom: 12 }}>🔗</div>
+          <div style={{ fontSize: 11, color: '#475569', fontFamily: 'monospace', marginBottom: 4 }}>
+            No ENS identity registered
+          </div>
+          <div style={{ fontSize: 9, color: '#1e293b', fontFamily: 'monospace' }}>
+            This agent has not been registered on ENS yet.
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  const records = agent.ensRecords
+  const ensName = agent.ensName ?? records?.name ?? null
+
+  return (
+    <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
+      {/* Header with ENS name and verification badge */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20,
+        padding: '12px 16px',
+        background: 'rgba(16, 185, 129, 0.06)',
+        border: '1px solid rgba(16, 185, 129, 0.12)',
+        borderRadius: 8,
+      }}>
+        <div style={{
+          width: 36, height: 36, borderRadius: '50%',
+          background: 'rgba(16, 185, 129, 0.15)',
+          border: '2px solid rgba(16, 185, 129, 0.3)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 16,
+          flexShrink: 0,
+        }}>
+          🆔
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 14, color: '#10b981', fontFamily: 'monospace', fontWeight: 700 }}>
+              {ensName ?? '—'}
+            </span>
+            <span style={{
+              fontSize: 8, color: '#10b981', fontFamily: 'monospace',
+              background: 'rgba(16, 185, 129, 0.15)',
+              border: '1px solid rgba(16, 185, 129, 0.3)',
+              borderRadius: 3, padding: '1px 6px',
+              textTransform: 'uppercase', letterSpacing: 0.5,
+            }}>
+              ✓ verified
+            </span>
+          </div>
+          <div style={{ fontSize: 9, color: '#475569', fontFamily: 'monospace', marginTop: 2 }}>
+            Resolved via Sepolia
+          </div>
+        </div>
+      </div>
+
+      {/* External link */}
+      {ensName && (
+        <div style={{ marginBottom: 20 }}>
+          <a
+            href={`https://app.ens.domains/${ensName}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 5,
+              fontSize: 10,
+              color: '#93c5fd',
+              fontFamily: 'monospace',
+              textDecoration: 'none',
+              background: 'rgba(59, 130, 246, 0.08)',
+              border: '1px solid rgba(59, 130, 246, 0.2)',
+              borderRadius: 5,
+              padding: '6px 10px',
+            }}
+          >
+            🌐 View on ENS Explorer
+            <span style={{ fontSize: 8, color: '#3b82f6' }}>↗</span>
+          </a>
+        </div>
+      )}
+
+      {/* Web3 Identity & Routing block */}
+      <div style={{
+        border: '1px solid rgba(255,255,255,0.06)',
+        borderRadius: 8,
+        overflow: 'hidden',
+        marginBottom: 16,
+      }}>
+        <div style={{
+          background: 'rgba(59, 130, 246, 0.08)',
+          borderBottom: '1px solid rgba(255,255,255,0.04)',
+          padding: '8px 14px',
+        }}>
+          <span style={{ fontSize: 10, color: '#93c5fd', fontFamily: 'monospace', fontWeight: 600 }}>
+            [ Web3 Identity & Routing ]
+          </span>
+        </div>
+        <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <PassportRow label="ENS Name" value={ensName ?? '—'} color="#10b981" />
+          <PassportRow label="Agent ID" value={records?.agentId ?? agent.agentId} color="#64748b" mono />
+          {records?.fleetId && (
+            <PassportRow label="Fleet ID" value={records.fleetId} color="#475569" mono />
+          )}
+          {records?.multiaddr && (
+            <PassportRow label="AXL Route" value={records.multiaddr} color="#f59e0b" mono />
+          )}
+          {records?.peerId && (
+            <PassportRow label="Peer ID" value={records.peerId} color="#64748b" mono />
+          )}
+          {records?.role && (
+            <PassportRow label="Role" value={records.role} color="#94a3b8" />
+          )}
+          {records?.walletAddress && (
+            <PassportRow label="Wallet" value={records.walletAddress} color="#64748b" mono />
+          )}
+          {records?.commonsAgentId && (
+            <PassportRow label="AGC Agent ID" value={records.commonsAgentId} color="#1e3a5f" mono />
+          )}
+        </div>
+      </div>
+
+      {/* On-chain status */}
+      <div style={{
+        border: '1px solid rgba(255,255,255,0.06)',
+        borderRadius: 8,
+        overflow: 'hidden',
+        marginBottom: 16,
+      }}>
+        <div style={{
+          borderBottom: '1px solid rgba(255,255,255,0.04)',
+          padding: '8px 14px',
+          display: 'flex', alignItems: 'center', gap: 6,
+        }}>
+          <span style={{ fontSize: 10, color: '#94a3b8', fontFamily: 'monospace' }}>Status</span>
+          <span style={{
+            width: 6, height: 6, borderRadius: '50%',
+            background: agent.ensStatus === 'resolved' ? '#10b981' : agent.ensStatus === 'resolving' ? '#f59e0b' : '#ef4444',
+            boxShadow: agent.ensStatus === 'resolved' ? '0 0 6px #10b981' : agent.ensStatus === 'resolving' ? '0 0 6px #f59e0b' : 'none',
+          }} />
+          <span style={{ fontSize: 9, color: '#64748b', fontFamily: 'monospace' }}>
+            {agent.ensStatus === 'resolved' ? 'Resolved on-chain' : agent.ensStatus === 'resolving' ? 'Resolving…' : agent.ensStatus === 'error' ? 'Resolution failed' : 'Pending'}
+          </span>
+        </div>
+        {records?.description && (
+          <div style={{ padding: '10px 14px' }}>
+            <span style={{ fontSize: 9, color: '#64748b', fontFamily: 'monospace', lineHeight: 1.6 }}>
+              {records.description}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* URL */}
+      {records?.url && (
+        <div style={{
+          border: '1px solid rgba(255,255,255,0.06)',
+          borderRadius: 8,
+          padding: '10px 14px',
+          marginBottom: 16,
+          display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          <span style={{ fontSize: 8, color: '#334155', fontFamily: 'monospace', textTransform: 'uppercase' }}>url</span>
+          <a
+            href={records.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              fontSize: 9,
+              color: '#93c5fd',
+              fontFamily: 'monospace',
+              textDecoration: 'none',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              flex: 1,
+            }}
+          >
+            {records.url}
+          </a>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function PassportRow({ label, value, color, mono }: {
+  label: string; value: string; color: string; mono?: boolean
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+      <span style={{
+        fontSize: 8, color: '#334155', fontFamily: 'monospace',
+        textTransform: 'uppercase', letterSpacing: 0.5, minWidth: 70, flexShrink: 0,
+      }}>
+        {label}
+      </span>
+      <span style={{
+        fontSize: 9,
+        color,
+        fontFamily: mono ? 'monospace' : 'inherit',
+        wordBreak: 'break-all',
+      }}>
+        {value}
+      </span>
+    </div>
   )
 }

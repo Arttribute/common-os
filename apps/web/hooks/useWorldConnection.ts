@@ -4,7 +4,7 @@ import { useAgentStore } from '@/store/agentStore'
 import { useWorldStore } from '@/store/worldStore'
 import { useSocketStore } from '@/store/socketStore'
 import { startMockSimulation } from '@/lib/mockSimulation'
-import type { AgentStatus } from '@/store/agentStore'
+import type { AgentStatus, Agent, ENSStatus } from '@/store/agentStore'
 
 const API_STATUS_MAP: Record<string, AgentStatus> = {
   provisioning: 'provisioning',
@@ -29,6 +29,7 @@ function toUiStatus(s: string): AgentStatus {
 export function useWorldConnection(fleetId?: string, getToken?: () => Promise<string | null>) {
   const upsertAgent = useAgentStore((s) => s.upsertAgent)
   const setPodInfo  = useAgentStore((s) => s.setPodInfo)
+  const setEnsInfo   = useAgentStore((s) => s.setEnsInfo)
   const updateStatus = useAgentStore((s) => s.updateStatus)
   const updatePosition = useAgentStore((s) => s.updatePosition)
   const setCurrentAction = useAgentStore((s) => s.setCurrentAction)
@@ -90,6 +91,15 @@ export function useWorldConnection(fleetId?: string, getToken?: () => Promise<st
             world?: { room: string; x: number; y: number; facing: string }
             pod?: { provider?: string; region?: string; namespaceId?: string | null }
             createdAt?: string
+            ensName?: string | null
+            ensRecords?: {
+              name: string; agentId: string | null; fleetId: string | null
+              role: string | null; status: string | null
+              peerId: string | null; multiaddr: string | null
+              commonsAgentId: string | null; walletAddress: string | null
+              url: string | null; description: string | null
+            } | null
+            ensStatus?: 'resolving' | 'resolved' | 'error' | null
           }>
           // Upsert agents with full info; snapshot events will overwrite live status/position
           for (const a of fullAgents) {
@@ -110,7 +120,11 @@ export function useWorldConnection(fleetId?: string, getToken?: () => Promise<st
                 namespaceId: a.pod.namespaceId ?? null,
               } : undefined,
               createdAt: a.createdAt ? new Date(a.createdAt).getTime() : undefined,
+              ensName: a.ensName ?? null,
             })
+            if (a.ensName || a.ensRecords) {
+              setEnsInfo(a._id, a.ensName ?? null, a.ensRecords ?? null, a.ensStatus ?? null)
+            }
           }
         }
 
@@ -206,6 +220,11 @@ export function useWorldConnection(fleetId?: string, getToken?: () => Promise<st
                 upsertObject({ objectId: p.objectId, objectType: p.objectType, room: p.room, x: p.x, y: p.y, label: p.label, createdByAgentId: agentId })
                 break
               }
+              case 'identity_updated': {
+                const p = event.payload as { ensName?: string | null; ensRecords?: Record<string, unknown> | null; ensStatus?: string | null }
+                setEnsInfo(agentId, p.ensName ?? null, p.ensRecords as Agent['ensRecords'] ?? null, (p.ensStatus as ENSStatus) ?? null)
+                break
+              }
             }
           } else if (data['type'] === 'task_queued') {
             const agentId = data['agentId'] as string
@@ -218,6 +237,12 @@ export function useWorldConnection(fleetId?: string, getToken?: () => Promise<st
           } else if (data['type'] === 'human_message') {
             // Human sent a message — show agent as "thinking"
             updateStatus(data['agentId'] as string, 'working')
+          } else if (data['type'] === 'agent_message') {
+            const fromAgentId = data['fromAgentId'] as string
+            const toAgentId = data['toAgentId'] as string
+            const preview = data['preview'] as string
+            scheduleSpeechBubble(fromAgentId, `→ ${preview}`)
+            scheduleSpeechBubble(toAgentId, preview)
           } else if (data['type'] === 'agent_response') {
             // Agent responded — show response as speech bubble
             const agentId = data['agentId'] as string

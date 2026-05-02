@@ -73,11 +73,35 @@ export function Inspector() {
       </div>
 
       <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {/* ID + Room */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-          <Row label="id"   value={agent.agentId} mono truncate />
-          <Row label="room" value={`${agent.world.room} (${agent.world.x}, ${agent.world.y})`} mono />
-        </div>
+        {/* Identity — ENS name takes priority */}
+        {agent.ensName ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            <Row label="ens" value={agent.ensName} mono truncate />
+            <Row label="id"   value={agent.agentId} mono truncate />
+            <Row label="room" value={`${agent.world.room} (${agent.world.x}, ${agent.world.y})`} mono />
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            <Row label="id"   value={agent.agentId} mono truncate />
+            <Row label="room" value={`${agent.world.room} (${agent.world.x}, ${agent.world.y})`} mono />
+          </div>
+        )}
+
+        {/* ENS verified badge */}
+        {agent.ensStatus === 'resolved' && agent.ensName && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <VerificationBadge />
+            <span style={{ fontSize: 8, color: '#10b981', fontFamily: 'monospace' }}>ENS Verified</span>
+          </div>
+        )}
+
+        {/* ENS resolving indicator */}
+        {agent.ensStatus === 'resolving' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <PulsingDot color="#f59e0b" />
+            <span style={{ fontSize: 8, color: '#f59e0b', fontFamily: 'monospace' }}>resolving ENS…</span>
+          </div>
+        )}
 
         {/* Pod info */}
         {agent.pod && (
@@ -260,5 +284,29 @@ function StatusBadge({ status }: { status: string }) {
       }} />
       <span style={{ fontSize: 9, color, fontFamily: 'monospace' }}>{status}</span>
     </div>
+  )
+}
+
+function VerificationBadge() {
+  return (
+    <span
+      style={{
+        width: 10,
+        height: 10,
+        borderRadius: '50%',
+        background: '#10b981',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        boxShadow: '0 0 8px rgba(16, 185, 129, 0.5)',
+        flexShrink: 0,
+        fontSize: 6,
+        color: '#fff',
+        fontWeight: 700,
+        lineHeight: 1,
+      }}
+    >
+      ✓
+    </span>
   )
 }

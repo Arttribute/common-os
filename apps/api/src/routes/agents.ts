@@ -4,6 +4,7 @@ import { agents, fleets, messages } from "../db/mongo.js";
 import { broadcastToFleet } from "../db/memory.js";
 import { provisionAgent } from "../services/provisioner.js";
 import { terminateAgentPod, terminateAgentPodEks } from "../services/cloud-init.js";
+import { registerAgentENS } from "../services/ens.js";
 import { removeAgentFromWorldState } from "../services/world.js";
 import type { Env, MessageDoc } from "../types.js";
 
@@ -115,6 +116,25 @@ router.patch("/:id/agents/:agentId", async (c) => {
 			},
 			{ $set: update },
 		);
+		const agent = await (await agents()).findOne({
+			_id: c.req.param("agentId"),
+			fleetId: c.req.param("id"),
+			tenantId: c.get("tenantId"),
+		}).lean();
+		if (agent && (update["axl.multiaddr"] !== undefined || update["axl.peerId"] !== undefined || update["status"] !== undefined)) {
+			void registerAgentENS(
+				agent._id,
+				{
+					fleetId: agent.fleetId,
+					role: agent.config.role,
+					status: agent.status,
+					peerId: agent.axl.peerId,
+					multiaddr: agent.axl.multiaddr,
+					commonsAgentId: agent.commons.agentId,
+				},
+				agent.commons.walletAddress,
+			);
+		}
 		return c.json({ ok: true });
 	} catch {
 		return c.json({ error: "database error" }, 503);
@@ -171,7 +191,11 @@ router.get("/:id/peers", async (c) => {
 			.lean();
 
 		return c.json(
-			list.map((a) => ({
+			list.map((a: {
+				_id: string
+				permissionTier: "manager" | "worker"
+				axl: { peerId: string | null; multiaddr: string | null }
+			}) => ({
 				agentId: a._id,
 				permissionTier: a.permissionTier,
 				peerId: a.axl.peerId,

@@ -9,3 +9,5 @@ dist
 .DS_Store
 coverage
 sa-key.json
+package-lock.json
+*.tsbuildinfo
