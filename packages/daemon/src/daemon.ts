@@ -516,6 +516,15 @@ async function pollAxlInbox(): Promise<void> {
       }).catch((err) => {
         const msg = err instanceof Error ? err.message : String(err);
         console.warn(`[daemon] AXL message enqueue failed: ${msg}`);
+        const taskDescription = `[AXL from ${senderLabel}]\n${content}`;
+        void handleTask(
+          { id: `axl_${Date.now()}`, description: taskDescription },
+          {
+            replyToPeerId: fromPeerId !== "unknown" ? fromPeerId : undefined,
+            replyToAgentId: resolvedAgentId ?? envelope.fromAgentId,
+            incomingMessageId: envelope.id,
+          },
+        ).catch(() => {});
       });
     }
   }
