@@ -57,6 +57,7 @@ export interface AgentDoc {
     agentId: string | null
     apiKey: string | null
     walletAddress: string | null
+    registryAgentId?: string | null
   }
   pod: {
     namespaceId: string | null

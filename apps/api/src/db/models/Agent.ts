@@ -10,6 +10,7 @@ const AgentSchema = new Schema<AgentDoc>(
       agentId: String,
       apiKey: String,
       walletAddress: String,
+      registryAgentId: String,
     },
     pod: {
       namespaceId: String,

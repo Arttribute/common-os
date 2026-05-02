@@ -4,6 +4,8 @@ import { dequeueTask, dequeueHumanMessage, broadcastToFleet } from '../db/memory
 import { registerWithAgentCommons } from '../services/provisioner.js'
 import type { Env } from '../types.js'
 
+const ETH_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/
+
 // Helper to resolve the Agent Commons sessionId for a CommonOS/Mongo session.
 // This value is passed as `sessionId` to /v1/agents/run/stream.
 async function resolveAgcSessionId(sessionId: string | null | undefined): Promise<string | null> {
@@ -255,12 +257,28 @@ router.post('/:agentId/bootstrap', async (c) => {
     // The platform key is used by daemons to run agents (never stored in DB)
     const platformKey = process.env.AGENTCOMMONS_API_KEY ?? null
 
-    // Agent already registered in Agent Commons — just return the platform key
+    // Agent already registered in Agent Commons — return the address-form id.
     if (agent.commons.agentId) {
+      const runtimeAgentId = ETH_ADDRESS_RE.test(agent.commons.agentId)
+        ? agent.commons.agentId
+        : ETH_ADDRESS_RE.test(agent.commons.walletAddress ?? '')
+          ? agent.commons.walletAddress
+          : null
+
+      if (!runtimeAgentId) {
+        return c.json({ error: 'agent is missing Agent Commons wallet address identity' }, 409)
+      }
+      if (runtimeAgentId !== agent.commons.agentId) {
+        await col.updateOne(
+          { _id: agentId },
+          { $set: { 'commons.agentId': runtimeAgentId, updatedAt: new Date() } },
+        )
+      }
+
       return c.json({
-        commonsAgentId: agent.commons.agentId,
+        commonsAgentId: runtimeAgentId,
         commonsApiKey: platformKey,
-        walletAddress: agent.commons.walletAddress,
+        walletAddress: runtimeAgentId,
       })
     }
 
@@ -278,6 +296,7 @@ router.post('/:agentId/bootstrap', async (c) => {
           $set: {
             'commons.agentId': commons.agentId,
             'commons.walletAddress': commons.walletAddress,
+            'commons.registryAgentId': commons.registryAgentId,
             updatedAt: new Date(),
           },
         },

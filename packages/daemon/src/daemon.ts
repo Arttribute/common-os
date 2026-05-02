@@ -27,6 +27,7 @@ const HEALTH_MS      = 10_000;
 const AXL_INBOX_MS   = 5_000;
 const WORKSPACE_DIR  = process.env.COMMONOS_WORKSPACE ?? config.workspaceDir;
 const AXL_API_URL    = process.env.AXL_API_URL ?? "http://localhost:4001";
+const ETH_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 
 type AgcMessage = { role: "user" | "assistant"; content: string };
 
@@ -80,6 +81,10 @@ async function bootstrapCommons(): Promise<void> {
       commonsApiKey?: string | null;
     };
     if (data.commonsApiKey && data.commonsAgentId) {
+      if (!ETH_ADDRESS_RE.test(data.commonsAgentId)) {
+        console.warn(`[daemon] bootstrap: Agent Commons agentId is not a wallet address: ${data.commonsAgentId}`);
+        return;
+      }
       config.commonsApiKey = data.commonsApiKey;
       config.commonsAgentId = data.commonsAgentId;
       console.log(`[daemon] Agent Commons ready  agentId=${config.commonsAgentId}`);
@@ -139,6 +144,10 @@ async function recoverSessionFromApi(): Promise<string | null> {
 async function initSession(): Promise<void> {
   if (!config.commonsAgentId || !config.commonsApiKey) {
     console.log("[daemon] AGC not configured — skipping session init");
+    return;
+  }
+  if (!ETH_ADDRESS_RE.test(config.commonsAgentId)) {
+    console.warn(`[daemon] AGC agent id must be wallet address; got ${config.commonsAgentId}`);
     return;
   }
 

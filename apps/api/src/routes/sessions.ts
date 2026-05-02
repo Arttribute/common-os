@@ -4,11 +4,13 @@ import { agents, agentSessions, humanMessages } from '../db/mongo.js'
 import type { Env } from '../types.js'
 
 const AGC_BASE_URL = (process.env.AGC_API_URL ?? 'https://api.agentcommons.io').replace(/\/$/, '')
+const ETH_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/
 
 async function createAgcSession(commonsAgentId: string, title: string): Promise<string> {
   const apiKey = process.env.AGENTCOMMONS_API_KEY
   if (!apiKey) throw new Error('AGENTCOMMONS_API_KEY is not configured')
   if (!commonsAgentId) throw new Error('agent is not registered with Agent Commons')
+  if (!ETH_ADDRESS_RE.test(commonsAgentId)) throw new Error('Agent Commons agentId must be a wallet address')
   try {
     const res = await fetch(`${AGC_BASE_URL}/v1/sessions`, {
       method: 'POST',
