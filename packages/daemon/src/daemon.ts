@@ -28,6 +28,8 @@ const AXL_INBOX_MS   = 5_000;
 const WORKSPACE_DIR  = process.env.COMMONOS_WORKSPACE ?? config.workspaceDir;
 const AXL_API_URL    = process.env.AXL_API_URL ?? "http://localhost:4001";
 
+type AgcMessage = { role: "user" | "assistant"; content: string };
+
 // Session ID is created once at startup and persisted so the agent remembers
 // all previous conversations across daemon restarts.
 let agentSessionId: string | null = null;
@@ -545,7 +547,13 @@ async function pollMessages(): Promise<void> {
       );
 
       if (res.status === 200) {
-        const msg = await res.json() as { id: string; content: string; sessionId?: string | null; agcSessionId?: string | null };
+        const msg = await res.json() as {
+          id: string;
+          content: string;
+          messages?: AgcMessage[];
+          sessionId?: string | null;
+          agcSessionId?: string | null;
+        };
         if (msg?.id && msg?.content) {
           await handleMessage(msg);
         }
@@ -557,13 +565,19 @@ async function pollMessages(): Promise<void> {
   }
 }
 
-async function handleMessage(msg: { id: string; content: string; sessionId?: string | null; agcSessionId?: string | null }): Promise<void> {
+async function handleMessage(msg: {
+  id: string;
+  content: string;
+  messages?: AgcMessage[];
+  sessionId?: string | null;
+  agcSessionId?: string | null;
+}): Promise<void> {
   console.log(`[daemon] message ${msg.id}: ${msg.content.slice(0, 80)}`);
 
   await agent.emit({ type: "state_change", payload: { status: "working" } });
 
   try {
-    const response = await executeTask(msg.content, msg.agcSessionId ?? undefined);
+    const response = await executeTask(msg.content, msg.agcSessionId ?? undefined, msg.messages);
 
     await fetch(
       `${config.apiUrl}/agents/${config.agentId}/messages/${msg.id}/respond`,
@@ -653,9 +667,9 @@ async function handleTask(task: { id: string; description: string }) {
 
 // ─── Task execution ────────────────────────────────────────────────────────
 
-async function executeTask(description: string, agcSessionId?: string): Promise<string> {
+async function executeTask(description: string, agcSessionId?: string, messages?: AgcMessage[]): Promise<string> {
   if (config.integrationPath === "openclaw") return await runViaOpenClaw(description);
-  if (config.integrationPath === "native") return await runViaNative(description, agcSessionId);
+  if (config.integrationPath === "native") return await runViaNative(description, agcSessionId, messages);
   await sleep(2_000);
   return `completed: ${description}`;
 }
@@ -695,34 +709,41 @@ function buildWorkspaceSnapshot(dir: string, maxDepth = 2): string {
 }
 
 function buildFilesystemManifest(rootDir: string, snapshot: string): string {
-  return `## Pod Workspace Context
+  return `
+## CLI Local File System — ACTIVE
 
-You are running inside your own Kubernetes pod on CommonOS. The daemon handles all \
-local tool execution automatically.
+You are running inside a CLI-like daemon session with DIRECT access to your own CommonOS Kubernetes pod workspace. The following tools are in your tool list and execute in the pod in real time.
 
-**Workspace root:** \`${rootDir}\`
+**Session root:** ${rootDir}
 
-**Current workspace snapshot:**
+### Current file system (live snapshot)
 \`\`\`
 ${snapshot}
 \`\`\`
 
-### Available local tools
+### MANDATORY RULES — READ CAREFULLY
 
-| Tool | Args | Description |
-|------|------|-------------|
-| cli_read_file | path | Read a file (relative to workspace root) |
-| cli_write_file | path, content | Create or overwrite a file |
-| cli_list_directory | path? | List directory contents |
-| cli_run_command | command, cwd? | Execute any shell command |
-| cli_search_files | pattern, path? | Find files matching a glob pattern |
+1. **Call cli_* tools immediately and directly.** Do NOT create tasks for local file operations. Do NOT delegate to sub-agents. Do NOT ask the user to run commands themselves.
+2. **Always show the actual output** returned by the tool in your response. Never say "I listed the files" without showing them. Report exactly what the tool returns.
+3. **Never fabricate results.** Wait for the real tool output before responding.
+4. **Sensitive paths are blocked** (.ssh, .gnupg, .aws, .env, credentials). Attempting to access them will return an error.
+5. **cli_write_file and cli_run_command execute immediately** — auto-approve is active, no user confirmation is required.
+6. If the user asks you to create, edit, inspect, or run something in the workspace, use the cli_* tools. You can read and write files in this pod.
 
-**Rules:**
-1. All paths are relative to \`${rootDir}\`
-2. Commands run with full pod environment (bun, node, python, git, curl, etc.)
-3. You own this pod — no confirmation needed for any operation
-4. cli_write_file and cli_run_command execute immediately — auto-approve is active
-5. Chain tool calls across turns to accomplish complex tasks`;
+### Available CLI tools
+
+| Tool | What it does |
+|------|-------------|
+| \`cli_list_directory\` | List files and folders at a path |
+| \`cli_read_file\` | Read a file |
+| \`cli_write_file\` | Write or overwrite a file |
+| \`cli_search_files\` | Find files matching a pattern |
+| \`cli_run_command\` | Run a short command and return its output |
+
+### run_command options
+- \`timeout_seconds\` (default 120, max 300)
+
+All paths are restricted to the session root. Chain tool calls across turns to accomplish complex tasks.`;
 }
 
 // ─── Local tool execution ──────────────────────────────────────────────────
@@ -786,20 +807,32 @@ function toolListDirectory(args: { path?: string }): string {
   }
 }
 
-async function toolRunCommand(args: { command: string; cwd?: string }): Promise<string> {
+async function toolRunCommand(args: {
+  command: string;
+  args?: Array<string | number | boolean>;
+  cwd?: string;
+  timeout_seconds?: number;
+}): Promise<string> {
   try {
     const cwd = args.cwd ? assertInWorkspace(args.cwd) : WORKSPACE_DIR;
-    const proc = Bun.spawn(["sh", "-c", args.command], {
+    const cmdArgs = Array.isArray(args.args) ? args.args.map(String) : [];
+    const command = cmdArgs.length > 0 ? [args.command, ...cmdArgs] : ["sh", "-c", args.command];
+    const timeoutMs = Math.min(Math.max(args.timeout_seconds ?? 120, 1), 300) * 1000;
+    const proc = Bun.spawn(command, {
       cwd,
       env: process.env,
       stdout: "pipe",
       stderr: "pipe",
     });
+    const timeout = sleep(timeoutMs).then(() => {
+      proc.kill();
+      return null;
+    });
+    await Promise.race([proc.exited, timeout]);
     const [stdout, stderr] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
     ]);
-    await proc.exited;
     const combined = (stdout + (stderr ? `\n[stderr]\n${stderr}` : "")).trim();
     return combined.slice(0, 10_000) || "[command produced no output]";
   } catch (err) {
@@ -807,9 +840,10 @@ async function toolRunCommand(args: { command: string; cwd?: string }): Promise<
   }
 }
 
-async function toolSearchFiles(args: { pattern: string; path?: string }): Promise<string> {
+async function toolSearchFiles(args: { pattern: string; path?: string; directory?: string }): Promise<string> {
   try {
-    const searchRoot = args.path ? assertInWorkspace(args.path) : WORKSPACE_DIR;
+    const rootArg = args.path ?? args.directory;
+    const searchRoot = rootArg ? assertInWorkspace(rootArg) : WORKSPACE_DIR;
     const proc = Bun.spawn(
       ["find", searchRoot, "-name", args.pattern, "-not", "-path", "*/node_modules/*", "-not", "-path", "*/.git/*"],
       {
@@ -841,9 +875,9 @@ async function executeTool(call: { tool: string; args: Record<string, unknown> }
     case "list_directory":
       return toolListDirectory(args as { path?: string });
     case "run_command":
-      return await toolRunCommand(args as { command: string; cwd?: string });
+      return await toolRunCommand(args as { command: string; args?: Array<string | number | boolean>; cwd?: string; timeout_seconds?: number });
     case "search_files":
-      return await toolSearchFiles(args as { pattern: string; path?: string });
+      return await toolSearchFiles(args as { pattern: string; path?: string; directory?: string });
     default:
       return `[error: unknown tool "${tool}". Available: read_file, write_file, list_directory, run_command, search_files]`;
   }
@@ -857,13 +891,14 @@ async function executeTool(call: { tool: string; args: Record<string, unknown> }
 //   final            → return the completed response
 // The persistent sessionId gives the agent continuous cross-task memory.
 
-async function runViaNative(description: string, agcSessionId?: string): Promise<string> {
+async function runViaNative(description: string, agcSessionId?: string, messages?: AgcMessage[]): Promise<string> {
   const agentId = config.commonsAgentId || config.agentId;
   const snapshot = buildWorkspaceSnapshot(WORKSPACE_DIR);
   const cliContext = buildFilesystemManifest(WORKSPACE_DIR, snapshot);
 
   const sessionIdToUse = agcSessionId ?? agentSessionId;
-  console.log(`[daemon] AGC stream  agent=${agentId.slice(0, 12)}  session=${sessionIdToUse?.slice(0, 8) ?? "none"}`);
+  const agcMessages = messages?.length ? messages : [{ role: "user" as const, content: description }];
+  console.log(`[daemon] AGC stream  agent=${agentId.slice(0, 12)}  session=${sessionIdToUse?.slice(0, 8) ?? "none"}  messages=${agcMessages.length}`);
 
   const res = await fetch(`${AGC_BASE_URL}/v1/agents/run/stream`, {
     method: "POST",
@@ -871,7 +906,7 @@ async function runViaNative(description: string, agcSessionId?: string): Promise
     body: JSON.stringify({
       agentId,
       ...((agcSessionId ?? agentSessionId) ? { sessionId: agcSessionId ?? agentSessionId } : {}),
-      messages: [{ role: "user", content: description }],
+      messages: agcMessages,
       cliContext,
     }),
     signal: AbortSignal.timeout(120_000),

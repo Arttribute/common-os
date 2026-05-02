@@ -13,6 +13,39 @@ async function resolveAgcSessionId(sessionId: string | null | undefined): Promis
   } catch { return null }
 }
 
+async function buildMessageHistory(
+  agentId: string,
+  sessionId: string | null | undefined,
+  currentMsgId: string,
+  currentContent: string,
+): Promise<Array<{ role: 'user' | 'assistant'; content: string }>> {
+  if (!sessionId) return [{ role: 'user', content: currentContent }]
+
+  try {
+    const recent = await (await humanMessages())
+      .find({
+        agentId,
+        sessionId,
+        _id: { $ne: currentMsgId },
+        status: 'responded',
+        response: { $ne: null },
+      })
+      .sort({ createdAt: -1 })
+      .limit(12)
+      .lean()
+
+    const history: Array<{ role: 'user' | 'assistant'; content: string }> = []
+    for (const msg of recent.reverse()) {
+      history.push({ role: 'user', content: msg.content })
+      if (msg.response) history.push({ role: 'assistant', content: msg.response })
+    }
+    history.push({ role: 'user', content: currentContent })
+    return history
+  } catch {
+    return [{ role: 'user', content: currentContent }]
+  }
+}
+
 const router = new Hono<Env>()
 
 // GET /agents/:agentId/tasks/next
@@ -118,7 +151,13 @@ router.get('/:agentId/messages/next', async (c) => {
         { sort: { createdAt: 1 }, new: false },
       ).lean()
       if (!claimed) return c.body(null, 204)
-      return c.json({ id: claimed._id, content: claimed.content, sessionId: claimed.sessionId ?? null, agcSessionId: await resolveAgcSessionId(claimed.sessionId) })
+      return c.json({
+        id: claimed._id,
+        content: claimed.content,
+        messages: await buildMessageHistory(agentId, claimed.sessionId, claimed._id, claimed.content),
+        sessionId: claimed.sessionId ?? null,
+        agcSessionId: await resolveAgcSessionId(claimed.sessionId),
+      })
     } catch {
       return c.json({ error: 'database error' }, 503)
     }
@@ -131,7 +170,13 @@ router.get('/:agentId/messages/next', async (c) => {
       { new: true },
     ).lean()
     if (!msg) return c.body(null, 204)
-    return c.json({ id: msg._id, content: msg.content, sessionId: msg.sessionId ?? null, agcSessionId: await resolveAgcSessionId(msg.sessionId) })
+    return c.json({
+      id: msg._id,
+      content: msg.content,
+      messages: await buildMessageHistory(agentId, msg.sessionId, msg._id, msg.content),
+      sessionId: msg.sessionId ?? null,
+      agcSessionId: await resolveAgcSessionId(msg.sessionId),
+    })
   } catch {
     return c.json({ error: 'database error' }, 503)
   }
