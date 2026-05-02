@@ -4,6 +4,8 @@ import type { AgentDoc, FleetDoc } from "../types.js";
 import { launchAgentPod, launchAgentPodEks } from "./cloud-init.js";
 import { registerAgentENS } from "./ens.js";
 
+const AGC_BASE_URL = (process.env.AGC_API_URL ?? "https://api.agentcommons.io").replace(/\/$/, "");
+
 interface ProvisionAgentOptions {
 	fleetId: string;
 	tenantId: string;
@@ -34,8 +36,12 @@ export async function provisionAgent(
 
 	const commons =
 		opts.integrationPath === "openclaw"
-			? { agentId: null, apiKey: null, walletAddress: null }
+			? { agentId: null, apiKey: null, walletAddress: null, registryAgentId: null }
 			: await registerWithAgentCommons(agentId, opts.role, opts.systemPrompt);
+
+	if (opts.integrationPath === "native" && !commons.agentId) {
+		console.warn("[provisioner] Agent Commons registration returned no agentId; native agent will run without AGC identity");
+	}
 
 	const agentDoc: AgentDoc = {
 		_id: agentId,
@@ -82,6 +88,11 @@ export async function provisionAgent(
 					role: opts.role,
 					permissionTier: opts.permissionTier,
 					status: "provisioning",
+					commons: {
+						agentId: commons.agentId,
+						walletAddress: commons.walletAddress,
+						registryAgentId: commons.registryAgentId ?? null,
+					},
 					world: agentDoc.world,
 				} as never,
 			},
@@ -112,37 +123,17 @@ export async function registerWithAgentCommons(
 ): Promise<AgentDoc["commons"]> {
 	const platformKey = process.env.AGENTCOMMONS_API_KEY;
 	if (!platformKey) {
-		return { agentId: null, apiKey: null, walletAddress: null };
+		return { agentId: null, apiKey: null, walletAddress: null, registryAgentId: null };
 	}
 
-	// SDK uses Authorization: Bearer + x-initiator (wallet address of the platform user)
-	const baseHeaders = {
+	const headers = {
 		"Authorization": `Bearer ${platformKey}`,
+		"x-api-key": platformKey,
 		"Content-Type": "application/json",
 	};
 
 	try {
-		// Resolve our platform principal (wallet address) so agents are owned correctly
-		let owner: string | null = null;
-		try {
-			const meRes = await fetch("https://api.agentcommons.io/v1/auth/me", {
-				headers: baseHeaders,
-				signal: AbortSignal.timeout(8_000),
-			});
-			if (meRes.ok) {
-				const me = (await meRes.json()) as { principalId?: string | null };
-				owner = me.principalId ?? null;
-			}
-		} catch {
-			// Non-fatal — owner is optional
-		}
-
-		const headers = owner
-			? { ...baseHeaders, "x-initiator": owner }
-			: baseHeaders;
-
-		// Step 1: create the agent
-		const agentRes = await fetch("https://api.agentcommons.io/v1/agents", {
+		const agentRes = await fetch(`${AGC_BASE_URL}/v1/agents`, {
 			method: "POST",
 			headers,
 			body: JSON.stringify({
@@ -150,36 +141,42 @@ export async function registerWithAgentCommons(
 				instructions: systemPrompt,
 				modelProvider: "openai",
 				modelId: "gpt-4o",
-				...(owner && { owner }),
 			}),
 			signal: AbortSignal.timeout(15_000),
 		});
 		if (!agentRes.ok) {
-			const body = await agentRes.text().catch(() => '')
+			const body = await agentRes.text().catch(() => "");
 			console.error(`[provisioner] Agent Commons create agent failed: ${agentRes.status} ${body}`);
-			return { agentId: null, apiKey: null, walletAddress: null };
+			return { agentId: null, apiKey: null, walletAddress: null, registryAgentId: null };
 		}
-		const agentData = (await agentRes.json()) as {
+		const rawAgentData = (await agentRes.json()) as {
 			agentId?: string
 			walletAddress?: string | null
-			data?: { agentId?: string; walletAddress?: string | null }
+			data?: { agentId?: string; id?: string; walletAddress?: string | null }
 		};
-		const commonsAgentId = agentData.agentId ?? agentData.data?.agentId ?? null;
-		const walletAddress = agentData.walletAddress ?? agentData.data?.walletAddress ?? null;
-		console.log(`[provisioner] Agent Commons agent created: ${commonsAgentId}`);
-		if (!commonsAgentId) return { agentId: null, apiKey: null, walletAddress: null };
+		const agentData = (rawAgentData.data ?? rawAgentData) as {
+			agentId?: string
+			id?: string
+			walletAddress?: string | null
+		};
+		const registryAgentId = agentData.agentId ?? agentData.id ?? null;
+		const walletAddress = (rawAgentData.data as { walletAddress?: string | null } | undefined)?.walletAddress
+			?? (rawAgentData as { walletAddress?: string | null }).walletAddress
+			?? null;
+		console.log(`[provisioner] Agent Commons agent created: ${registryAgentId}`);
+		if (!registryAgentId) return { agentId: null, apiKey: null, walletAddress: null, registryAgentId: null };
 
-		// Agent Commons only allows creating API keys for yourself, so per-agent keys
-		// aren't possible. The platform key is returned so the daemon can run this agent.
-		// We do NOT store the platform key in MongoDB — bootstrap always injects it from env.
+		// The registryAgentId (UUID from POST /v1/agents) is the runtime identity used
+		// in all AGC API calls. Wallet routes are not yet available.
 		return {
-			agentId: commonsAgentId,
-			apiKey: null,  // intentionally null in DB; bootstrap provides the platform key at runtime
+			agentId: registryAgentId,
+			apiKey: null, // platform key injected at runtime by bootstrap; never stored in DB
 			walletAddress,
+			registryAgentId,
 		};
 	} catch (err) {
 		console.error("[provisioner] Agent Commons registration error:", err);
-		return { agentId: null, apiKey: null, walletAddress: null };
+		return { agentId: null, apiKey: null, walletAddress: null, registryAgentId: null };
 	}
 }
 

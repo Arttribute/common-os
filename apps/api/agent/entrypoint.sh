@@ -25,14 +25,38 @@ CONFIGEOF
 
 echo "Config written to /etc/common-os/config.json"
 
-# ── AXL — P2P inter-agent communication ─────────────────────
-# Runs as a background process alongside the daemon.
-# The daemon will query localhost:4001 for the peer multiaddr
-# and register it with the control plane.
-if command -v axl &>/dev/null; then
-  echo "Starting AXL node on port 4001..."
-  axl start --port 4001 &
-  sleep 1   # brief wait for AXL to bind
+# ── AXL — P2P inter-agent communication ─────────────────────────────────────
+# The AXL node runs as a sidecar. It joins the Yggdrasil mesh and exposes a
+# local HTTP API on port 9002 that the daemon uses for send/recv.
+#
+# AXL_PEERS: comma-separated list of bootstrap peer addresses in the form
+#   tls://HOST:PORT  (e.g. provided by Gensyn or a fleet bootstrap node)
+# Leave empty to run in isolated mode (no external connectivity).
+
+if command -v axl-node &>/dev/null; then
+  AXL_CONFIG_DIR=/etc/axl
+
+  # Generate a fresh ed25519 identity key for this pod lifecycle
+  openssl genpkey -algorithm ed25519 -out "$AXL_CONFIG_DIR/private.pem" 2>/dev/null
+
+  # Build peers JSON array from AXL_PEERS env var (comma-separated)
+  AXL_PEERS_JSON="[]"
+  if [ -n "${AXL_PEERS:-}" ]; then
+    AXL_PEERS_JSON=$(printf '%s' "$AXL_PEERS" | tr ',' '\n' | jq -R . | jq -s .)
+  fi
+
+  cat > "$AXL_CONFIG_DIR/node-config.json" << AXLEOF
+{
+  "PrivateKeyPath": "$AXL_CONFIG_DIR/private.pem",
+  "Peers": $AXL_PEERS_JSON,
+  "Listen": ["tls://0.0.0.0:9001"],
+  "api_port": 9002
+}
+AXLEOF
+
+  echo "Starting AXL node on port 9002 (peers: ${AXL_PEERS:-none})..."
+  axl-node -config "$AXL_CONFIG_DIR/node-config.json" &
+  sleep 2   # brief wait for AXL to bind before daemon queries /topology
   echo "AXL node started"
 else
   echo "AXL binary not found — skipping P2P node"

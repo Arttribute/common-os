@@ -62,6 +62,9 @@ importers:
       '@smithy/signature-v4':
         specifier: ^5.3.14
         version: 5.3.14
+      dotenv:
+        specifier: ^17.4.2
+        version: 17.4.2
       google-auth-library:
         specifier: ^10.6.2
         version: 10.6.2
@@ -122,8 +125,8 @@ importers:
         version: 4.12.15
     devDependencies:
       '@agent-commons/cli':
-        specifier: ^0.1.17
-        version: 0.1.17
+        specifier: ^0.1.18
+        version: 0.1.18
       '@types/bun':
         specifier: ^1.3.13
         version: 1.3.13
@@ -140,8 +143,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/event-schema
       '@common-os/sdk':
-        specifier: workspace:*
-        version: link:../../packages/sdk
+        specifier: ^0.2.0
+        version: 0.2.0
       '@privy-io/react-auth':
         specifier: ^2.12.0
         version: 2.25.0(@solana/kit@5.5.1(bufferutil@4.1.0)(typescript@5.9.3))(@solana/web3.js@1.98.4(bufferutil@4.1.0)(encoding@0.1.13)(typescript@5.9.3))(@types/react@19.2.14)(bs58@6.0.0)(bufferutil@4.1.0)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(typescript@5.9.3)(use-sync-external-store@1.6.0(react@19.2.5))(zod@3.25.76)
@@ -245,6 +248,9 @@ importers:
         specifier: ^4.0.3
         version: 4.0.3
     devDependencies:
+      '@types/bun':
+        specifier: ^1.3.13
+        version: 1.3.13
       '@types/jest':
         specifier: ^29.5.14
         version: 29.5.14
@@ -316,8 +322,8 @@ packages:
   '@adraffy/ens-normalize@1.11.1':
     resolution: {integrity: sha512-nhCBV3quEgesuf7c7KYfperqSS14T8bYuvJ8PcLJp6znkZpFc0AuW4qBtr8eKVyPPe/8RSr7sglCWPU5eaxwKQ==}
 
-  '@agent-commons/cli@0.1.17':
-    resolution: {integrity: sha512-67afnQywiCeEIqNa9dbM8UKpZS5XMDkI+Z8hcX/i1A6r7b2Qq/xFPy4kdSD0oKeBOHoss4Q9KHJFNHrwe7gzqA==}
+  '@agent-commons/cli@0.1.18':
+    resolution: {integrity: sha512-peXjtUyX5aljad2ImSZP34BA0yb82WH5PIT1iz7FzmewCtEFmmvqdg2GXQ7sAVONAiOFj4w8KTn9bLob66Q4YA==}
     engines: {node: '>=18'}
     hasBin: true
 
@@ -769,6 +775,14 @@ packages:
 
   '@coinbase/wallet-sdk@4.3.2':
     resolution: {integrity: sha512-hOLA2YONq8Z9n8f6oVP6N//FEEHOen7nq+adG/cReol6juFTHUelVN5GnA5zTIxiLFMDcrhDwwgCA6Tdb5jubw==}
+
+  '@common-os/events@0.2.0':
+    resolution: {integrity: sha512-j0ISFyRmKpWU6f8Ta9TXEy05CdEK3XZSfF84jOE0zzNp3kpnTc7vA9GRYMyBrouXt93alvJCxZQ/1z2/xtsrCg==}
+    engines: {node: '>=22'}
+
+  '@common-os/sdk@0.2.0':
+    resolution: {integrity: sha512-vScycASSpNuwGtHaz8s8El6Iiyw/7sK2+2ksIRNlNWJmAmOUKgAmK7ZLU7LOkRPE1rhwqsyWEr7BT60JfPd8sA==}
+    engines: {node: '>=22'}
 
   '@emnapi/runtime@1.10.0':
     resolution: {integrity: sha512-ewvYlk86xUoGI0zQRNq/mC+16R1QeDlKQy21Ki3oSYXNgLb45GV1P6A0M+/s6nyCuNDqe5VpaY84BzXGwVbwFA==}
@@ -2120,6 +2134,7 @@ packages:
   '@smithy/util-retry@4.3.6':
     resolution: {integrity: sha512-p6/FO1n2KxMeQyna067i0uJ6TSbb165ZhnRtCpWh4Foxqbfc6oW+XITaL8QkFJj3KFnDe2URt4gOhgU06EP9ew==}
     engines: {node: '>=18.0.0'}
+    deprecated: '@smithy/util-retry v4.3.6 contains a bug in Adaptive Retry, see https://github.com/smithy-lang/smithy-typescript/issues/1993. Upgrade to 4.3.7+'
 
   '@smithy/util-stream@4.5.25':
     resolution: {integrity: sha512-/PFpG4k8Ze8Ei+mMKj3oiPICYekthuzePZMgZbCqMiXIHHf4n2aZ4Ps0aSRShycFTGuj/J6XldmC0x0DwednIA==}
@@ -3454,6 +3469,10 @@ packages:
 
   dotenv@16.6.1:
     resolution: {integrity: sha512-uBq4egWHTcTt33a72vpSG0z3HnPuIl6NqYcTrKEg2azoEyl2hpW0zqlxysq2pK9HlDIHyHyakeYaYnSAwd8bow==}
+    engines: {node: '>=12'}
+
+  dotenv@17.4.2:
+    resolution: {integrity: sha512-nI4U3TottKAcAD9LLud4Cb7b2QztQMUEfHbvhTH09bqXTxnSie8WnjPALV/WMCrJZ6UV/qHJ6L03OqO3LcdYZw==}
     engines: {node: '>=12'}
 
   dunder-proto@1.0.1:
@@ -5846,7 +5865,7 @@ snapshots:
 
   '@adraffy/ens-normalize@1.11.1': {}
 
-  '@agent-commons/cli@0.1.17':
+  '@agent-commons/cli@0.1.18':
     dependencies:
       '@agent-commons/sdk': 0.1.13
       '@types/pdf-parse': 1.1.5
@@ -6960,6 +6979,15 @@ snapshots:
       clsx: 1.2.1
       eventemitter3: 5.0.4
       preact: 10.29.1
+
+  '@common-os/events@0.2.0':
+    dependencies:
+      zod: 3.25.76
+
+  '@common-os/sdk@0.2.0':
+    dependencies:
+      '@common-os/events': 0.2.0
+      zod: 3.25.76
 
   '@emnapi/runtime@1.10.0':
     dependencies:
@@ -11157,6 +11185,8 @@ snapshots:
       path-type: 4.0.0
 
   dotenv@16.6.1: {}
+
+  dotenv@17.4.2: {}
 
   dunder-proto@1.0.1:
     dependencies:

@@ -13,6 +13,11 @@ const WorldStateSchema = new Schema<WorldStateDoc>(
           role: String,
           permissionTier: String,
           status: String,
+          commons: {
+            agentId: { type: String, default: null },
+            walletAddress: { type: String, default: null },
+            registryAgentId: { type: String, default: null },
+          },
           world: { room: String, x: Number, y: Number, facing: String },
         },
         { _id: false },

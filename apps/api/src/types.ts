@@ -57,6 +57,7 @@ export interface AgentDoc {
     agentId: string | null
     apiKey: string | null
     walletAddress: string | null
+    registryAgentId?: string | null
   }
   pod: {
     namespaceId: string | null
@@ -147,6 +148,11 @@ export interface WorldStateDoc {
     role: string
     permissionTier: 'manager' | 'worker'
     status: string
+    commons?: {
+      agentId: string | null
+      walletAddress: string | null
+      registryAgentId?: string | null
+    }
     world: { room: string; x: number; y: number; facing: string }
   }>
   objects: WorldObject[]
@@ -188,5 +194,9 @@ export interface HumanMessageDoc {
   status: 'pending' | 'processing' | 'responded'
   response: string | null
   respondedAt: Date | null
+  source?: 'human' | 'axl'
+  fromAgentId?: string | null
+  axlPeerId?: string | null
+  axlMessageId?: string | null
   createdAt: Date
 }

@@ -89,6 +89,32 @@ async function waitForGkeOperation(
 	throw new Error(`Timed out waiting for GKE operation ${operationName}`);
 }
 
+async function ensureNodePoolAutoscaling(
+	gkeClient: ClusterManagerClient,
+	projectId: string,
+	region: string,
+	clusterName: string,
+	poolName = "default-pool",
+): Promise<void> {
+	const poolPath = `projects/${projectId}/locations/${region}/clusters/${clusterName}/nodePools/${poolName}`;
+	try {
+		const [pool] = await gkeClient.getNodePool({ name: poolPath });
+		if (pool.autoscaling?.enabled) {
+			console.log(`[cloud-init] node pool autoscaling already enabled (min=${pool.autoscaling.minNodeCount}, max=${pool.autoscaling.maxNodeCount})`);
+			return;
+		}
+		console.log("[cloud-init] enabling node pool autoscaling...");
+		const [op] = await gkeClient.setNodePoolAutoscaling({
+			name: poolPath,
+			autoscaling: { enabled: true, minNodeCount: 1, maxNodeCount: 10 },
+		});
+		if (op.name) await waitForGkeOperation(gkeClient, op.name);
+		console.log("[cloud-init] node pool autoscaling enabled (min=1, max=10)");
+	} catch (err) {
+		console.warn("[cloud-init] could not configure node pool autoscaling:", err instanceof Error ? err.message : err);
+	}
+}
+
 async function getKubeConfig(
 	projectId: string,
 	region: string,
@@ -113,26 +139,43 @@ async function getKubeConfig(
 		endpoint = cluster.endpoint ?? "";
 		caCert = cluster.masterAuth?.clusterCaCertificate ?? undefined;
 		console.log(`[cloud-init] GKE cluster "${clusterName}" found (endpoint: ${endpoint})`);
-	} catch {
-		// Cluster doesn't exist — create it
+		// Ensure autoscaling is on for the existing cluster's node pool
+		await ensureNodePoolAutoscaling(gkeClient, projectId, region, clusterName);
+	} catch (err: unknown) {
+		const isNotFound = err instanceof Error && (err.message.includes("NOT_FOUND") || err.message.includes("not found"));
+		if (!isNotFound) throw err;
+
+		// Cluster doesn't exist — create it with autoscaling from the start
 		console.log(`[cloud-init] creating GKE cluster "${clusterName}"...`);
 		const [operation] = await gkeClient.createCluster({
 			parent,
 			cluster: {
 				name: clusterName,
-				initialNodeCount: 1,
 				// Avoid europe-west1-c which has recurring e2 stockouts
 				locations: ["europe-west1-b", "europe-west1-d"],
-				nodeConfig: {
-					machineType: "e2-standard-2",
-					oauthScopes: [
-						"https://www.googleapis.com/auth/devstorage.read_write",
-						"https://www.googleapis.com/auth/logging.write",
-						"https://www.googleapis.com/auth/monitoring",
-						"https://www.googleapis.com/auth/cloud-platform",
-					],
-					workloadMetadataConfig: { mode: "GKE_METADATA" },
-				},
+				nodePools: [{
+					name: "default-pool",
+					initialNodeCount: 1,
+					config: {
+						machineType: "e2-standard-2",
+						oauthScopes: [
+							"https://www.googleapis.com/auth/devstorage.read_write",
+							"https://www.googleapis.com/auth/logging.write",
+							"https://www.googleapis.com/auth/monitoring",
+							"https://www.googleapis.com/auth/cloud-platform",
+						],
+						workloadMetadataConfig: { mode: "GKE_METADATA" },
+					},
+					autoscaling: {
+						enabled: true,
+						minNodeCount: 1,
+						maxNodeCount: 10,
+					},
+					management: {
+						autoUpgrade: true,
+						autoRepair: true,
+					},
+				}],
 				workloadIdentityConfig: {
 					workloadPool: `${projectId}.svc.id.goog`,
 				},
@@ -148,12 +191,12 @@ async function getKubeConfig(
 		if (operation.name) {
 			await waitForGkeOperation(gkeClient, operation.name);
 		}
-		const [cluster] = await gkeClient.getCluster({
+		const [created] = await gkeClient.getCluster({
 			name: `${parent}/clusters/${clusterName}`,
 		});
-		endpoint = cluster.endpoint ?? "";
-		caCert = cluster.masterAuth?.clusterCaCertificate ?? undefined;
-		console.log(`[cloud-init] GKE cluster "${clusterName}" created`);
+		endpoint = created.endpoint ?? "";
+		caCert = created.masterAuth?.clusterCaCertificate ?? undefined;
+		console.log(`[cloud-init] GKE cluster "${clusterName}" created with autoscaling (min=1, max=10)`);
 	}
 
 	console.log(`[cloud-init] fetching GKE access token...`);
@@ -243,7 +286,8 @@ async function ensurePodWithRetry(
  * Pod contains:
  *   - agent container: common-os-agent image (entrypoint.sh → bunx common-os-daemon)
  * AXL runs as a background process inside the agent container (started in entrypoint.sh).
- * Storage: GCS FUSE CSI driver mounts agent-session bucket at /mnt/shared.
+ * Storage: GCS FUSE CSI volume when GCP_AGENT_STORAGE_MODE=gcsfuse,
+ * otherwise emptyDir. Both mount at /mnt/shared.
  */
 export async function launchAgentPod(
 	opts: LaunchOptions,
@@ -253,8 +297,11 @@ export async function launchAgentPod(
 	const clusterName = process.env.GKE_CLUSTER ?? "common-os-agents";
 	const imageUrl =
 		process.env.AGENT_IMAGE_URL ??
-		`${region}-docker.pkg.dev/${projectId}/common-os/agent:latest`;
+		"ghcr.io/arttribute/common-os/agent:latest";
 	const bucketName = process.env.GCS_BUCKET_NAME ?? "agent-session-state-bucket";
+	const useGcsFuse =
+		process.env.GCP_AGENT_STORAGE_MODE === "gcsfuse" ||
+		process.env.GCS_FUSE_ENABLED === "true";
 
 	const sessionId = uuidv4();
 	// Kubernetes names must be RFC 1123: lowercase alphanumeric + '-' only
@@ -286,14 +333,35 @@ export async function launchAgentPod(
 		{ name: "INTEGRATION_PATH",     value: opts.integrationPath },
 		{ name: "COMMONS_API_KEY",      value: opts.commonsApiKey },
 		{ name: "COMMONS_AGENT_ID",     value: opts.commonsAgentId },
+		{ name: "AGC_INITIATOR",        value: process.env.AGC_INITIATOR ?? process.env.AGENTCOMMONS_INITIATOR ?? "" },
 		{ name: "OPENCLAW_GATEWAY_URL", value: opts.openclawGatewayUrl ?? "http://localhost:18789" },
 		{ name: "WORKSPACE_DIR",        value: opts.workspaceDir ?? "/mnt/shared" },
+		{ name: "COMMONOS_WORKSPACE",   value: opts.workspaceDir ?? "/mnt/shared" },
 		{ name: "DOCKER_IMAGE",         value: opts.dockerImage ?? "" },
 		{ name: "RUNNER_URL",           value: opts.runnerUrl ?? process.env.RUNNER_URL ?? "" },
+		{ name: "AXL_PEERS",            value: process.env.AXL_PEERS ?? "" },
 		{ name: "WORLD_ROOM",           value: opts.worldRoom ?? "dev-room" },
 		{ name: "WORLD_X",              value: String(opts.worldX ?? 2) },
 		{ name: "WORLD_Y",              value: String(opts.worldY ?? 2) },
 	];
+
+	const volume: k8s.V1Volume = useGcsFuse
+		? {
+			name: "agent-storage",
+			csi: {
+				driver: "gcsfuse.csi.storage.gke.io",
+				readOnly: false,
+				volumeAttributes: {
+					bucketName,
+					mountOptions: `implicit-dirs,only-dir=agents/${opts.agentId}/sessions/${sessionId}`,
+				},
+			},
+		}
+		: { name: "agent-storage", emptyDir: {} };
+
+	if (useGcsFuse) {
+		await ensureAgentStorage(projectId, bucketName, opts.agentId, sessionId);
+	}
 
 	const podBody: k8s.V1Pod = {
 		metadata: {
@@ -313,8 +381,8 @@ export async function launchAgentPod(
 					imagePullPolicy: "Always",
 					env: envVars,
 					resources: {
-						requests: { cpu: "250m", memory: "256Mi" },
-						limits:   { cpu: "1",    memory: "1Gi"  },
+						requests: { cpu: "100m", memory: "128Mi" },
+						limits:   { cpu: "1",    memory: "512Mi"  },
 					},
 					volumeMounts: [
 						{
@@ -324,11 +392,7 @@ export async function launchAgentPod(
 					],
 				},
 			],
-			volumes: [
-				// emptyDir for now — avoids GCS FUSE Workload Identity setup.
-				// Swap back to gcsfuse.csi.storage.gke.io once WI is wired up.
-				{ name: "agent-storage", emptyDir: {} },
-			],
+			volumes: [volume],
 		},
 	};
 
@@ -488,10 +552,13 @@ export async function launchAgentPodEks(opts: LaunchOptions): Promise<LaunchedSe
 		{ name: "INTEGRATION_PATH",     value: opts.integrationPath },
 		{ name: "COMMONS_API_KEY",      value: opts.commonsApiKey },
 		{ name: "COMMONS_AGENT_ID",     value: opts.commonsAgentId },
+		{ name: "AGC_INITIATOR",        value: process.env.AGC_INITIATOR ?? process.env.AGENTCOMMONS_INITIATOR ?? "" },
 		{ name: "OPENCLAW_GATEWAY_URL", value: opts.openclawGatewayUrl ?? "http://localhost:18789" },
 		{ name: "WORKSPACE_DIR",        value: opts.workspaceDir ?? "/mnt/shared" },
+		{ name: "COMMONOS_WORKSPACE",   value: opts.workspaceDir ?? "/mnt/shared" },
 		{ name: "DOCKER_IMAGE",         value: opts.dockerImage ?? "" },
 		{ name: "RUNNER_URL",           value: opts.runnerUrl ?? process.env.RUNNER_URL ?? "" },
+		{ name: "AXL_PEERS",            value: process.env.AXL_PEERS ?? "" },
 		{ name: "WORLD_ROOM",           value: opts.worldRoom ?? "dev-room" },
 		{ name: "WORLD_X",              value: String(opts.worldX ?? 2) },
 		{ name: "WORLD_Y",              value: String(opts.worldY ?? 2) },
@@ -528,8 +595,8 @@ export async function launchAgentPodEks(opts: LaunchOptions): Promise<LaunchedSe
 					imagePullPolicy: "Always",
 					env:             envVars,
 					resources: {
-						requests: { cpu: "250m", memory: "256Mi" },
-						limits:   { cpu: "1",    memory: "1Gi"  },
+						requests: { cpu: "100m", memory: "128Mi" },
+						limits:   { cpu: "1",    memory: "512Mi"  },
 					},
 					volumeMounts: [{ name: "agent-storage", mountPath: "/mnt/shared" }],
 				}],

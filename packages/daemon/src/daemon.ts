@@ -8,7 +8,7 @@ import {
   existsSync,
   statSync,
 } from "fs";
-import { resolve, relative, join, dirname } from "path";
+import { join, dirname, resolve, relative } from "path";
 import { loadConfig } from "./config.js";
 import { CommonOSAgentClient } from "@common-os/sdk";
 
@@ -26,7 +26,19 @@ const MSG_POLL_MS    = 3_000;
 const HEALTH_MS      = 10_000;
 const AXL_INBOX_MS   = 5_000;
 const WORKSPACE_DIR  = process.env.COMMONOS_WORKSPACE ?? config.workspaceDir;
-const AXL_API_URL    = process.env.AXL_API_URL ?? "http://localhost:4001";
+const AXL_API_URL    = process.env.AXL_API_URL ?? "http://localhost:9002";
+const ETH_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
+
+type AgcMessage = { role: "user" | "assistant"; content: string };
+
+type AxlEnvelope = {
+  type?: "request" | "response";
+  id?: string;
+  fromAgentId?: string;
+  toAgentId?: string;
+  content?: string;
+  inReplyTo?: string;
+};
 
 // Session ID is created once at startup and persisted so the agent remembers
 // all previous conversations across daemon restarts.
@@ -48,13 +60,10 @@ async function firstTimeSetup(): Promise<void> {
     console.log(`[daemon] workspace ready at ${WORKSPACE_DIR}`);
   } catch {}
 
-  if (config.integrationPath === "native" && !config.commonsApiKey) {
-    await bootstrapCommons();
-  }
-
   if (config.integrationPath === "native") {
-    await initSession();
-    await registerSessionWithApi();
+    if (!config.commonsApiKey) await bootstrapCommons();
+    await setupAgcAuth();
+    await initSession(); // recover only — new sessions created lazily on first run
   }
 }
 
@@ -77,38 +86,86 @@ async function bootstrapCommons(): Promise<void> {
       commonsAgentId?: string | null;
       commonsApiKey?: string | null;
     };
-    if (data.commonsApiKey) {
+    if (data.commonsApiKey && data.commonsAgentId) {
       config.commonsApiKey = data.commonsApiKey;
-      config.commonsAgentId = data.commonsAgentId ?? config.agentId;
+      config.commonsAgentId = data.commonsAgentId;
       console.log(`[daemon] Agent Commons ready  agentId=${config.commonsAgentId}`);
     } else {
-      console.warn("[daemon] bootstrap: no Agent Commons credentials returned — AGENTCOMMONS_API_KEY may not be configured");
+      console.warn("[daemon] bootstrap: no complete Agent Commons credentials returned — AGENTCOMMONS_API_KEY or commonsAgentId may be missing");
     }
   } catch (err) {
     console.warn("[daemon] bootstrap failed:", err instanceof Error ? err.message : err);
   }
 }
 
-// ─── AGC API ───────────────────────────────────────────────────────────────
-// Base URL and auth headers for direct calls to the Agent Commons REST API.
-// The daemon bypasses the agc CLI and calls the API directly for both session
-// creation and streaming execution — no subprocess overhead, clean output.
+// ─── AGC CLI configuration ─────────────────────────────────────────────────
+// The daemon drives Agent Commons exclusively through the `agc` CLI binary,
+// which is pre-installed in the agent image. Auth lives in ~/.agc/config.json
+// (written once after bootstrapCommons resolves the API key). All subsequent
+// `agc run` calls inherit auth from that file via the AGC_API_KEY env var.
 
 const AGC_BASE_URL = (process.env.AGC_API_URL ?? "https://api.agentcommons.io").replace(/\/$/, "");
+const AGC_INITIATOR = process.env.AGC_INITIATOR ?? process.env.AGENTCOMMONS_INITIATOR ?? "";
+const AGC_HOME_CONFIG = join(process.env.HOME ?? "/root", ".agc", "config.json");
 
-function agcHeaders(): Record<string, string> {
+async function setupAgcAuth(): Promise<void> {
+  if (!config.commonsApiKey) return;
+  try {
+    mkdirSync(dirname(AGC_HOME_CONFIG), { recursive: true });
+    writeFileSync(
+      AGC_HOME_CONFIG,
+      JSON.stringify({
+        apiKey: config.commonsApiKey,
+        apiUrl: AGC_BASE_URL,
+        ...(AGC_INITIATOR ? { initiator: AGC_INITIATOR } : {}),
+      }),
+      { mode: 0o600 },
+    );
+    console.log("[daemon] agc auth configured");
+  } catch (err) {
+    console.warn("[daemon] agc config write failed:", err instanceof Error ? err.message : err);
+  }
+}
+
+function agcEnv(): NodeJS.ProcessEnv {
   return {
-    "Content-Type": "application/json",
-    "Authorization": `Bearer ${config.commonsApiKey}`,
+    ...process.env,
+    AGC_API_KEY: config.commonsApiKey ?? "",
+    AGC_API_URL: AGC_BASE_URL,
+    ...(AGC_INITIATOR ? { AGC_INITIATOR } : {}),
   };
 }
 
 // ─── Session management ────────────────────────────────────────────────────
-// One persistent AGC session per agent. The session ID is stored in the
-// workspace so it survives daemon restarts. All messages and tasks share
-// this session, giving the agent continuous conversational memory.
+// One persistent AGC session per agent. The session ID is cached in the
+// workspace and recovered from the control plane when ephemeral pod storage is
+// lost. All messages and tasks share this session, giving the agent continuous
+// conversational memory.
 
 const SESSION_FILE = join(WORKSPACE_DIR, ".common-os-session.json");
+
+async function recoverSessionFromApi(): Promise<string | null> {
+  if (!config.apiUrl || !config.agentId || !config.agentToken) return null;
+
+  try {
+    const res = await fetch(`${config.apiUrl}/agents/${config.agentId}/session/current`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${config.agentToken}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (!res.ok) {
+      console.warn(`[daemon] session recovery skipped: API returned ${res.status}`);
+      return null;
+    }
+
+    const data = await res.json() as { agcSessionId?: string | null };
+    return data.agcSessionId ?? null;
+  } catch (err) {
+    console.warn("[daemon] session recovery failed:", err instanceof Error ? err.message : err);
+    return null;
+  }
+}
 
 async function initSession(): Promise<void> {
   if (!config.commonsAgentId || !config.commonsApiKey) {
@@ -116,54 +173,61 @@ async function initSession(): Promise<void> {
     return;
   }
 
-  // Try to resume an existing session for this agent
+  // 1. Resume from local file (survives in-place restarts)
   try {
     if (existsSync(SESSION_FILE)) {
-      const data = JSON.parse(readFileSync(SESSION_FILE, "utf-8")) as {
+      const saved = JSON.parse(readFileSync(SESSION_FILE, "utf-8")) as {
         sessionId?: string;
         agentId?: string;
       };
-      if (data.sessionId && data.agentId === config.commonsAgentId) {
-        agentSessionId = data.sessionId;
+      if (saved.sessionId && saved.agentId === config.commonsAgentId) {
+        agentSessionId = saved.sessionId;
         console.log(`[daemon] resumed session ${agentSessionId}`);
         return;
       }
     }
-  } catch {
-    // Fall through to create a new session
+  } catch {}
+
+  // 2. Recover from MongoDB (survives pod restarts where /workspace is wiped)
+  const recovered = await recoverSessionFromApi();
+  if (recovered) {
+    agentSessionId = recovered;
+    try {
+      writeFileSync(SESSION_FILE, JSON.stringify({ sessionId: recovered, agentId: config.commonsAgentId }));
+    } catch {}
+    console.log(`[daemon] recovered session ${agentSessionId} from API`);
+    return;
   }
 
-  // Create a new session via the AGC REST API directly
-  try {
-    const res = await fetch(`${AGC_BASE_URL}/v1/sessions`, {
-      method: "POST",
-      headers: agcHeaders(),
-      body: JSON.stringify({
-        agentId: config.commonsAgentId,
-        title: `daemon-${config.agentId.slice(0, 12)}`,
-        source: "daemon",
-      }),
-      signal: AbortSignal.timeout(10_000),
-    });
+  // No existing session found — a new one will be created lazily on first agc run.
+  console.log("[daemon] no prior session found — will create on first run");
+}
 
-    if (res.ok) {
-      const raw = await res.json() as Record<string, unknown>;
-      const data = (raw.data ?? raw) as Record<string, unknown>;
-      const sessionId = (data.sessionId ?? data.id ?? null) as string | null;
-      if (sessionId) {
-        agentSessionId = sessionId;
-        writeFileSync(
-          SESSION_FILE,
-          JSON.stringify({ sessionId, agentId: config.commonsAgentId }),
-        );
-        console.log(`[daemon] created session ${agentSessionId}`);
-        return;
-      }
+function stripAnsi(s: string): string {
+  return s.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
+}
+
+function parseAgcSessionId(output: string): string | null {
+  const clean = stripAnsi(output);
+  for (const line of clean.split("\n")) {
+    const s = line.trim();
+    if (!s) continue;
+    // SSE line or plain JSON
+    const raw = s.startsWith("data:") ? s.slice(5).trim() : s;
+    if (raw.startsWith("{")) {
+      try {
+        const obj = JSON.parse(raw) as Record<string, unknown>;
+        const id = obj.sessionId ?? obj.id ?? obj.session_id ?? null;
+        if (typeof id === "string" && id) return id;
+      } catch {}
     }
-    console.warn(`[daemon] session creation failed: ${res.status} — running without session`);
-  } catch (err) {
-    console.warn("[daemon] session init error:", err instanceof Error ? err.message : err);
+    // "Session: ses_xxx" or "Session ID: ses_xxx" printed by --no-stream / --new-session
+    const kv = s.match(/(?:session(?:\s+id)?)\s*[=:]\s*([^\s(]+)/i);
+    if (kv?.[1]) return kv[1];
   }
+  // Fallback: any token that looks like a session identifier
+  const m = clean.match(/\b(sess?[-_][a-zA-Z0-9_-]{6,}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\b/);
+  return m?.[1] ?? null;
 }
 
 async function registerSessionWithApi(): Promise<void> {
@@ -295,16 +359,16 @@ function startHealthMonitor() {
 async function registerAxlPeer(): Promise<void> {
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
-      const res = await fetch(`${AXL_API_URL}/peer`, {
+      const res = await fetch(`${AXL_API_URL}/topology`, {
         signal: AbortSignal.timeout(3_000),
       });
-      if (!res.ok) throw new Error(`AXL peer endpoint returned ${res.status}`);
+      if (!res.ok) throw new Error(`AXL topology endpoint returned ${res.status}`);
 
-      const data = await res.json() as { peerId?: string; multiaddr?: string; addrs?: string[] };
-      const peerId    = data.peerId ?? null;
-      const multiaddr = data.multiaddr ?? data.addrs?.[0] ?? null;
+      const data = await res.json() as { our_public_key?: string; our_ipv6?: string };
+      const peerId    = data.our_public_key ?? null;
+      const multiaddr = data.our_ipv6 ?? null;
 
-      if (!peerId && !multiaddr) throw new Error("AXL returned no peer info");
+      if (!peerId) throw new Error("AXL returned no public key");
 
       await fetch(`${config.apiUrl}/fleets/${config.fleetId}/agents/${config.agentId}`, {
         method: "PATCH",
@@ -315,7 +379,7 @@ async function registerAxlPeer(): Promise<void> {
         body: JSON.stringify({ "axl.peerId": peerId, "axl.multiaddr": multiaddr }),
       });
 
-      console.log(`[daemon] AXL peer registered  peerId=${peerId}  multiaddr=${multiaddr}`);
+      console.log(`[daemon] AXL peer registered  peerId=${peerId.slice(0, 16)}…  ipv6=${multiaddr}`);
       return;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -347,15 +411,22 @@ async function discoverFleetPeers(): Promise<void> {
       permissionTier: string;
     }>;
 
+    for (const peer of peers) {
+      if (peer.peerId && peer.agentId !== config.agentId) {
+        peerIdToAgentId.set(peer.peerId, peer.agentId);
+      }
+    }
+    console.log(`[daemon] fleet peer map updated  ${peerIdToAgentId.size} peer(s)`);
+
     const manager = peers.find(
-      (p) => p.permissionTier === "manager" && p.agentId !== config.agentId && p.multiaddr,
+      (p) => p.permissionTier === "manager" && p.agentId !== config.agentId && p.peerId,
     );
 
     if (manager) {
       config.managerAgentId = manager.agentId;
-      config.managerMultiaddr = manager.multiaddr!;
+      config.managerPeerId = manager.peerId!;
       console.log(
-        `[daemon] manager peer cached  agentId=${manager.agentId}  multiaddr=${manager.multiaddr}`,
+        `[daemon] manager peer cached  agentId=${manager.agentId}  peerId=${manager.peerId?.slice(0, 16)}…`,
       );
     }
   } catch {
@@ -365,7 +436,30 @@ async function discoverFleetPeers(): Promise<void> {
 
 // ─── AXL inbox loop ────────────────────────────────────────────────────────
 
-let lastSeenAxlMessageTs = 0;
+const peerIdToAgentId = new Map<string, string>();
+
+function parseAxlPayload(raw: string): AxlEnvelope {
+  try {
+    const parsed = JSON.parse(raw) as AxlEnvelope;
+    if (parsed && typeof parsed === "object" && typeof parsed.content === "string") {
+      return parsed;
+    }
+  } catch {}
+
+  return { type: "request", content: raw };
+}
+
+function formatAxlPayload(envelope: Required<Pick<AxlEnvelope, "type" | "content">> & AxlEnvelope): string {
+  return JSON.stringify({
+    id: envelope.id ?? `axlmsg_${Date.now().toString(36)}${randomBytes(4).toString("hex")}`,
+    type: envelope.type,
+    fromAgentId: envelope.fromAgentId ?? config.agentId,
+    toAgentId: envelope.toAgentId,
+    content: envelope.content,
+    inReplyTo: envelope.inReplyTo,
+    createdAt: new Date().toISOString(),
+  });
+}
 
 async function startAxlInboxLoop(): Promise<void> {
   console.log("[daemon] AXL inbox loop started");
@@ -380,42 +474,66 @@ async function startAxlInboxLoop(): Promise<void> {
 }
 
 async function pollAxlInbox(): Promise<void> {
-  const res = await fetch(`${AXL_API_URL}/messages`, {
-    signal: AbortSignal.timeout(5_000),
-  });
-  if (!res.ok) return;
+  // AXL /recv returns one message per call (204 when queue is empty).
+  // Drain all queued messages in a single poll cycle.
+  while (true) {
+    const res = await fetch(`${AXL_API_URL}/recv`, {
+      signal: AbortSignal.timeout(5_000),
+    });
 
-  const messages = (await res.json()) as Array<{
-    id?: string;
-    from?: string;
-    fromPeerId?: string;
-    data?: string;
-    content?: string;
-    timestamp?: number;
-  }>;
-  if (!Array.isArray(messages) || messages.length === 0) return;
+    if (res.status === 204) break; // queue empty
+    if (!res.ok) break;
 
-  for (const msg of messages) {
-    const ts = msg.timestamp ?? 0;
-    if (ts <= lastSeenAxlMessageTs) continue;
+    const raw = await res.text();
+    const envelope = parseAxlPayload(raw);
+    const content = envelope.content ?? "";
+    const fromPeerId = res.headers.get("x-from-peer-id") ?? "unknown";
 
-    const content = msg.data ?? msg.content ?? "";
-    const fromPeerId = msg.from ?? msg.fromPeerId ?? "unknown";
+    // Resolve peerId (hex public key) → agentId: fleet cache first, then API.
+    let resolvedAgentId = peerIdToAgentId.get(fromPeerId);
+    if (!resolvedAgentId && fromPeerId !== "unknown") {
+      const resolved = await resolveAgentByName(fromPeerId).catch(() => null);
+      if (resolved) {
+        resolvedAgentId = resolved.agentId;
+        peerIdToAgentId.set(fromPeerId, resolved.agentId);
+      }
+    }
+    const senderLabel = envelope.fromAgentId ?? resolvedAgentId ?? fromPeerId.slice(0, 16);
 
-    console.log(`[daemon] AXL message from ${fromPeerId}: ${content.slice(0, 80)}`);
+    console.log(`[daemon] AXL message from ${senderLabel}: ${content.slice(0, 80)}`);
 
     await agent
       .emit({
         type: "message_recv",
-        payload: { fromAgentId: fromPeerId, preview: content.slice(0, 100) },
+        payload: { fromAgentId: senderLabel, preview: content.slice(0, 100) },
       })
       .catch(() => {});
 
-    if (content && config.integrationPath !== "guest") {
-      void handleTask({ id: `axl_${Date.now()}`, description: content }).catch(() => {});
+    if (envelope.type === "response") {
+      console.log(`[daemon] AXL response from ${senderLabel}: ${content.slice(0, 120)}`);
+      continue;
     }
 
-    if (ts > lastSeenAxlMessageTs) lastSeenAxlMessageTs = ts;
+    if (content && config.integrationPath !== "guest") {
+      await enqueueAxlMessage({
+        content,
+        fromAgentId: resolvedAgentId ?? envelope.fromAgentId,
+        axlPeerId: fromPeerId !== "unknown" ? fromPeerId : null,
+        axlMessageId: envelope.id ?? null,
+      }).catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[daemon] AXL message enqueue failed: ${msg}`);
+        const taskDescription = `[AXL from ${senderLabel}]\n${content}`;
+        void handleTask(
+          { id: `axl_${Date.now()}`, description: taskDescription },
+          {
+            replyToPeerId: fromPeerId !== "unknown" ? fromPeerId : undefined,
+            replyToAgentId: resolvedAgentId ?? envelope.fromAgentId,
+            incomingMessageId: envelope.id,
+          },
+        ).catch(() => {});
+      });
+    }
   }
 }
 
@@ -468,15 +586,21 @@ function workPosition(): { room: string; x: number; y: number } {
 // ─── AXL outbound ──────────────────────────────────────────────────────────
 
 async function sendAxlMessage(
-  toMultiaddr: string,
+  toPeerId: string,  // recipient's ed25519 public key (hex), used as X-Destination-Peer-Id
   toAgentId: string,
   content: string,
-  options: { emitEvent?: boolean } = {},
+  options: { emitEvent?: boolean; type?: "request" | "response"; inReplyTo?: string } = {},
 ): Promise<void> {
   const res = await fetch(`${AXL_API_URL}/send`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ to: toMultiaddr, data: content }),
+    headers: { "X-Destination-Peer-Id": toPeerId },
+    body: formatAxlPayload({
+      type: options.type ?? "request",
+      fromAgentId: config.agentId,
+      toAgentId,
+      content,
+      inReplyTo: options.inReplyTo,
+    }),
     signal: AbortSignal.timeout(10_000),
   });
 
@@ -540,6 +664,25 @@ async function recordAgentMessage(toAgentId: string, content: string): Promise<v
   }
 }
 
+async function enqueueAxlMessage(body: {
+  content: string;
+  fromAgentId?: string | null;
+  axlPeerId?: string | null;
+  axlMessageId?: string | null;
+}): Promise<void> {
+  const res = await fetch(`${config.apiUrl}/agents/${config.agentId}/messages/axl`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${config.agentToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(10_000),
+  });
+
+  if (!res.ok) throw new Error(`AXL message enqueue failed: ${res.status}`);
+}
+
 // ─── Human message polling loop ───────────────────────────────────────────
 
 async function pollMessages(): Promise<void> {
@@ -555,7 +698,17 @@ async function pollMessages(): Promise<void> {
       );
 
       if (res.status === 200) {
-        const msg = await res.json() as { id: string; content: string; sessionId?: string | null; agcSessionId?: string | null };
+        const msg = await res.json() as {
+          id: string;
+          content: string;
+          messages?: AgcMessage[];
+          sessionId?: string | null;
+          agcSessionId?: string | null;
+          source?: "human" | "axl";
+          fromAgentId?: string | null;
+          axlPeerId?: string | null;
+          axlMessageId?: string | null;
+        };
         if (msg?.id && msg?.content) {
           await handleMessage(msg);
         }
@@ -567,13 +720,24 @@ async function pollMessages(): Promise<void> {
   }
 }
 
-async function handleMessage(msg: { id: string; content: string; sessionId?: string | null; agcSessionId?: string | null }): Promise<void> {
+async function handleMessage(msg: {
+  id: string;
+  content: string;
+  messages?: AgcMessage[];
+  sessionId?: string | null;
+  agcSessionId?: string | null;
+  source?: "human" | "axl";
+  fromAgentId?: string | null;
+  axlPeerId?: string | null;
+  axlMessageId?: string | null;
+}): Promise<void> {
   console.log(`[daemon] message ${msg.id}: ${msg.content.slice(0, 80)}`);
 
   await agent.emit({ type: "state_change", payload: { status: "working" } });
 
   try {
-    const response = await executeTask(msg.content, msg.agcSessionId ?? undefined);
+    const runResult = await executeTask(msg.content, msg.agcSessionId ?? undefined, msg.messages);
+    const response = typeof runResult === "string" ? runResult : runResult.response;
 
     await fetch(
       `${config.apiUrl}/agents/${config.agentId}/messages/${msg.id}/respond`,
@@ -583,12 +747,27 @@ async function handleMessage(msg: { id: string; content: string; sessionId?: str
           Authorization: `Bearer ${config.agentToken}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ response }),
+        body: JSON.stringify({
+          response,
+          ...(typeof runResult === "object" && runResult.agcSessionId ? { agcSessionId: runResult.agcSessionId } : {}),
+        }),
         signal: AbortSignal.timeout(10_000),
       },
     );
 
     console.log(`[daemon] message ${msg.id} responded`);
+
+    if (msg.source === "axl" && msg.axlPeerId) {
+      await sendAxlMessage(
+        msg.axlPeerId,
+        msg.fromAgentId ?? msg.axlPeerId.slice(0, 16),
+        response,
+        { type: "response", inReplyTo: msg.axlMessageId ?? msg.id },
+      ).catch((err) => {
+        const detail = err instanceof Error ? err.message : String(err);
+        console.warn(`[daemon] AXL response send failed: ${detail}`);
+      });
+    }
   } catch (err) {
     console.error(`[daemon] message ${msg.id} error:`, err);
   } finally {
@@ -614,7 +793,10 @@ async function pollTasks() {
   }
 }
 
-async function handleTask(task: { id: string; description: string }) {
+async function handleTask(
+  task: { id: string; description: string },
+  axlReply?: { replyToPeerId?: string; replyToAgentId?: string; incomingMessageId?: string },
+) {
   if (!task?.id || !task?.description) {
     console.warn(`[daemon] skipping malformed task:`, task);
     return;
@@ -635,7 +817,8 @@ async function handleTask(task: { id: string; description: string }) {
   await worldInteract(workObjectId, truncate(task.description, 40), pos.room, pos.x, pos.y);
 
   try {
-    const output = await executeTask(task.description);
+    const runResult = await executeTask(task.description);
+    const output = typeof runResult === "string" ? runResult : runResult.response;
 
     await worldCreateObject("artifact", pos.room, pos.x + 1, pos.y, truncate(task.description, 24));
 
@@ -644,11 +827,23 @@ async function handleTask(task: { id: string; description: string }) {
 
     console.log(`[daemon] task ${task.id} complete`);
 
-    if (config.managerAgentId && config.managerMultiaddr) {
+    if (config.managerAgentId && config.managerPeerId) {
       const summary = `Task complete: ${task.description.slice(0, 60)} → ${output.slice(0, 80)}`;
-      void sendAxlMessage(config.managerMultiaddr, config.managerAgentId, summary).catch(
+      void sendAxlMessage(config.managerPeerId, config.managerAgentId, summary).catch(
         (err) => console.warn("[daemon] AXL manager notify failed:", err),
       );
+    }
+
+    if (axlReply?.replyToPeerId && axlReply.replyToAgentId) {
+      await sendAxlMessage(
+        axlReply.replyToPeerId,
+        axlReply.replyToAgentId,
+        output,
+        { type: "response", inReplyTo: axlReply.incomingMessageId ?? task.id },
+      ).catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[daemon] AXL response send failed: ${msg}`);
+      });
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -663,9 +858,13 @@ async function handleTask(task: { id: string; description: string }) {
 
 // ─── Task execution ────────────────────────────────────────────────────────
 
-async function executeTask(description: string, agcSessionId?: string): Promise<string> {
+async function executeTask(
+  description: string,
+  agcSessionId?: string,
+  messages?: AgcMessage[],
+): Promise<string | { response: string; agcSessionId?: string }> {
   if (config.integrationPath === "openclaw") return await runViaOpenClaw(description);
-  if (config.integrationPath === "native") return await runViaNative(description, agcSessionId);
+  if (config.integrationPath === "native") return await runViaNative(description, agcSessionId, messages);
   await sleep(2_000);
   return `completed: ${description}`;
 }
@@ -704,17 +903,49 @@ function buildWorkspaceSnapshot(dir: string, maxDepth = 2): string {
   return lines.join("\n");
 }
 
-function buildFilesystemManifest(rootDir: string, snapshot: string): string {
-  return `## Pod Workspace Context
+function cleanAgcOutput(raw: string): string {
+  const clean = stripAnsi(raw);
+  return clean
+    .split("\n")
+    .filter((line) => {
+      const t = line.trim();
+      // Drop tool-status lines printed by agc streaming: "  ─ write_file  ✓  (0.3s)"
+      if (/^\s*[─-]\s+\S/.test(t) && (/\([\d.]+s\)/.test(t) || /✓|✗|✘/.test(t))) return false;
+      // Drop the session footer: "Session: xxx  (resume with: …)"
+      if (/^Session\s*:/i.test(t) && /resume with/i.test(t)) return false;
+      return true;
+    })
+    .join("\n")
+    .trim();
+}
 
-You are running inside your own Kubernetes pod on CommonOS. The daemon handles all \
-local tool execution automatically.
+function buildRunPrompt(description: string, messages?: AgcMessage[]): string {
+  if (!messages || messages.length <= 1) return description;
 
-**Workspace root:** \`${rootDir}\`
+  const transcript = messages
+    .slice(-12)
+    .map((msg) => `${msg.role === "assistant" ? "Assistant" : "User"}: ${msg.content}`)
+    .join("\n\n");
 
-**Current workspace snapshot:**
+  return [
+    "Continue this CommonOS conversation. Use the prior turns as context, but answer only the latest user request.",
+    "",
+    transcript,
+  ].join("\n");
+}
+
+function buildCliContext(): string {
+  return `
+## CLI Local File System - ACTIVE
+
+You are running inside a CommonOS agent pod with DIRECT access to this pod's workspace.
+
+Session root: ${WORKSPACE_DIR}
+
+Current file system snapshot:
+
 \`\`\`
-${snapshot}
+${buildWorkspaceSnapshot(WORKSPACE_DIR)}
 \`\`\`
 
 ### Available local tools
@@ -730,115 +961,137 @@ ${snapshot}
 | send_axl_message | to_name, message | Record a message and attempt AXL delivery |
 
 **Rules:**
-1. All paths are relative to \`${rootDir}\`
+1. All paths are relative to \`${WORKSPACE_DIR}\`
 2. Commands run with full pod environment (bun, node, python, git, curl, etc.)
 3. You own this pod — no confirmation needed for any operation
 4. cli_write_file and cli_run_command execute immediately — auto-approve is active
 5. Chain tool calls across turns to accomplish complex tasks`;
+
 }
 
-// ─── Local tool execution ──────────────────────────────────────────────────
-// Tools are invoked via the AGC platform's cli_tool_request SSE event.
-// The daemon receives the event, executes the tool locally, and posts the
-// result back to AGC — no interactive confirmation, the agent owns this pod.
+function agcHeaders(): Record<string, string> {
+  const key = config.commonsApiKey ?? "";
+  return {
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${key}`,
+    "x-api-key": key,
+  };
+}
 
-function assertInWorkspace(userPath: string): string {
-  const abs = resolve(WORKSPACE_DIR, userPath);
-  const rel = relative(WORKSPACE_DIR, abs);
-  if (rel.startsWith("..") || rel.startsWith("/")) {
-    throw new Error(`path "${userPath}" escapes workspace`);
+function workspacePath(userPath = "."): string {
+  const target = resolve(WORKSPACE_DIR, userPath);
+  const rel = relative(WORKSPACE_DIR, target);
+  if (rel.startsWith("..") || rel === ".." || target !== WORKSPACE_DIR && relative(WORKSPACE_DIR, target).startsWith(`..`)) {
+    throw new Error(`Path escapes workspace: ${userPath}`);
   }
-  return abs;
+  return target;
 }
 
-function toolReadFile(args: { path: string }): string {
-  const abs = assertInWorkspace(args.path);
-  if (!existsSync(abs)) return `[error: file not found: ${args.path}]`;
-  try {
-    const stat = statSync(abs);
-    if (stat.isDirectory()) return `[error: "${args.path}" is a directory — use list_directory]`;
-    const content = readFileSync(abs, "utf-8");
-    return content.length > 50_000
-      ? content.slice(0, 50_000) + "\n… (truncated at 50 KB)"
-      : content;
-  } catch (err) {
-    return `[error: ${err instanceof Error ? err.message : String(err)}]`;
+function toolName(name: unknown): string {
+  return String(name ?? "").replace(/^cli_/, "");
+}
+
+async function executeLocalTool(name: string, args: Record<string, unknown>): Promise<string> {
+  const tool = toolName(name);
+  console.log(`[daemon] cli tool request: ${tool}`);
+
+  if (tool === "read_file") {
+    const filePath = String(args.path ?? "");
+    if (!filePath) throw new Error('read_file requires "path"');
+    const abs = workspacePath(filePath);
+    const st = statSync(abs);
+    if (st.isDirectory()) throw new Error(`${filePath} is a directory`);
+    if (st.size > 500_000) throw new Error(`${filePath} is too large to read`);
+    return readFileSync(abs, "utf-8");
   }
-}
 
-function toolWriteFile(args: { path: string; content: string }): string {
-  try {
-    const abs = assertInWorkspace(args.path);
+  if (tool === "write_file") {
+    const filePath = String(args.path ?? "");
+    if (!filePath) throw new Error('write_file requires "path"');
+    const content = String(args.content ?? "");
+    const abs = workspacePath(filePath);
     mkdirSync(dirname(abs), { recursive: true });
-    writeFileSync(abs, args.content ?? "", "utf-8");
-    return `[ok: wrote ${abs}]`;
-  } catch (err) {
-    return `[error: ${err instanceof Error ? err.message : String(err)}]`;
+    writeFileSync(abs, content, "utf-8");
+    await emitWorkspaceSnapshot().catch(() => {});
+    return `Written ${content.length} bytes to ${filePath}`;
   }
-}
 
-function toolListDirectory(args: { path?: string }): string {
-  try {
-    const abs = args.path ? assertInWorkspace(args.path) : WORKSPACE_DIR;
-    if (!existsSync(abs)) return `[error: directory not found: ${args.path ?? "."}]`;
-    const entries = readdirSync(abs, { withFileTypes: true }) as Array<{
-      name: string;
-      isDirectory: () => boolean;
-    }>;
-    if (entries.length === 0) return "[empty directory]";
+  if (tool === "list_directory") {
+    const dirPath = String(args.path ?? ".");
+    const abs = workspacePath(dirPath);
+    const entries = readdirSync(abs, { withFileTypes: true });
     return entries
-      .sort((a, b) => {
-        if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
-        return a.name.localeCompare(b.name);
-      })
-      .map((e) => (e.isDirectory() ? `${e.name}/` : e.name))
-      .join("\n");
-  } catch (err) {
-    return `[error: ${err instanceof Error ? err.message : String(err)}]`;
+      .map((entry) => `[${entry.isDirectory() ? "d" : "f"}] ${entry.name}`)
+      .join("\n") || "(empty directory)";
   }
-}
 
-async function toolRunCommand(args: { command: string; cwd?: string }): Promise<string> {
-  try {
-    const cwd = args.cwd ? assertInWorkspace(args.cwd) : WORKSPACE_DIR;
-    const proc = Bun.spawn(["sh", "-c", args.command], {
-      cwd,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+  if (tool === "search_files") {
+    const pattern = String(args.pattern ?? "");
+    if (!pattern) throw new Error('search_files requires "pattern"');
+    const base = workspacePath(String(args.directory ?? "."));
+    const regex = new RegExp(pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, "."), "i");
+    const results: string[] = [];
+    const walk = (dir: string, depth = 0) => {
+      if (depth > 8 || results.length >= 50) return;
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (entry.name === "node_modules" || entry.name === ".git") continue;
+        const full = join(dir, entry.name);
+        const rel = relative(WORKSPACE_DIR, full);
+        if (regex.test(entry.name) || regex.test(rel)) results.push(rel);
+        if (entry.isDirectory()) walk(full, depth + 1);
+      }
+    };
+    walk(base);
+    return results.join("\n") || `No files found matching: ${pattern}`;
+  }
+
+  if (tool === "run_command") {
+    const command = String(args.command ?? "");
+    const cmdArgs = Array.isArray(args.args) ? args.args.map(String) : [];
+    if (!command) throw new Error('run_command requires "command"');
+    const cwd = args.cwd ? workspacePath(String(args.cwd)) : WORKSPACE_DIR;
+    const proc = Bun.spawn([command, ...cmdArgs], { cwd, stdout: "pipe", stderr: "pipe" });
+    const timeoutMs = Math.min(Number(args.timeout_seconds ?? 120) * 1000, 300_000);
+    let timedOut = false;
+    const code = await Promise.race([
+      proc.exited,
+      sleep(timeoutMs).then(() => {
+        timedOut = true;
+        proc.kill();
+        return -1;
+      }),
+    ]);
     const [stdout, stderr] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
     ]);
-    await proc.exited;
-    const combined = (stdout + (stderr ? `\n[stderr]\n${stderr}` : "")).trim();
-    return combined.slice(0, 10_000) || "[command produced no output]";
-  } catch (err) {
-    return `[error: ${err instanceof Error ? err.message : String(err)}]`;
+    return [
+      stdout.trim(),
+      stderr.trim() ? `--- stderr ---\n${stderr.trim()}` : "",
+      timedOut ? `(command timed out after ${timeoutMs / 1000}s)` : `(exit code ${code})`,
+    ].filter(Boolean).join("\n") || "(no output)";
+  }
+
+  return `Unsupported local tool: ${name}`;
+}
+
+async function postCliToolResult(requestId: string, result: string): Promise<void> {
+  const res = await fetch(`${AGC_BASE_URL}/v1/agents/cli-tool-result`, {
+    method: "POST",
+    headers: agcHeaders(),
+    body: JSON.stringify({ requestId, result }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    console.warn(`[daemon] cli-tool-result failed: ${res.status} ${body.slice(0, 200)}`);
   }
 }
 
-async function toolSearchFiles(args: { pattern: string; path?: string }): Promise<string> {
-  try {
-    const searchRoot = args.path ? assertInWorkspace(args.path) : WORKSPACE_DIR;
-    const proc = Bun.spawn(
-      ["find", searchRoot, "-name", args.pattern, "-not", "-path", "*/node_modules/*", "-not", "-path", "*/.git/*"],
-      {
-        cwd: WORKSPACE_DIR,
-        env: process.env,
-        stdout: "pipe",
-        stderr: "pipe",
-      },
-    );
-    const stdout = await new Response(proc.stdout).text();
-    await proc.exited;
-    const lines = stdout.trim().split("\n").filter(Boolean);
-    if (lines.length === 0) return `[no files matching "${args.pattern}"]`;
-    return lines.slice(0, 200).join("\n");
-  } catch (err) {
-    return `[error: ${err instanceof Error ? err.message : String(err)}]`;
-  }
+function finalTextFromEvent(event: Record<string, unknown>): string | null {
+  const payload = (event.payload && typeof event.payload === "object" ? event.payload : event) as Record<string, unknown>;
+  const value = payload.response ?? payload.content ?? payload.text ?? payload.message ?? null;
+  return typeof value === "string" ? value : null;
 }
 
 async function toolResolveAgent(args: { name: string }): Promise<string> {
@@ -886,135 +1139,129 @@ async function toolSendAxlMessage(args: { to_name: string; message: string }): P
   }
 }
 
-async function executeTool(call: { tool: string; args: Record<string, unknown> }): Promise<string> {
-  const tool = call.tool.replace(/^cli_/, ""); // strip optional cli_ prefix
-  const args = call.args ?? {};
-
-  switch (tool) {
-    case "read_file":
-      return toolReadFile(args as { path: string });
-    case "write_file":
-      return toolWriteFile(args as { path: string; content: string });
-    case "list_directory":
-      return toolListDirectory(args as { path?: string });
-    case "run_command":
-      return await toolRunCommand(args as { command: string; cwd?: string });
-    case "search_files":
-      return await toolSearchFiles(args as { pattern: string; path?: string });
-    case "resolve_agent":
-      return await toolResolveAgent(args as { name: string });
-    case "send_axl_message":
-      return await toolSendAxlMessage(args as { to_name: string; message: string });
-    default:
-      return `[error: unknown tool "${tool}". Available: read_file, write_file, list_directory, run_command, search_files, resolve_agent, send_axl_message]`;
-  }
+function sessionIdFromEvent(event: Record<string, unknown>): string | null {
+  const payload = (event.payload && typeof event.payload === "object" ? event.payload : event) as Record<string, unknown>;
+  const id = payload.sessionId ?? payload.session_id ?? null;
+  return typeof id === "string" ? id : null;
 }
 
-// ─── Native execution via AGC streaming API ────────────────────────────────
-// Calls the AGC streaming endpoint directly — no CLI subprocess.
-// SSE events handled:
-//   token            → accumulate streamed content
-//   cli_tool_request → execute tool locally, POST result to /cli-tool-result
-//   final            → return the completed response
-// The persistent sessionId gives the agent continuous cross-task memory.
+// ─── Native execution via Agent Commons stream ─────────────────────────────
+// Mirrors `agc run --local --yes` inside the daemon so world UI messages can
+// execute pod-local filesystem and command tools without depending on an
+// external runner process or opaque CLI subprocess behavior.
 
-async function runViaNative(description: string, agcSessionId?: string): Promise<string> {
-  const agentId = config.commonsAgentId || config.agentId;
-  const snapshot = buildWorkspaceSnapshot(WORKSPACE_DIR);
-  const cliContext = buildFilesystemManifest(WORKSPACE_DIR, snapshot);
-
+async function runViaNative(
+  description: string,
+  agcSessionId?: string,
+  messages?: AgcMessage[],
+): Promise<{ response: string; agcSessionId?: string }> {
   const sessionIdToUse = agcSessionId ?? agentSessionId;
-  console.log(`[daemon] AGC stream  agent=${agentId.slice(0, 12)}  session=${sessionIdToUse?.slice(0, 8) ?? "none"}`);
+  const agentId = config.commonsAgentId || config.agentId;
+  const prompt = buildRunPrompt(description, messages);
+
+  console.log(`[daemon] agc stream  agent=${agentId.slice(0, 12)}  session=${sessionIdToUse?.slice(0, 12) ?? "new"}`);
+
+  const body = {
+    agentId,
+    ...(sessionIdToUse ? { sessionId: sessionIdToUse } : {}),
+    messages: [{ role: "user", content: prompt }],
+    cliContext: buildCliContext(),
+    ...(AGC_INITIATOR ? { initiatorId: AGC_INITIATOR } : {}),
+  };
 
   const res = await fetch(`${AGC_BASE_URL}/v1/agents/run/stream`, {
     method: "POST",
     headers: agcHeaders(),
-    body: JSON.stringify({
-      agentId,
-      ...((agcSessionId ?? agentSessionId) ? { sessionId: agcSessionId ?? agentSessionId } : {}),
-      messages: [{ role: "user", content: description }],
-      cliContext,
-    }),
+    body: JSON.stringify(body),
     signal: AbortSignal.timeout(120_000),
   });
 
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "");
-    throw new Error(`AGC stream error ${res.status}: ${errText.slice(0, 200)}`);
+  if (!res.ok || !res.body) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Agent Commons stream failed: ${res.status} ${text.slice(0, 300)}`);
   }
-  if (!res.body) throw new Error("AGC stream: empty response body");
 
-  const reader = res.body.getReader();
   const decoder = new TextDecoder();
-  let buf = "";
-  let tokens = "";
-  let finalContent = "";
+  const reader = res.body.getReader();
+  let buffer = "";
+  let output = "";
+  let finalText: string | null = null;
+  let observedSessionId: string | null = sessionIdToUse ?? null;
 
-  try {
-    outer: while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+  async function handleEvent(raw: string): Promise<void> {
+    const line = raw.trim();
+    if (!line || line === "[DONE]") return;
+    const payload = line.startsWith("data:") ? line.slice(5).trim() : line;
+    if (!payload || payload === "[DONE]") return;
 
-      buf += decoder.decode(value, { stream: true });
+    let event: Record<string, unknown>;
+    try {
+      event = JSON.parse(payload) as Record<string, unknown>;
+    } catch {
+      return;
+    }
 
-      // SSE messages are separated by double newlines
-      const parts = buf.split("\n\n");
-      buf = parts.pop() ?? "";
+    const maybeSessionId = sessionIdFromEvent(event);
+    if (maybeSessionId) observedSessionId = maybeSessionId;
 
-      for (const part of parts) {
-        if (!part.trim()) continue;
+    if (event.type === "token" && typeof event.content === "string") {
+      output += event.content;
+      return;
+    }
 
-        const dataLine = part.split("\n").find((l) => l.startsWith("data: "));
-        if (!dataLine) continue;
+    if (event.type === "cli_tool_request") {
+      const requestId = typeof event.requestId === "string" ? event.requestId : "";
+      const requestedTool = String(event.tool ?? "");
+      const args = (event.args && typeof event.args === "object" ? event.args : {}) as Record<string, unknown>;
+      let result: string;
+      try {
+        result = await executeLocalTool(requestedTool, args);
+      } catch (err) {
+        result = `Error: ${err instanceof Error ? err.message : String(err)}`;
+      }
+      if (requestId) await postCliToolResult(requestId, result);
+      return;
+    }
 
-        const jsonStr = dataLine.slice(6).trim();
-        if (!jsonStr || jsonStr === "[DONE]") continue;
+    if (event.type === "final" || event.type === "done" || event.type === "completed") {
+      finalText = finalTextFromEvent(event) ?? finalText;
+    }
+  }
 
-        let event: Record<string, unknown>;
-        try {
-          event = JSON.parse(jsonStr) as Record<string, unknown>;
-        } catch {
-          continue;
-        }
+  while (true) {
+    const { value, done } = await reader.read();
+    if (value) buffer += decoder.decode(value, { stream: !done });
 
-        const type = event.type as string;
-
-        if (type === "token") {
-          tokens += (event.content as string) ?? "";
-
-        } else if (type === "cli_tool_request") {
-          const requestId = event.requestId as string;
-          const toolName  = event.tool as string;
-          const toolArgs  = (event.args ?? {}) as Record<string, unknown>;
-
-          console.log(`[daemon] cli_tool_request: ${toolName}  args=${JSON.stringify(toolArgs).slice(0, 100)}`);
-          const toolResult = await executeTool({ tool: toolName, args: toolArgs });
-          console.log(`[daemon] tool result: ${toolResult.slice(0, 120)}`);
-
-          await fetch(`${AGC_BASE_URL}/v1/agents/cli-tool-result`, {
-            method: "POST",
-            headers: agcHeaders(),
-            body: JSON.stringify({ requestId, result: toolResult }),
-            signal: AbortSignal.timeout(15_000),
-          }).catch((err) =>
-            console.warn("[daemon] cli-tool-result post failed:", err instanceof Error ? err.message : err),
-          );
-
-        } else if (type === "final") {
-          finalContent = (event.content as string) ?? tokens;
-          console.log(`[daemon] AGC stream done  tokens=${tokens.length}  final=${finalContent.length}`);
-          break outer;
-
-        } else if (type === "error") {
-          throw new Error(`AGC error: ${(event.message as string) ?? JSON.stringify(event)}`);
-        }
+    let idx: number;
+    while ((idx = buffer.indexOf("\n\n")) >= 0) {
+      const chunk = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 2);
+      for (const line of chunk.split("\n").filter((l) => l.startsWith("data:"))) {
+        await handleEvent(line);
       }
     }
-  } finally {
-    reader.releaseLock();
+
+    if (done) break;
   }
 
-  return finalContent || tokens || "done";
+  if (buffer.trim()) {
+    for (const line of buffer.split("\n").filter((l) => l.trim())) {
+      await handleEvent(line);
+    }
+  }
+
+  if (observedSessionId && observedSessionId !== agentSessionId) {
+    agentSessionId = observedSessionId;
+    try {
+      writeFileSync(SESSION_FILE, JSON.stringify({ sessionId: observedSessionId, agentId: config.commonsAgentId }));
+    } catch {}
+    void registerSessionWithApi().catch(() => {});
+    console.log(`[daemon] session persisted: ${observedSessionId}`);
+  }
+
+  const response = cleanAgcOutput(finalText ?? output);
+  console.log(`[daemon] agc stream done  length=${response.length}  session=${observedSessionId?.slice(0, 12) ?? "none"}`);
+  return { response: response || "done", ...(observedSessionId ? { agcSessionId: observedSessionId } : {}) };
 }
 
 async function runViaOpenClaw(description: string): Promise<string> {

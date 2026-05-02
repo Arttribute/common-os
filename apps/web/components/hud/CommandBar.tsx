@@ -10,8 +10,10 @@ export function CommandBar() {
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [systemLog, setSystemLog] = useState<string[]>([])
+  const [error, setError] = useState<string | null>(null)
   const selectedId = useAgentStore((s) => s.selectedAgentId)
   const agents = useAgentStore((s) => s.agents)
+  const activeSessionByAgent = useAgentStore((s) => s.activeSessionByAgent)
   const setCurrentTask = useAgentStore((s) => s.setCurrentTask)
   const updateStatus = useAgentStore((s) => s.updateStatus)
   const setCurrentAction = useAgentStore((s) => s.setCurrentAction)
@@ -20,6 +22,7 @@ export function CommandBar() {
   const searchParams = useSearchParams()
 
   const selected = selectedId ? agents[selectedId] : null
+  const activeSessionId = selectedId ? activeSessionByAgent[selectedId] : null
   const shortRole = selected?.role.replace(/-/g, ' ') ?? 'an agent'
 
   const { getAccessToken, authenticated } = usePrivy()
@@ -44,6 +47,7 @@ export function CommandBar() {
   async function handleSend() {
     if (!input.trim() || !selectedId) return
     setSending(true)
+    setError(null)
     const content = input.trim()
     setInput('')
 
@@ -62,16 +66,27 @@ export function CommandBar() {
     if (isLive && activeFleetId) {
       try {
         const token = await resolveToken()
-        await fetch(`${apiUrl}/fleets/${activeFleetId}/agents/${selectedId}/human-message`, {
+        const res = await fetch(`${apiUrl}/fleets/${activeFleetId}/agents/${selectedId}/human-message`, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ content }),
+          body: JSON.stringify({ content, ...(activeSessionId ? { sessionId: activeSessionId } : {}) }),
         })
+        if (!res.ok) {
+          const data = await res.json().catch(() => null) as { error?: string } | null
+          setError(data?.error ?? `message failed (${res.status})`)
+          setInput(content)
+          updateStatus(selectedId, 'error')
+          setSending(false)
+          return
+        }
+        // Agent response will arrive via WebSocket broadcast
       } catch {
-        fallbackLocalUpdate(selectedId, content)
+        setError('could not connect to message API')
+        setInput(content)
+        updateStatus(selectedId, 'error')
       }
     } else {
       fallbackLocalUpdate(selectedId, content)
@@ -119,6 +134,26 @@ export function CommandBar() {
               {line}
             </span>
           ))}
+        </div>
+      )}
+      {error && (
+        <div style={{
+          position: 'absolute',
+          bottom: 68,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          width: 460,
+          background: 'rgba(127, 29, 29, 0.9)',
+          border: '1px solid rgba(248,113,113,0.25)',
+          borderRadius: 6,
+          color: '#fecaca',
+          padding: '7px 10px',
+          fontSize: 10,
+          fontFamily: 'monospace',
+          pointerEvents: 'auto',
+          zIndex: 10,
+        }}>
+          {error}
         </div>
       )}
       <div

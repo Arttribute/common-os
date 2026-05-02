@@ -1,26 +1,35 @@
-import { randomBytes } from 'crypto'
 import { Hono } from 'hono'
 import { agents, agentSessions, humanMessages } from '../db/mongo.js'
+import { persistNormalizedCommonsIdentity } from '../services/agentCommonsIdentity.js'
 import type { Env } from '../types.js'
 
 const AGC_BASE_URL = (process.env.AGC_API_URL ?? 'https://api.agentcommons.io').replace(/\/$/, '')
+const AGC_INITIATOR = process.env.AGC_INITIATOR ?? process.env.AGENTCOMMONS_INITIATOR ?? null
 
-async function createAgcSession(commonsAgentId: string, title: string): Promise<string | null> {
+async function createAgcSession(commonsAgentId: string, title: string): Promise<string> {
   const apiKey = process.env.AGENTCOMMONS_API_KEY
-  if (!apiKey || !commonsAgentId) return null
+  if (!apiKey) throw new Error('AGENTCOMMONS_API_KEY is not configured')
+  if (!commonsAgentId) throw new Error('agent is not registered with Agent Commons')
   try {
     const res = await fetch(`${AGC_BASE_URL}/v1/sessions`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ agentId: commonsAgentId, title, source: 'commonos' }),
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}`, 'x-api-key': apiKey },
+      body: JSON.stringify({
+        agentId: commonsAgentId,
+        title,
+        source: 'commonos',
+        ...(AGC_INITIATOR ? { initiator: AGC_INITIATOR } : {}),
+      }),
       signal: AbortSignal.timeout(10_000),
     })
-    if (!res.ok) return null
+    if (!res.ok) throw new Error(`Agent Commons session create failed: ${res.status}`)
     const raw = await res.json() as Record<string, unknown>
     const data = (raw.data ?? raw) as Record<string, unknown>
-    return (data.sessionId ?? data.id ?? null) as string | null
-  } catch {
-    return null
+    const sessionId = (data.sessionId ?? data.id ?? null) as string | null
+    if (!sessionId) throw new Error('Agent Commons session create response did not include sessionId')
+    return sessionId
+  } catch (err) {
+    throw err instanceof Error ? err : new Error(String(err))
   }
 }
 
@@ -38,8 +47,8 @@ router.get('/:id/agents/:agentId/sessions', async (c) => {
       .sort({ createdAt: -1 })
       .lean()
     return c.json(list)
-  } catch {
-    return c.json({ error: 'database error' }, 503)
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : 'database error' }, 503)
   }
 })
 
@@ -55,12 +64,12 @@ router.post('/:id/agents/:agentId/sessions', async (c) => {
     if (!agent) return c.json({ error: 'agent not found' }, 404)
 
     const title = body.title?.trim() || `Session ${new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`
-    const agcSessionId = await createAgcSession(agent.commons.agentId ?? '', title)
+    const commons = await persistNormalizedCommonsIdentity(agent)
+    const agcSessionId = await createAgcSession(commons.agentId ?? '', title)
 
-    const sessId = `asess_${Date.now().toString(36)}${randomBytes(4).toString('hex')}`
     const now = new Date()
     const doc = {
-      _id: sessId,
+      _id: agcSessionId,
       agentId,
       fleetId,
       tenantId,
@@ -77,8 +86,8 @@ router.post('/:id/agents/:agentId/sessions', async (c) => {
     await (await agentSessions()).create(doc as never)
 
     return c.json(doc, 201)
-  } catch {
-    return c.json({ error: 'database error' }, 503)
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : 'database error' }, 503)
   }
 })
 
@@ -90,18 +99,28 @@ router.get('/:id/agents/:agentId/sessions/:sessionId', async (c) => {
   const sessionId = c.req.param('sessionId')
 
   try {
-    const [session, msgs] = await Promise.all([
-      (await agentSessions()).findOne({ _id: sessionId, agentId, fleetId, tenantId }).lean(),
-      (await humanMessages())
-        .find({ sessionId, agentId, fleetId, tenantId })
-        .sort({ createdAt: 1 })
-        .limit(200)
-        .lean(),
-    ])
+    const session = await (await agentSessions()).findOne({
+      agentId,
+      fleetId,
+      tenantId,
+      $or: [{ _id: sessionId }, { agcSessionId: sessionId }],
+    }).lean()
     if (!session) return c.json({ error: 'session not found' }, 404)
-    return c.json({ ...session, messages: msgs })
-  } catch {
-    return c.json({ error: 'database error' }, 503)
+
+    const sessionIds = Array.from(new Set([
+      session._id as string,
+      session.agcSessionId ?? undefined,
+    ].filter((id): id is string => Boolean(id))))
+
+    const msgs = await (await humanMessages())
+      .find({ sessionId: { $in: sessionIds }, agentId, fleetId, tenantId })
+      .sort({ createdAt: 1 })
+      .limit(200)
+      .lean()
+
+    return c.json({ ...session, messages: msgs.map(m => ({ ...m, kind: 'message' })) })
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : 'database error' }, 503)
   }
 })
 

@@ -19,6 +19,11 @@ export async function upsertAgentInWorldState(fleetId: string, agentId: string):
     role: agent.config.role,
     permissionTier: agent.permissionTier,
     status: agent.status,
+    commons: {
+      agentId: agent.commons.agentId,
+      walletAddress: agent.commons.walletAddress,
+      registryAgentId: agent.commons.registryAgentId ?? null,
+    },
     world: agent.world,
   }
 

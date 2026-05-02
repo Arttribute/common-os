@@ -11,6 +11,12 @@ app.get("/health", (c) =>
 	c.json({ status: "ok", ts: new Date().toISOString() }),
 );
 
+app.get("/version", async (c) => {
+	const result = await Bun.$`agc --version`;
+	const output = await result.text();
+	return c.json({ version: output });
+});
+
 app.post("/run", async (c) => {
 	const body = await c.req.json<{
 		agentId: string;
@@ -23,7 +29,14 @@ app.post("/run", async (c) => {
 	}
 
 	try {
-		const args = ["run", "--agent", body.agentId, body.prompt, "--no-stream"];
+		const args = [
+			"run",
+			"--agent",
+			body.agentId,
+			body.prompt,
+			"--no-stream",
+			"--yes",
+		];
 		if (body.sessionId) args.push("--session", body.sessionId);
 		console.log("Command: agc", args.join(" "));
 		const result = await Bun.$`agc ${args}`;
