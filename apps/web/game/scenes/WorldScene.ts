@@ -65,8 +65,15 @@ export class WorldScene extends Phaser.Scene {
     })
   }
 
+  private isInputFocused(): boolean {
+    const el = document.activeElement
+    if (!el) return false
+    const tag = el.tagName
+    return tag === 'INPUT' || tag === 'TEXTAREA' || (el as HTMLElement).isContentEditable
+  }
+
   update(_time: number, delta: number): void {
-    this.controls.update(delta)
+    if (!this.isInputFocused()) this.controls.update(delta)
 
     const { theme, agentStyle, rooms } = useWorldStore.getState()
     const agentState = useAgentStore.getState()
@@ -345,6 +352,9 @@ export class WorldScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor(THEMES[themeId].bgColor)
 
     const keyboard = this.input.keyboard!
+    // Stop Phaser calling preventDefault() on key events so characters reach
+    // DOM input fields normally. Camera control is gated in update() instead.
+    keyboard.disableGlobalCapture()
     const cursors = keyboard.createCursorKeys()
     const wasd = keyboard.addKeys({
       up:    Phaser.Input.Keyboard.KeyCodes.W,
