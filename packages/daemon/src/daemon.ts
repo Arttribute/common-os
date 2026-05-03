@@ -415,6 +415,7 @@ async function discoverFleetPeers(): Promise<void> {
     for (const peer of peers) {
       if (peer.peerId && peer.agentId !== config.agentId) {
         peerIdToAgentId.set(peer.peerId, peer.agentId);
+        agentIdToPeerId.set(peer.agentId, peer.peerId);
       }
     }
     console.log(`[daemon] fleet peer map updated  ${peerIdToAgentId.size} peer(s)`);
@@ -438,6 +439,7 @@ async function discoverFleetPeers(): Promise<void> {
 // ─── AXL inbox loop ────────────────────────────────────────────────────────
 
 const peerIdToAgentId = new Map<string, string>();
+const agentIdToPeerId = new Map<string, string>();
 
 function parseAxlPayload(raw: string): AxlEnvelope {
   try {
@@ -696,11 +698,48 @@ async function recordInboundAxlResponse(body: {
   if (!res.ok) throw new Error(`AXL response record failed: ${res.status}`);
 }
 
+async function resolveAxlTarget(target: string): Promise<{ agentId: string; peerId: string }> {
+  const normalized = target.trim();
+  if (!normalized) throw new Error("AXL target is required");
+
+  const wantsManager = /\b(manager|master|lead|fleet\s+(manager|master))\b/i.test(normalized);
+  if (wantsManager) {
+    if (!config.managerAgentId || !config.managerPeerId) await discoverFleetPeers();
+    if (config.managerAgentId && config.managerPeerId) {
+      return { agentId: config.managerAgentId, peerId: config.managerPeerId };
+    }
+  }
+
+  let peerId = agentIdToPeerId.get(normalized);
+  if (peerId) return { agentId: normalized, peerId };
+
+  const resolved = await resolveAgentByName(normalized);
+  if (resolved?.agentId && resolved.peerId) {
+    peerIdToAgentId.set(resolved.peerId, resolved.agentId);
+    agentIdToPeerId.set(resolved.agentId, resolved.peerId);
+    return { agentId: resolved.agentId, peerId: resolved.peerId };
+  }
+
+  if (resolved?.agentId) {
+    peerId = agentIdToPeerId.get(resolved.agentId);
+    if (peerId) return { agentId: resolved.agentId, peerId };
+  }
+
+  await discoverFleetPeers();
+  peerId = agentIdToPeerId.get(normalized);
+  if (peerId) return { agentId: normalized, peerId };
+
+  const agentId = peerIdToAgentId.get(normalized);
+  if (agentId) return { agentId, peerId: normalized };
+
+  throw new Error(`Could not resolve AXL target: ${target}`);
+}
+
 // ─── AXL agent resolution ─────────────────────────────────────────────────
 
 async function resolveAgentByName(name: string): Promise<{
   agentId: string;
-  multiaddr: string;
+  multiaddr?: string | null;
   peerId?: string;
   role?: string;
   fleetId?: string;
@@ -721,8 +760,8 @@ async function resolveAgentByName(name: string): Promise<{
       role?: string;
       fleetId?: string;
     };
-    if (!data.agentId || !data.multiaddr) return null;
-    return data as { agentId: string; multiaddr: string; peerId?: string; role?: string; fleetId?: string };
+    if (!data.agentId || !data.peerId && !data.multiaddr) return null;
+    return data as { agentId: string; multiaddr?: string | null; peerId?: string; role?: string; fleetId?: string };
   } catch {
     return null;
   }
@@ -995,6 +1034,11 @@ Mandatory rules:
 2. Do not say you cannot access the filesystem. You can use cli_read_file, cli_write_file, cli_list_directory, cli_search_files, and cli_run_command.
 3. File operations are sandboxed to the session root. Return the actual path or command output after using a tool.
 4. For markdown file requests, write the .md file with cli_write_file and return its path.
+5. For agent-to-agent communication in CommonOS, use cli_send_axl_message by default. Do not use Agent Commons native A2A unless the user explicitly asks for Agent Commons/native A2A or cli_send_axl_message fails.
+
+CommonOS AXL messaging tool:
+- cli_send_axl_message({ "target": "<agent id, peer id, fleet manager, or fleet master>", "content": "<message>" })
+- The tool sends over AXL, records the conversation for observability, and returns the recipient and delivery path.
 `.trim();
 }
 
@@ -1100,6 +1144,22 @@ async function executeLocalTool(name: string, args: Record<string, unknown>): Pr
       stderr.trim() ? `--- stderr ---\n${stderr.trim()}` : "",
       timedOut ? `(command timed out after ${timeoutMs / 1000}s)` : `(exit code ${code})`,
     ].filter(Boolean).join("\n") || "(no output)";
+  }
+
+  if (tool === "send_axl_message") {
+    const target = String(args.target ?? args.toAgentId ?? args.agentId ?? args.peerId ?? "");
+    const content = String(args.content ?? args.message ?? "");
+    if (!target) throw new Error('send_axl_message requires "target"');
+    if (!content) throw new Error('send_axl_message requires "content"');
+
+    const resolved = await resolveAxlTarget(target);
+    await sendAxlMessage(resolved.peerId, resolved.agentId, content, { type: "request" });
+
+    return [
+      `Sent via AXL to ${resolved.agentId}.`,
+      `peerId=${resolved.peerId}`,
+      `content=${content}`,
+    ].join("\n");
   }
 
   return `Unsupported local tool: ${name}`;
