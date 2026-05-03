@@ -38,6 +38,8 @@ export class WorldScene extends Phaser.Scene {
   private prevObjectIds: Set<string> = new Set()
   // Interaction flash graphics (auto-destroy after animation)
   private interactionFlashes = new Map<string, Phaser.GameObjects.Graphics>()
+  // Per-agent wander timer: agentId → timestamp when next wander is allowed
+  private wanderTimers = new Map<string, number>()
 
   constructor() {
     super({ key: 'WorldScene' })
@@ -89,12 +91,13 @@ export class WorldScene extends Phaser.Scene {
       this.buildObjects(rooms, theme)
     }
 
-    // Rebuild agent visuals on style change
+    // Rebuild agent visuals on style change — also persist it to each agent record
     if (agentStyle !== this.prevAgentStyle) {
       this.prevAgentStyle = agentStyle
       for (const sprite of this.sprites.values()) {
         sprite.updateStyle(agentStyle)
       }
+      agentState.setAllAgentStyles(agentStyle)
     }
 
     // Sync selection ring
@@ -136,12 +139,35 @@ export class WorldScene extends Phaser.Scene {
           agent.permissionTier,
           this.originX,
           this.originY,
-          agentStyle,
+          agent.style ?? agentStyle,
         )
         sprite.enableInteraction((id) => agentState.selectAgent(id))
         this.sprites.set(agent.agentId, sprite)
       }
       sprite.sync(agent, this.originX, this.originY)
+    }
+
+    // Idle wander — move non-busy agents randomly within their room
+    const now = Date.now()
+    for (const agent of Object.values(agents)) {
+      if (agent.status !== 'idle' && agent.status !== 'online') continue
+      const nextWander = this.wanderTimers.get(agent.agentId) ?? 0
+      if (now < nextWander) continue
+
+      // Schedule next wander: 6–14 s from now
+      this.wanderTimers.set(agent.agentId, now + 6000 + Math.random() * 8000)
+
+      const room = rooms.find(r => r.id === agent.world.room)
+      if (!room) continue
+
+      const { x: rx, y: ry, w: rw, h: rh } = room.bounds
+      const newX = rx + Math.floor(Math.random() * rw)
+      const newY = ry + Math.floor(Math.random() * rh)
+
+      // Only wander if position actually changes to avoid spurious redraws
+      if (newX !== agent.world.x || newY !== agent.world.y) {
+        agentState.updatePosition(agent.agentId, agent.world.room, newX, newY)
+      }
     }
   }
 
@@ -283,7 +309,7 @@ export class WorldScene extends Phaser.Scene {
           agent.permissionTier,
           this.originX,
           this.originY,
-          agentStyle,
+          agent.style ?? agentStyle,
         )
         sprite.enableInteraction((id) => useAgentStore.getState().selectAgent(id))
         this.sprites.set(agent.agentId, sprite)
@@ -355,13 +381,14 @@ export class WorldScene extends Phaser.Scene {
 
     const keyboard = this.input.keyboard!
     // Prevent Phaser calling preventDefault() on any key — characters must
-    // reach DOM inputs unblocked. Only arrow keys stay in Phaser (not typeable).
+    // reach DOM inputs unblocked. enableCapture=false on addKey ensures arrow
+    // keys are not captured so text cursor movement works inside inputs.
     keyboard.disableGlobalCapture()
 
-    const arrowUp    = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.UP)
-    const arrowDown  = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN)
-    const arrowLeft  = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT)
-    const arrowRight = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT)
+    const arrowUp    = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.UP,    false)
+    const arrowDown  = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN,  false)
+    const arrowLeft  = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT,  false)
+    const arrowRight = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT, false)
 
     this.controls = new Phaser.Cameras.Controls.SmoothedKeyControl({
       camera:       this.cameras.main,

@@ -1,4 +1,5 @@
 'use client'
+import { useRouter } from 'next/navigation'
 import { FleetPanel } from './FleetPanel'
 import { Inspector } from './Inspector'
 import { CommandBar } from './CommandBar'
@@ -8,6 +9,7 @@ import { useSocketStore } from '@/store/socketStore'
 
 export function HUD() {
   const socketStatus = useSocketStore((s) => s.status)
+  const router = useRouter()
 
   return (
     <div
@@ -19,7 +21,7 @@ export function HUD() {
         fontFamily: 'monospace',
       }}
     >
-      {/* Top-left: connection status */}
+      {/* Top-left: logo + connection status + back button */}
       <div
         style={{
           position: 'absolute',
@@ -27,10 +29,27 @@ export function HUD() {
           left: 16,
           display: 'flex',
           alignItems: 'center',
-          gap: 6,
-          pointerEvents: 'none',
+          gap: 8,
+          pointerEvents: 'auto',
         }}
       >
+        <button
+          onClick={() => router.push('/dashboard')}
+          style={{
+            background: 'none',
+            border: '1px solid rgba(255,255,255,0.08)',
+            borderRadius: 5,
+            color: '#64748b',
+            fontSize: 10,
+            fontFamily: 'monospace',
+            padding: '3px 8px',
+            cursor: 'pointer',
+            letterSpacing: 0.3,
+            lineHeight: 1,
+          }}
+        >
+          ← fleets
+        </button>
         <span style={{ fontSize: 14, fontWeight: 700, color: '#e2e8f0', letterSpacing: -0.5 }}>
           common<span style={{ color: '#f59e0b' }}>os</span>
         </span>

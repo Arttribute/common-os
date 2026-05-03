@@ -4,7 +4,41 @@ import { useAgentStore } from '@/store/agentStore'
 import { useWorldStore } from '@/store/worldStore'
 import { useSocketStore } from '@/store/socketStore'
 import { startMockSimulation } from '@/lib/mockSimulation'
-import type { AgentCommonsIdentity, AgentStatus } from '@/store/agentStore'
+import type { AgentCommonsIdentity, AgentStatus, AgentWorld } from '@/store/agentStore'
+
+// Spread agents that share the same tile so they don't stack on top of each other.
+function spreadPositions<T extends {
+  agentId: string
+  world: { room: string; x: number; y: number; facing: string }
+}>(agents: T[]): T[] {
+  const used = new Set<string>()
+  return agents.map(agent => {
+    const room = agent.world.room
+    let x = agent.world.x
+    let y = agent.world.y
+    let key = `${room}:${x}:${y}`
+
+    if (used.has(key)) {
+      let found = false
+      for (let r = 1; r <= 12 && !found; r++) {
+        for (let dx = -r; dx <= r && !found; dx++) {
+          for (let dy = -r; dy <= r && !found; dy++) {
+            if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue
+            const nx = x + dx
+            const ny = y + dy
+            if (nx < 0 || ny < 0) continue
+            const nk = `${room}:${nx}:${ny}`
+            if (!used.has(nk)) {
+              x = nx; y = ny; key = nk; found = true
+            }
+          }
+        }
+      }
+    }
+    used.add(key)
+    return { ...agent, world: { ...agent.world, x, y } }
+  })
+}
 
 const API_STATUS_MAP: Record<string, AgentStatus> = {
   provisioning: 'provisioning',
@@ -28,6 +62,7 @@ function toUiStatus(s: string): AgentStatus {
 // If neither getToken nor a NEXT_PUBLIC_API_KEY env var is present, the world runs in mock mode.
 export function useWorldConnection(fleetId?: string, getToken?: () => Promise<string | null>) {
   const upsertAgent = useAgentStore((s) => s.upsertAgent)
+  const clearAgents = useAgentStore((s) => s.clearAgents)
   const setPodInfo  = useAgentStore((s) => s.setPodInfo)
   const updateStatus = useAgentStore((s) => s.updateStatus)
   const updatePosition = useAgentStore((s) => s.updatePosition)
@@ -52,9 +87,15 @@ export function useWorldConnection(fleetId?: string, getToken?: () => Promise<st
 
   useEffect(() => {
     if (!isLive) {
+      clearAgents()
+      setObjects([])
       stopSimRef.current = startMockSimulation()
       return () => stopSimRef.current?.()
     }
+
+    // Clear stale agents from any previously viewed fleet before loading new one
+    clearAgents()
+    setObjects([])
 
     void (async () => {
       try {
@@ -79,10 +120,9 @@ export function useWorldConnection(fleetId?: string, getToken?: () => Promise<st
           setFleet(fleet._id, fleet.name, fleet.worldConfig.rooms, fleet.worldType)
         }
         // Seed pod + createdAt into store from the full agent list (richer than worldState snapshot).
-        // We first upsert basic entries so setPodInfo finds them, then set pod info after the
-        // snapshot message arrives. We defer this so the snapshot processes first.
+        // Spread positions so agents don't all land on the same tile.
         if (agentsRes.ok) {
-          const fullAgents = await agentsRes.json() as Array<{
+          const raw = await agentsRes.json() as Array<{
             _id: string
             role?: string
             permissionTier?: 'manager' | 'worker'
@@ -92,14 +132,26 @@ export function useWorldConnection(fleetId?: string, getToken?: () => Promise<st
             commons?: AgentCommonsIdentity
             createdAt?: string
           }>
-          // Upsert agents with full info; snapshot events will overwrite live status/position
-          for (const a of fullAgents) {
+
+          const withWorlds = raw.map(a => ({
+            agentId: a._id,
+            world: {
+              room:   a.world?.room   ?? 'dev-room',
+              x:      a.world?.x      ?? 0,
+              y:      a.world?.y      ?? 0,
+              facing: (a.world?.facing ?? 'south') as 'north' | 'south' | 'east' | 'west',
+            },
+          }))
+          const spread = spreadPositions(withWorlds)
+
+          for (const a of raw) {
+            const sw = spread.find(s => s.agentId === a._id)
             upsertAgent({
               agentId:        a._id,
               role:           a.role ?? 'unknown',
               permissionTier: a.permissionTier ?? 'worker',
               status:         toUiStatus(a.status ?? 'idle'),
-              world: {
+              world:          (sw?.world as AgentWorld | undefined) ?? {
                 room:   a.world?.room   ?? 'dev-room',
                 x:      a.world?.x      ?? 0,
                 y:      a.world?.y      ?? 0,
@@ -142,14 +194,21 @@ export function useWorldConnection(fleetId?: string, getToken?: () => Promise<st
                 createdByAgentId?: string
               }>
             }
+            const spreadSnap = spreadPositions(
+              (snapshot.agents ?? []).map(e => ({
+                agentId: e.agentId,
+                world: { room: e.world.room, x: e.world.x, y: e.world.y, facing: e.world.facing },
+              }))
+            )
             for (const entry of snapshot.agents ?? []) {
+              const sw = spreadSnap.find(s => s.agentId === entry.agentId)
               upsertAgent({
                 agentId: entry.agentId,
                 role: entry.role,
                 permissionTier: entry.permissionTier,
                 status: toUiStatus(entry.status),
                 commons: entry.commons,
-                world: {
+                world: (sw?.world as AgentWorld | undefined) ?? {
                   room: entry.world.room,
                   x: entry.world.x,
                   y: entry.world.y,

@@ -506,8 +506,6 @@ export class AgentSprite {
       g.fillTriangle(-7, -57, 7, -57, 0, -50);
     } else {
       // Worker: role badge
-      const roleInitial = this.role.charAt(0).toUpperCase();
-      // Small circular badge
       g.fillStyle(lighten(bodyColor, 80), 0.9);
       g.fillCircle(14, -42, 7);
       g.fillStyle(bodyColor, 1);
@@ -640,7 +638,10 @@ export class AgentSprite {
   // ─── Speech bubble ────────────────────────────────────────────────────────
 
   private showBubble(text: string): void {
-    this.bubbleText.setText(text);
+    // Truncate so the bubble doesn't grow to absurd sizes
+    const MAX_CHARS = 160;
+    const display = text.length > MAX_CHARS ? text.slice(0, MAX_CHARS - 1) + '…' : text;
+    this.bubbleText.setText(display);
     const pad = 7;
     const bw = this.bubbleText.width + pad * 2;
     const bh = this.bubbleText.height + pad * 2;

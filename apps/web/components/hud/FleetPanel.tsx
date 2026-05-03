@@ -261,7 +261,7 @@ export function FleetPanel() {
       </div>
 
       {/* Agent list */}
-      <div style={{ padding: '4px 4px', maxHeight: 360, overflowY: 'auto' }}>
+      <div style={{ padding: '4px 4px', maxHeight: 'calc(100vh - 200px)', overflowY: 'auto' }}>
         {sorted.length === 0 && (
           <div style={{
             padding: 12, fontSize: 11, color: '#64748b',

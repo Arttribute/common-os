@@ -491,12 +491,20 @@ interface ComputerViewProps {
   snapshot: string | null
   loading: boolean
   error: string | null
+  apiUrl?: string
+  fleetId?: string | null
+  agentId?: string
+  resolveToken?: () => Promise<string | null>
 }
 
-function ComputerView({ agentRole, pod, snapshot, loading, error }: ComputerViewProps) {
+function ComputerView({ agentRole, pod, snapshot, loading, error, apiUrl, fleetId, agentId, resolveToken }: ComputerViewProps) {
   const [path, setPath] = useState<string[]>([])
   const [history, setHistory] = useState<string[][]>([[]])
   const [histIdx, setHistIdx] = useState(0)
+  const [openFilePath, setOpenFilePath] = useState<string | null>(null)
+  const [fileContent, setFileContent] = useState<string | null>(null)
+  const [fileLoading, setFileLoading] = useState(false)
+  const [fileError, setFileError] = useState<string | null>(null)
 
   const tree = snapshot ? parseSnapshot(snapshot) : null
 
@@ -506,9 +514,18 @@ function ComputerView({ agentRole, pod, snapshot, loading, error }: ComputerView
     setHistory([...trimmed, newPath])
     setHistIdx(trimmed.length)
     setPath(newPath)
+    setOpenFilePath(null)
+    setFileContent(null)
+    setFileError(null)
   }
 
   function navBack() {
+    if (openFilePath) {
+      setOpenFilePath(null)
+      setFileContent(null)
+      setFileError(null)
+      return
+    }
     if (histIdx === 0) return
     const prev = history[histIdx - 1]
     setHistIdx(histIdx - 1)
@@ -516,8 +533,41 @@ function ComputerView({ agentRole, pod, snapshot, loading, error }: ComputerView
   }
 
   function navUp() {
+    if (openFilePath) { setOpenFilePath(null); setFileContent(null); setFileError(null); return }
     if (path.length === 0) return
     navigateTo(path.slice(0, -1))
+  }
+
+  async function openFile(fileName: string) {
+    const fullPath = '/' + [...path, fileName].join('/')
+    setOpenFilePath(fullPath)
+    setFileContent(null)
+    setFileError(null)
+
+    if (!apiUrl || !fleetId || !agentId || !resolveToken) {
+      setFileError('File preview is only available in live mode.')
+      return
+    }
+
+    setFileLoading(true)
+    try {
+      const token = await resolveToken()
+      const res = await fetch(
+        `${apiUrl}/fleets/${fleetId}/agents/${agentId}/workspace/read?path=${encodeURIComponent(fullPath)}`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+      )
+      if (res.ok) {
+        const data = await res.json() as { content?: string } | string
+        const content = typeof data === 'string' ? data : (data as { content?: string }).content ?? ''
+        setFileContent(content)
+      } else {
+        setFileError(`Could not read file (${res.status})`)
+      }
+    } catch {
+      setFileError('Could not connect to workspace API')
+    } finally {
+      setFileLoading(false)
+    }
   }
 
   // Resolve current directory nodes
@@ -538,7 +588,7 @@ function ComputerView({ agentRole, pod, snapshot, loading, error }: ComputerView
     ...nodes.filter((n) => !n.isDir).sort((a, b) => a.name.localeCompare(b.name)),
   ]
 
-  const pathStr = path.length === 0 ? '/' : '/' + path.join('/')
+  const pathStr = openFilePath ?? (path.length === 0 ? '/' : '/' + path.join('/'))
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#080c14' }}>
@@ -553,8 +603,8 @@ function ComputerView({ agentRole, pod, snapshot, loading, error }: ComputerView
         flexShrink: 0,
       }}>
         {/* Back / Up buttons */}
-        <NavButton disabled={histIdx === 0} onClick={navBack} title="Back">◀</NavButton>
-        <NavButton disabled={path.length === 0} onClick={navUp} title="Up">▲</NavButton>
+        <NavButton disabled={histIdx === 0 && !openFilePath} onClick={navBack} title="Back">◀</NavButton>
+        <NavButton disabled={path.length === 0 && !openFilePath} onClick={navUp} title="Up">▲</NavButton>
 
         {/* Address bar */}
         <div style={{
@@ -635,6 +685,14 @@ function ComputerView({ agentRole, pod, snapshot, loading, error }: ComputerView
             <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <div style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace' }}>loading workspace…</div>
             </div>
+          ) : openFilePath ? (
+            <FileContentView
+              path={openFilePath}
+              content={fileContent}
+              loading={fileLoading}
+              error={fileError}
+              onClose={() => { setOpenFilePath(null); setFileContent(null); setFileError(null) }}
+            />
           ) : !snapshot ? (
             <NoSnapshot agentRole={agentRole} pod={pod} error={error} />
           ) : sortedNodes.length === 0 ? (
@@ -658,6 +716,7 @@ function ComputerView({ agentRole, pod, snapshot, loading, error }: ComputerView
                   node={node}
                   onOpen={() => {
                     if (node.isDir) navigateTo([...path, node.name])
+                    else void openFile(node.name)
                   }}
                 />
               ))}
@@ -764,7 +823,7 @@ function FileItem({ node, onOpen }: { node: FsNode; onOpen: () => void }) {
         alignItems: 'center',
         gap: 4,
         borderRadius: 4,
-        cursor: node.isDir ? 'pointer' : 'default',
+        cursor: 'pointer',
         background: hovered ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
         border: hovered ? '1px solid rgba(59, 130, 246, 0.2)' : '1px solid transparent',
         transition: 'background 0.1s, border 0.1s',
@@ -787,6 +846,68 @@ function FileItem({ node, onOpen }: { node: FsNode; onOpen: () => void }) {
       }}>
         {node.name}
       </span>
+    </div>
+  )
+}
+
+function FileContentView({
+  path,
+  content,
+  loading,
+  error,
+  onClose,
+}: {
+  path: string
+  content: string | null
+  loading: boolean
+  error: string | null
+  onClose: () => void
+}) {
+  const fileName = path.split('/').pop() ?? path
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '6px 10px', background: '#0a0e18',
+        borderBottom: '1px solid rgba(255,255,255,0.04)', flexShrink: 0,
+      }}>
+        <button
+          onClick={onClose}
+          style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: '#475569', fontSize: 10, fontFamily: 'monospace', padding: '2px 4px',
+          }}
+        >
+          ← back
+        </button>
+        <span style={{ fontSize: 10, color: '#94a3b8', fontFamily: 'monospace', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {path}
+        </span>
+        <span style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace' }}>
+          {fileIcon(fileName, false)}
+        </span>
+      </div>
+      {loading ? (
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <span style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace' }}>loading…</span>
+        </div>
+      ) : error ? (
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <span style={{ fontSize: 11, color: '#94a3b8', fontFamily: 'monospace', textAlign: 'center', lineHeight: 1.7 }}>
+            {error}
+          </span>
+        </div>
+      ) : (
+        <pre style={{
+          flex: 1, margin: 0, padding: '10px 14px',
+          overflowY: 'auto', overflowX: 'auto',
+          fontSize: 11, color: '#94a3b8', fontFamily: 'monospace',
+          lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+          background: '#060a12',
+        }}>
+          {content ?? ''}
+        </pre>
+      )}
     </div>
   )
 }
@@ -1174,6 +1295,10 @@ export function AgentDetailModal() {
               snapshot={snapshot}
               loading={snapLoading}
               error={workspaceError}
+              apiUrl={apiUrl}
+              fleetId={fleetId}
+              agentId={selectedId ?? undefined}
+              resolveToken={resolveToken}
             />
           )}
         </div>

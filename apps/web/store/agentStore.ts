@@ -1,7 +1,13 @@
 'use client'
 import { create } from 'zustand'
+import type { AgentStyle } from '@/game/systems/worldThemes'
 
 export type AgentStatus = 'online' | 'idle' | 'working' | 'error' | 'offline' | 'provisioning'
+
+const AGENT_STYLES: AgentStyle[] = ['person', 'sketch-cube', 'robot', 'blob', 'minimal']
+function randomStyle(): AgentStyle {
+  return AGENT_STYLES[Math.floor(Math.random() * AGENT_STYLES.length)]!
+}
 
 export interface AgentWorld {
   room: string
@@ -35,6 +41,7 @@ export interface Agent {
   currentTask?: { taskId: string; description: string }
   speechBubble?: { text: string; expiresAt: number }
   recentActions: string[]
+  style?: AgentStyle  // per-agent avatar style; randomly assigned on creation
 }
 
 interface AgentStore {
@@ -55,6 +62,8 @@ interface AgentStore {
   clearSpeechBubble: (agentId: string) => void
   setCurrentTask: (agentId: string, task: Agent['currentTask']) => void
   completeTask: (agentId: string) => void
+  clearAgents: () => void
+  setAllAgentStyles: (style: AgentStyle) => void
 }
 
 export const useAgentStore = create<AgentStore>((set) => ({
@@ -88,19 +97,24 @@ export const useAgentStore = create<AgentStore>((set) => ({
     }),
 
   upsertAgent: (agent) =>
-    set((state) => ({
-      agents: {
-        ...state.agents,
-        [agent.agentId]: {
-          ...state.agents[agent.agentId],
-          ...agent,
-          pod: agent.pod ?? state.agents[agent.agentId]?.pod,
-          commons: agent.commons ?? state.agents[agent.agentId]?.commons,
-          createdAt: agent.createdAt ?? state.agents[agent.agentId]?.createdAt,
-          recentActions: state.agents[agent.agentId]?.recentActions ?? [],
+    set((state) => {
+      const existing = state.agents[agent.agentId]
+      const style = agent.style ?? existing?.style ?? randomStyle()
+      return {
+        agents: {
+          ...state.agents,
+          [agent.agentId]: {
+            ...existing,
+            ...agent,
+            style,
+            pod: agent.pod ?? existing?.pod,
+            commons: agent.commons ?? existing?.commons,
+            createdAt: agent.createdAt ?? existing?.createdAt,
+            recentActions: existing?.recentActions ?? [],
+          },
         },
-      },
-    })),
+      }
+    }),
 
   updateStatus: (agentId, status) =>
     set((state) => {
@@ -183,4 +197,13 @@ export const useAgentStore = create<AgentStore>((set) => ({
         },
       }
     }),
+
+  clearAgents: () => set({ agents: {}, selectedAgentId: null }),
+
+  setAllAgentStyles: (style) =>
+    set((state) => ({
+      agents: Object.fromEntries(
+        Object.entries(state.agents).map(([id, a]) => [id, { ...a, style }])
+      ),
+    })),
 }))
