@@ -4,6 +4,7 @@ import type { AgentDoc, FleetDoc } from "../types.js";
 import { launchAgentPod, launchAgentPodEks } from "./cloud-init.js";
 
 const AGC_BASE_URL = (process.env.AGC_API_URL ?? "https://api.agentcommons.io").replace(/\/$/, "");
+const DEFAULT_API_URL = "https://common-os-api-prod-7it3eyacta-ew.a.run.app";
 
 interface ProvisionAgentOptions {
 	fleetId: string;
@@ -168,7 +169,7 @@ async function launchCloudInstance(
 	agentToken: string,
 	commonsApiKey: string | null,
 ): Promise<void> {
-	const apiUrl = process.env.API_URL ?? "http://localhost:3001";
+	const apiUrl = process.env.API_URL ?? DEFAULT_API_URL;
 
 	const podOpts = {
 		agentId: agentDoc._id,

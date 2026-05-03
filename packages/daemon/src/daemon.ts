@@ -271,7 +271,9 @@ async function main() {
   console.log(`[daemon] starting  ${DAEMON_RUNTIME}  agent=${config.agentId}  role=${config.role}  fleet=${config.fleetId}  image=${AGENT_IMAGE || "unknown"}  commit=${COMMIT_SHA || "unknown"}`);
 
   await firstTimeSetup();
-  await agent.emit({ type: "state_change", payload: { status: "online" } });
+  await agent.emit({ type: "state_change", payload: { status: "online" } }).catch((err) => {
+    console.error("[daemon] state change error:", err);
+  });
   emitHeartbeat();
   console.log("[daemon] online");
 
