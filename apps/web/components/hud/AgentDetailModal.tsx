@@ -25,11 +25,20 @@ interface SessionEntry {
   content?: string
   response?: string | null
   respondedAt?: string | null
+  source?: 'human' | 'axl'
+  axlDirection?: 'inbound' | 'outbound' | null
+  fromAgentId?: string | null
+  toAgentId?: string | null
+  axlPeerId?: string | null
+  axlMessageId?: string | null
 }
 
 interface AgentSession {
   _id: string
   title: string
+  source?: 'human' | 'axl'
+  participantAgentId?: string | null
+  participantPeerId?: string | null
   isDefault: boolean
   messageCount: number
   lastMessageAt: string | null
@@ -281,6 +290,8 @@ function SessionsView({
 
 function SessionRow({ session, onClick }: { session: AgentSession; onClick: () => void }) {
   const [hovered, setHovered] = useState(false)
+  const isAxl = session.source === 'axl'
+  const participant = session.participantAgentId ?? session.participantPeerId ?? null
   return (
     <div
       onClick={onClick}
@@ -298,6 +309,11 @@ function SessionRow({ session, onClick }: { session: AgentSession; onClick: () =
         <span style={{ fontSize: 10, color: session.isDefault ? '#93c5fd' : '#94a3b8', fontFamily: 'monospace', flex: 1 }}>
           {session.title}
         </span>
+        {isAxl && (
+          <span style={{ fontSize: 7, color: '#06b6d4', fontFamily: 'monospace', background: 'rgba(6,182,212,0.1)', padding: '1px 5px', borderRadius: 3 }}>
+            AXL
+          </span>
+        )}
         {session.isDefault && (
           <span style={{ fontSize: 7, color: '#3b82f6', fontFamily: 'monospace', background: 'rgba(59,130,246,0.1)', padding: '1px 5px', borderRadius: 3 }}>
             active
@@ -311,6 +327,11 @@ function SessionRow({ session, onClick }: { session: AgentSession; onClick: () =
         <span style={{ fontSize: 8, color: '#334155', fontFamily: 'monospace' }}>
           {session.messageCount} message{session.messageCount !== 1 ? 's' : ''}
         </span>
+        {participant && (
+          <span style={{ fontSize: 7, color: '#1e3a5f', fontFamily: 'monospace' }} title={participant}>
+            peer {shortId(participant, 10, 4)}
+          </span>
+        )}
         {session.agcSessionId && (
           <span style={{ fontSize: 7, color: '#1e293b', fontFamily: 'monospace' }} title={session.agcSessionId}>
             agc {shortId(session.agcSessionId, 10, 4)}
@@ -330,11 +351,26 @@ function SessionCard({ entry }: { entry: SessionEntry }) {
   const [expanded, setExpanded] = useState(false)
 
   if (entry.kind === 'message') {
+    const isAxl = entry.source === 'axl'
+    const outbound = entry.axlDirection === 'outbound'
+    const requestLabel = isAxl
+      ? outbound
+        ? `AGT → ${shortId(entry.toAgentId ?? entry.axlPeerId, 8, 4)}`
+        : `AXL ${shortId(entry.fromAgentId ?? entry.axlPeerId, 8, 4)}`
+      : 'YOU'
+    const responseLabel = isAxl && outbound
+      ? `AXL ${shortId(entry.toAgentId ?? entry.axlPeerId, 8, 4)}`
+      : 'AGT'
     return (
       <div style={{ borderLeft: '2px solid #1e3a5f', paddingLeft: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
         {/* Human message */}
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-          <span style={{ fontSize: 9, color: '#3b82f6', fontFamily: 'monospace', fontWeight: 700, flexShrink: 0, marginTop: 1 }}>YOU</span>
+          <span
+            title={isAxl ? (outbound ? entry.toAgentId ?? entry.axlPeerId ?? undefined : entry.fromAgentId ?? entry.axlPeerId ?? undefined) : undefined}
+            style={{ fontSize: 9, color: isAxl ? '#06b6d4' : '#3b82f6', fontFamily: 'monospace', fontWeight: 700, flexShrink: 0, marginTop: 1 }}
+          >
+            {requestLabel}
+          </span>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 10, color: '#cbd5e1', fontFamily: 'monospace', lineHeight: 1.6, wordBreak: 'break-word' }}>
               {entry.content}
@@ -348,7 +384,9 @@ function SessionCard({ entry }: { entry: SessionEntry }) {
         {/* Agent response */}
         {entry.response ? (
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-            <span style={{ fontSize: 9, color: '#10b981', fontFamily: 'monospace', fontWeight: 700, flexShrink: 0, marginTop: 1 }}>AGT</span>
+            <span style={{ fontSize: 9, color: outbound ? '#06b6d4' : '#10b981', fontFamily: 'monospace', fontWeight: 700, flexShrink: 0, marginTop: 1 }}>
+              {responseLabel}
+            </span>
             <div style={{ flex: 1 }}>
               <div
                 style={{

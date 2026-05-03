@@ -512,6 +512,16 @@ async function pollAxlInbox(): Promise<void> {
 
     if (envelope.type === "response") {
       console.log(`[daemon] AXL response from ${senderLabel}: ${content.slice(0, 120)}`);
+      await recordInboundAxlResponse({
+        content,
+        fromAgentId: resolvedAgentId ?? envelope.fromAgentId,
+        axlPeerId: fromPeerId !== "unknown" ? fromPeerId : null,
+        axlMessageId: envelope.id ?? null,
+        inReplyTo: envelope.inReplyTo ?? null,
+      }).catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[daemon] AXL response record failed: ${msg}`);
+      });
       continue;
     }
 
@@ -592,10 +602,12 @@ async function sendAxlMessage(
   content: string,
   options: { type?: "request" | "response"; inReplyTo?: string } = {},
 ): Promise<void> {
+  const axlMessageId = `axlmsg_${Date.now().toString(36)}${randomBytes(4).toString("hex")}`;
   const res = await fetch(`${AXL_API_URL}/send`, {
     method: "POST",
     headers: { "X-Destination-Peer-Id": toPeerId },
     body: formatAxlPayload({
+      id: axlMessageId,
       type: options.type ?? "request",
       fromAgentId: config.agentId,
       toAgentId,
@@ -606,6 +618,18 @@ async function sendAxlMessage(
   });
 
   if (!res.ok) throw new Error(`AXL send failed: ${res.status}`);
+
+  if ((options.type ?? "request") === "request") {
+    await recordOutboundAxlMessage({
+      content,
+      toAgentId,
+      axlPeerId: toPeerId,
+      axlMessageId,
+    }).catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[daemon] AXL outbound record failed: ${msg}`);
+    });
+  }
 
   await agent
     .emit({ type: "message_sent", payload: { toAgentId, preview: content.slice(0, 100) } })
@@ -631,6 +655,45 @@ async function enqueueAxlMessage(body: {
   });
 
   if (!res.ok) throw new Error(`AXL message enqueue failed: ${res.status}`);
+}
+
+async function recordOutboundAxlMessage(body: {
+  content: string;
+  toAgentId?: string | null;
+  axlPeerId?: string | null;
+  axlMessageId?: string | null;
+}): Promise<void> {
+  const res = await fetch(`${config.apiUrl}/agents/${config.agentId}/messages/axl/outbound`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${config.agentToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(10_000),
+  });
+
+  if (!res.ok) throw new Error(`AXL outbound record failed: ${res.status}`);
+}
+
+async function recordInboundAxlResponse(body: {
+  content: string;
+  fromAgentId?: string | null;
+  axlPeerId?: string | null;
+  axlMessageId?: string | null;
+  inReplyTo?: string | null;
+}): Promise<void> {
+  const res = await fetch(`${config.apiUrl}/agents/${config.agentId}/messages/axl/response`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${config.agentToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(10_000),
+  });
+
+  if (!res.ok) throw new Error(`AXL response record failed: ${res.status}`);
 }
 
 // ─── AXL agent resolution ─────────────────────────────────────────────────

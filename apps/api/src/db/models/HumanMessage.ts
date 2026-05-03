@@ -13,7 +13,9 @@ const HumanMessageSchema = new Schema<HumanMessageDoc>(
     response: String,
     respondedAt: Date,
     source: { type: String, default: 'human' },
+    axlDirection: { type: String, default: null },
     fromAgentId: { type: String, default: null },
+    toAgentId: { type: String, default: null },
     axlPeerId: { type: String, default: null },
     axlMessageId: { type: String, default: null },
     createdAt: { type: Date, required: true },
@@ -24,5 +26,6 @@ const HumanMessageSchema = new Schema<HumanMessageDoc>(
 HumanMessageSchema.index({ agentId: 1, status: 1, createdAt: 1 })
 HumanMessageSchema.index({ fleetId: 1, createdAt: -1 })
 HumanMessageSchema.index({ sessionId: 1, createdAt: -1 })
+HumanMessageSchema.index({ agentId: 1, axlMessageId: 1 })
 
 export default mongoose.models.HumanMessage || mongoose.model<HumanMessageDoc>('HumanMessage', HumanMessageSchema)

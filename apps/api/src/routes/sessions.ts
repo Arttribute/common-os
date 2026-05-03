@@ -49,7 +49,7 @@ router.get('/:id/agents/:agentId/sessions', async (c) => {
         fleetId: c.req.param('id'),
         tenantId: c.get('tenantId'),
       })
-      .sort({ createdAt: -1 })
+      .sort({ lastMessageAt: -1, createdAt: -1 })
       .lean()
     return c.json(list)
   } catch (err) {

@@ -4,7 +4,78 @@ import { agents, tasks, humanMessages, agentSessions, worldStates } from '../db/
 import { dequeueTask, dequeueHumanMessage, enqueueHumanMessage, broadcastToFleet } from '../db/memory.js'
 import { registerWithAgentCommons } from '../services/provisioner.js'
 import { persistNormalizedCommonsIdentity } from '../services/agentCommonsIdentity.js'
-import type { Env, HumanMessageDoc } from '../types.js'
+import type { AgentDoc, Env, HumanMessageDoc } from '../types.js'
+
+const AGC_BASE_URL = (process.env.AGC_API_URL ?? 'https://api.agentcommons.io').replace(/\/$/, '')
+const AGC_INITIATOR = process.env.AGC_INITIATOR ?? process.env.AGENTCOMMONS_INITIATOR ?? null
+
+async function createAgcSession(commonsAgentId: string, title: string): Promise<string | null> {
+  const apiKey = process.env.AGENTCOMMONS_API_KEY
+  if (!apiKey || !commonsAgentId) return null
+
+  const res = await fetch(`${AGC_BASE_URL}/v1/sessions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+      'x-api-key': apiKey,
+      ...(AGC_INITIATOR ? { 'x-initiator': AGC_INITIATOR } : {}),
+    },
+    body: JSON.stringify({
+      agentId: commonsAgentId,
+      title,
+      source: 'commonos-axl',
+      ...(AGC_INITIATOR ? { initiator: AGC_INITIATOR } : {}),
+    }),
+    signal: AbortSignal.timeout(10_000),
+  })
+  if (!res.ok) return null
+
+  const raw = await res.json() as Record<string, unknown>
+  const data = (raw.data ?? raw) as Record<string, unknown>
+  const sessionId = data.sessionId ?? data.id ?? null
+  return typeof sessionId === 'string' ? sessionId : null
+}
+
+async function ensureAxlSession(
+  agent: AgentDoc,
+  participant: { agentId?: string | null; peerId?: string | null },
+): Promise<string> {
+  const participantAgentId = participant.agentId ?? null
+  const participantPeerId = participant.peerId ?? null
+  const col = await agentSessions()
+  const query = participantAgentId
+    ? { agentId: agent._id, source: 'axl', participantAgentId }
+    : { agentId: agent._id, source: 'axl', participantPeerId }
+
+  const existing = await col.findOne(query).lean()
+  if (existing) return (existing.agcSessionId ?? existing._id) as string
+
+  const label = participantAgentId ?? (participantPeerId ? participantPeerId.slice(0, 16) : 'unknown peer')
+  const title = `AXL chat with ${label}`
+  const commons = await persistNormalizedCommonsIdentity(agent)
+  const agcSessionId = await createAgcSession(commons.agentId ?? '', title)
+  const sessionId = agcSessionId ?? `axlsess_${Date.now().toString(36)}${randomBytes(4).toString('hex')}`
+  const now = new Date()
+
+  await col.create({
+    _id: sessionId,
+    agentId: agent._id,
+    fleetId: agent.fleetId,
+    tenantId: agent.tenantId,
+    agcSessionId,
+    title,
+    source: 'axl',
+    participantAgentId,
+    participantPeerId,
+    isDefault: false,
+    messageCount: 0,
+    lastMessageAt: now,
+    createdAt: now,
+  } as never)
+
+  return sessionId
+}
 
 async function resolveAgcSessionId(agentId: string, sessionId: string | null | undefined): Promise<string | null> {
   if (!sessionId) return null
@@ -294,6 +365,10 @@ router.post('/:agentId/messages/axl', async (c) => {
   try {
     const agent = await (await agents()).findOne({ _id: agentId }).lean()
     if (!agent) return c.json({ error: 'agent not found' }, 404)
+    const sessionId = await ensureAxlSession(agent, {
+      agentId: body.fromAgentId ?? null,
+      peerId: body.axlPeerId ?? null,
+    })
 
     const msgId = `hmsg_${Date.now().toString(36)}${randomBytes(4).toString('hex')}`
     const now = new Date()
@@ -302,25 +377,31 @@ router.post('/:agentId/messages/axl', async (c) => {
       agentId,
       fleetId: agent.fleetId,
       tenantId: agent.tenantId,
-      sessionId: null,
+      sessionId,
       content: body.content,
       status: 'pending',
       response: null,
       respondedAt: null,
       source: 'axl',
+      axlDirection: 'inbound',
       fromAgentId: body.fromAgentId ?? null,
+      toAgentId: agentId,
       axlPeerId: body.axlPeerId ?? null,
       axlMessageId: body.axlMessageId ?? null,
       createdAt: now,
     }
 
     await (await humanMessages()).create(doc as never)
+    await (await agentSessions()).updateOne(
+      { agentId, $or: [{ _id: sessionId }, { agcSessionId: sessionId }] },
+      { $set: { lastMessageAt: now } },
+    ).catch(() => {})
     enqueueHumanMessage(agentId, msgId)
     broadcastToFleet(agent.fleetId, {
       type: 'human_message',
       agentId,
       msgId,
-      sessionId: null,
+      sessionId,
       source: 'axl',
       fromAgentId: body.fromAgentId ?? null,
       content: body.content,
@@ -328,6 +409,159 @@ router.post('/:agentId/messages/axl', async (c) => {
     })
 
     return c.json(doc, 201)
+  } catch {
+    return c.json({ error: 'database error' }, 503)
+  }
+})
+
+// POST /agents/:agentId/messages/axl/outbound — daemon records an outbound AXL request.
+router.post('/:agentId/messages/axl/outbound', async (c) => {
+  if (c.get('authType') !== 'agent') {
+    return c.json({ error: 'agent authorization required' }, 403)
+  }
+  const agentId = c.req.param('agentId')
+  if (c.get('agentId') !== agentId) {
+    return c.json({ error: 'forbidden' }, 403)
+  }
+
+  const body = await c.req.json<{
+    content: string
+    toAgentId?: string | null
+    axlPeerId?: string | null
+    axlMessageId?: string | null
+  }>().catch(() => ({ content: '' }))
+  if (!body.content) return c.json({ error: 'content is required' }, 400)
+
+  try {
+    const agent = await (await agents()).findOne({ _id: agentId }).lean()
+    if (!agent) return c.json({ error: 'agent not found' }, 404)
+    const sessionId = await ensureAxlSession(agent, {
+      agentId: body.toAgentId ?? null,
+      peerId: body.axlPeerId ?? null,
+    })
+
+    const msgId = `hmsg_${Date.now().toString(36)}${randomBytes(4).toString('hex')}`
+    const now = new Date()
+    const doc: HumanMessageDoc = {
+      _id: msgId,
+      agentId,
+      fleetId: agent.fleetId,
+      tenantId: agent.tenantId,
+      sessionId,
+      content: body.content,
+      status: 'processing',
+      response: null,
+      respondedAt: null,
+      source: 'axl',
+      axlDirection: 'outbound',
+      fromAgentId: agentId,
+      toAgentId: body.toAgentId ?? null,
+      axlPeerId: body.axlPeerId ?? null,
+      axlMessageId: body.axlMessageId ?? null,
+      createdAt: now,
+    }
+
+    await (await humanMessages()).create(doc as never)
+    await (await agentSessions()).updateOne(
+      { agentId, $or: [{ _id: sessionId }, { agcSessionId: sessionId }] },
+      { $inc: { messageCount: 1 }, $set: { lastMessageAt: now } },
+    ).catch(() => {})
+
+    broadcastToFleet(agent.fleetId, {
+      type: 'human_message',
+      agentId,
+      msgId,
+      sessionId,
+      source: 'axl',
+      toAgentId: body.toAgentId ?? null,
+      content: body.content,
+      ts: now.toISOString(),
+    })
+
+    return c.json(doc, 201)
+  } catch {
+    return c.json({ error: 'database error' }, 503)
+  }
+})
+
+// POST /agents/:agentId/messages/axl/response — daemon records an inbound AXL response.
+router.post('/:agentId/messages/axl/response', async (c) => {
+  if (c.get('authType') !== 'agent') {
+    return c.json({ error: 'agent authorization required' }, 403)
+  }
+  const agentId = c.req.param('agentId')
+  if (c.get('agentId') !== agentId) {
+    return c.json({ error: 'forbidden' }, 403)
+  }
+
+  const body = await c.req.json<{
+    content: string
+    fromAgentId?: string | null
+    axlPeerId?: string | null
+    axlMessageId?: string | null
+    inReplyTo?: string | null
+  }>().catch(() => ({ content: '' }))
+  if (!body.content) return c.json({ error: 'content is required' }, 400)
+
+  try {
+    const agent = await (await agents()).findOne({ _id: agentId }).lean()
+    if (!agent) return c.json({ error: 'agent not found' }, 404)
+    const now = new Date()
+    const inReplyTo = body.inReplyTo ?? null
+
+    const existing = inReplyTo
+      ? await (await humanMessages()).findOneAndUpdate(
+        { agentId, axlMessageId: inReplyTo, source: 'axl', axlDirection: 'outbound' },
+        { $set: { status: 'responded', response: body.content, respondedAt: now } },
+        { new: true },
+      ).lean()
+      : null
+
+    if (existing) {
+      await (await agentSessions()).updateOne(
+        { agentId, $or: [{ _id: existing.sessionId }, { agcSessionId: existing.sessionId }] },
+        { $set: { lastMessageAt: now } },
+      ).catch(() => {})
+      broadcastToFleet(existing.fleetId, {
+        type: 'agent_response',
+        agentId,
+        msgId: existing._id,
+        response: body.content,
+        ts: now.toISOString(),
+      })
+      return c.json({ ok: true, matched: true })
+    }
+
+    const sessionId = await ensureAxlSession(agent, {
+      agentId: body.fromAgentId ?? null,
+      peerId: body.axlPeerId ?? null,
+    })
+    const msgId = `hmsg_${Date.now().toString(36)}${randomBytes(4).toString('hex')}`
+    const doc: HumanMessageDoc = {
+      _id: msgId,
+      agentId,
+      fleetId: agent.fleetId,
+      tenantId: agent.tenantId,
+      sessionId,
+      content: inReplyTo ? `AXL response to ${inReplyTo}` : 'AXL response',
+      status: 'responded',
+      response: body.content,
+      respondedAt: now,
+      source: 'axl',
+      axlDirection: 'inbound',
+      fromAgentId: body.fromAgentId ?? null,
+      toAgentId: agentId,
+      axlPeerId: body.axlPeerId ?? null,
+      axlMessageId: body.axlMessageId ?? null,
+      createdAt: now,
+    }
+
+    await (await humanMessages()).create(doc as never)
+    await (await agentSessions()).updateOne(
+      { agentId, $or: [{ _id: sessionId }, { agcSessionId: sessionId }] },
+      { $inc: { messageCount: 1 }, $set: { lastMessageAt: now } },
+    ).catch(() => {})
+    return c.json({ ok: true, matched: false, messageId: msgId }, 201)
   } catch {
     return c.json({ error: 'database error' }, 503)
   }
@@ -349,6 +583,7 @@ router.post('/:agentId/messages/:msgId/respond', async (c) => {
   const now = new Date()
 
   try {
+    const existing = await (await humanMessages()).findOne({ _id: msgId, agentId }, { sessionId: 1 }).lean()
     const msg = await (await humanMessages()).findOneAndUpdate(
       { _id: msgId, agentId },
       {
@@ -356,7 +591,7 @@ router.post('/:agentId/messages/:msgId/respond', async (c) => {
           status: 'responded',
           response: body.response,
           respondedAt: now,
-          ...(body.agcSessionId ? { sessionId: body.agcSessionId } : {}),
+          ...(!existing?.sessionId && body.agcSessionId ? { sessionId: body.agcSessionId } : {}),
         },
       },
       { new: true },
@@ -372,7 +607,7 @@ router.post('/:agentId/messages/:msgId/respond', async (c) => {
     })
 
     // After updating message, update session stats
-    const statsSessionId = body.agcSessionId ?? msg.sessionId
+    const statsSessionId = msg.sessionId ?? body.agcSessionId
     if (statsSessionId) {
       await (await agentSessions()).updateOne(
         { agentId, $or: [{ _id: statsSessionId }, { agcSessionId: statsSessionId }] },
