@@ -170,6 +170,7 @@ async function launchCloudInstance(
 	commonsApiKey: string | null,
 ): Promise<void> {
 	const apiUrl = process.env.API_URL ?? DEFAULT_API_URL;
+	const axlPeers = await fleetAxlPeers(agentDoc.fleetId, agentDoc._id, agentDoc.tenantId);
 
 	const podOpts = {
 		agentId: agentDoc._id,
@@ -183,6 +184,7 @@ async function launchCloudInstance(
 		commonsApiKey: commonsApiKey ?? "",
 		commonsAgentId: agentDoc.commons.agentId ?? "",
 		runnerUrl: process.env.RUNNER_URL,
+		axlPeers,
 		worldRoom: agentDoc.world.room,
 		worldX: agentDoc.world.x,
 		worldY: agentDoc.world.y,
@@ -216,4 +218,30 @@ async function launchCloudInstance(
 			{ $set: { status: "failed", updatedAt: new Date() } },
 		);
 	}
+}
+
+async function fleetAxlPeers(fleetId: string, agentId: string, tenantId: string): Promise<string> {
+	const configuredPeers = (process.env.AXL_PEERS ?? "")
+		.split(",")
+		.map((peer) => peer.trim())
+		.filter(Boolean);
+
+	const existingAgents = await (await agents())
+		.find(
+			{
+				fleetId,
+				tenantId,
+				_id: { $ne: agentId },
+				"axl.multiaddr": { $nin: [null, ""] },
+				status: { $ne: "terminated" },
+			},
+			{ axl: 1 },
+		)
+		.lean();
+
+	const fleetPeers = existingAgents
+		.map((agent) => agent.axl?.multiaddr)
+		.filter((peer): peer is string => Boolean(peer && peer.startsWith("tls://")));
+
+	return Array.from(new Set([...configuredPeers, ...fleetPeers])).join(",");
 }

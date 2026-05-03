@@ -23,8 +23,9 @@ export interface LaunchOptions {
 	commonsAgentId: string;
 	openclawGatewayUrl?: string;
 	workspaceDir?: string;
-	runnerUrl?: string;
-	worldRoom?: string;
+		runnerUrl?: string;
+		axlPeers?: string;
+		worldRoom?: string;
 	worldX?: number;
 	worldY?: number;
 }
@@ -343,9 +344,10 @@ export async function launchAgentPod(
 		{ name: "COMMONOS_WORKSPACE",   value: opts.workspaceDir ?? "/mnt/shared" },
 		{ name: "COMMONOS_AGENT_IMAGE", value: imageUrl },
 		{ name: "DOCKER_IMAGE",         value: opts.dockerImage ?? "" },
-		{ name: "RUNNER_URL",           value: opts.runnerUrl ?? process.env.RUNNER_URL ?? "" },
-		{ name: "AXL_PEERS",            value: process.env.AXL_PEERS ?? "" },
-		{ name: "WORLD_ROOM",           value: opts.worldRoom ?? "dev-room" },
+			{ name: "RUNNER_URL",           value: opts.runnerUrl ?? process.env.RUNNER_URL ?? "" },
+			{ name: "AXL_PEERS",            value: opts.axlPeers ?? process.env.AXL_PEERS ?? "" },
+			{ name: "POD_IP",               valueFrom: { fieldRef: { fieldPath: "status.podIP" } } },
+			{ name: "WORLD_ROOM",           value: opts.worldRoom ?? "dev-room" },
 		{ name: "WORLD_X",              value: String(opts.worldX ?? 2) },
 		{ name: "WORLD_Y",              value: String(opts.worldY ?? 2) },
 	];
@@ -566,9 +568,10 @@ export async function launchAgentPodEks(opts: LaunchOptions): Promise<LaunchedSe
 		{ name: "COMMONOS_WORKSPACE",   value: opts.workspaceDir ?? "/mnt/shared" },
 		{ name: "COMMONOS_AGENT_IMAGE", value: imageUrl },
 		{ name: "DOCKER_IMAGE",         value: opts.dockerImage ?? "" },
-		{ name: "RUNNER_URL",           value: opts.runnerUrl ?? process.env.RUNNER_URL ?? "" },
-		{ name: "AXL_PEERS",            value: process.env.AXL_PEERS ?? "" },
-		{ name: "WORLD_ROOM",           value: opts.worldRoom ?? "dev-room" },
+			{ name: "RUNNER_URL",           value: opts.runnerUrl ?? process.env.RUNNER_URL ?? "" },
+			{ name: "AXL_PEERS",            value: opts.axlPeers ?? process.env.AXL_PEERS ?? "" },
+			{ name: "POD_IP",               valueFrom: { fieldRef: { fieldPath: "status.podIP" } } },
+			{ name: "WORLD_ROOM",           value: opts.worldRoom ?? "dev-room" },
 		{ name: "WORLD_X",              value: String(opts.worldX ?? 2) },
 		{ name: "WORLD_Y",              value: String(opts.worldY ?? 2) },
 	];
