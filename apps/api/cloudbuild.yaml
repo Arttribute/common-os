@@ -3,7 +3,7 @@ steps:
     args:
       - build
       - -t
-      - "europe-west1-docker.pkg.dev/$PROJECT_ID/common-os/api:$SHORT_SHA"
+      - "europe-west1-docker.pkg.dev/$PROJECT_ID/common-os/api:$_IMAGE_TAG"
       - -f
       - apps/api/Dockerfile
       - "."
@@ -11,7 +11,7 @@ steps:
   - name: "gcr.io/cloud-builders/docker"
     args:
       - tag
-      - "europe-west1-docker.pkg.dev/$PROJECT_ID/common-os/api:$SHORT_SHA"
+      - "europe-west1-docker.pkg.dev/$PROJECT_ID/common-os/api:$_IMAGE_TAG"
       - "europe-west1-docker.pkg.dev/$PROJECT_ID/common-os/api:latest"
 
   - name: "gcr.io/cloud-builders/docker"
@@ -41,3 +41,6 @@ timeout: 1800s
 
 options:
   logging: CLOUD_LOGGING_ONLY
+
+substitutions:
+  _IMAGE_TAG: manual
