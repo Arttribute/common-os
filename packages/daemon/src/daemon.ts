@@ -28,7 +28,7 @@ const AXL_INBOX_MS   = 5_000;
 const WORKSPACE_DIR  = process.env.COMMONOS_WORKSPACE ?? config.workspaceDir;
 const AXL_API_URL    = process.env.AXL_API_URL ?? "http://localhost:9002";
 const ETH_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
-const DAEMON_RUNTIME = "common-os-daemon/agc-direct-stream-v2";
+const DAEMON_RUNTIME = "common-os-daemon/agc-direct-stream-v4-axl-hard-route";
 
 type AgcMessage = { role: "user" | "assistant"; content: string };
 
@@ -461,13 +461,16 @@ function parseAxlPayload(raw: string): AxlEnvelope {
   return { type: "request", content: raw };
 }
 
+function normalizeAxlAlias(value: string): string {
+  return value.toLowerCase().trim().replace(/[-_]+/g, " ").replace(/\s+/g, " ");
+}
+
 function roleAliases(role: string): string[] {
-  const normalized = role.toLowerCase().trim();
-  const compact = normalized.replace(/[-_]+/g, " ");
+  const compact = normalizeAxlAlias(role);
   return Array.from(new Set([
-    normalized,
     compact,
     compact.replace(/\s+agent$/, ""),
+    compact.replace(/\s+agent\s+/g, " "),
     compact.replace(/\s+/g, "-"),
     compact.replace(/\s+/g, ""),
   ].filter(Boolean)));
@@ -740,6 +743,7 @@ async function recordInboundAxlResponse(body: {
 
 async function resolveAxlTarget(target: string): Promise<{ agentId: string; peerId: string }> {
   const normalized = target.trim();
+  const alias = normalizeAxlAlias(normalized);
   if (!normalized) throw new Error("AXL target is required");
 
   const wantsManager = /\b(manager|master|lead|fleet\s+(manager|master))\b/i.test(normalized);
@@ -753,7 +757,7 @@ async function resolveAxlTarget(target: string): Promise<{ agentId: string; peer
   let peerId = agentIdToPeerId.get(normalized);
   if (peerId) return { agentId: normalized, peerId };
 
-  const aliasAgentId = peerAliasToAgentId.get(normalized.toLowerCase()) ?? peerAliasToAgentId.get(normalized.toLowerCase().replace(/[-_]+/g, " "));
+  const aliasAgentId = peerAliasToAgentId.get(alias) ?? peerAliasToAgentId.get(alias.replace(/\s+/g, ""));
   if (aliasAgentId) {
     peerId = agentIdToPeerId.get(aliasAgentId);
     if (peerId) return { agentId: aliasAgentId, peerId };
@@ -775,7 +779,7 @@ async function resolveAxlTarget(target: string): Promise<{ agentId: string; peer
   peerId = agentIdToPeerId.get(normalized);
   if (peerId) return { agentId: normalized, peerId };
 
-  const refreshedAliasAgentId = peerAliasToAgentId.get(normalized.toLowerCase()) ?? peerAliasToAgentId.get(normalized.toLowerCase().replace(/[-_]+/g, " "));
+  const refreshedAliasAgentId = peerAliasToAgentId.get(alias) ?? peerAliasToAgentId.get(alias.replace(/\s+/g, ""));
   if (refreshedAliasAgentId) {
     peerId = agentIdToPeerId.get(refreshedAliasAgentId);
     if (peerId) return { agentId: refreshedAliasAgentId, peerId };
@@ -994,13 +998,24 @@ async function executeTask(
 ): Promise<string | { response: string; agcSessionId?: string }> {
   const axlRequest = parseDirectAxlRequest(description);
   if (axlRequest) {
-    const resolved = await resolveAxlTarget(axlRequest.target);
-    await sendAxlMessage(resolved.peerId, resolved.agentId, axlRequest.content, { type: "request" });
-    return [
-      `Sent via AXL to ${resolved.agentId}.`,
-      `Target: ${axlRequest.target}`,
-      `Content: ${axlRequest.content}`,
-    ].join("\n");
+    try {
+      const resolved = await resolveAxlTarget(axlRequest.target);
+      await sendAxlMessage(resolved.peerId, resolved.agentId, axlRequest.content, { type: "request" });
+      return [
+        `Sent via AXL to ${resolved.agentId}.`,
+        `Target: ${axlRequest.target}`,
+        `Content: ${axlRequest.content}`,
+      ].join("\n");
+    } catch (err) {
+      return [
+        `AXL send failed before invoking Agent Commons native A2A.`,
+        `Target: ${axlRequest.target}`,
+        `Reason: ${err instanceof Error ? err.message : String(err)}`,
+        "",
+        "Known AXL peers:",
+        axlPeerDirectory(),
+      ].join("\n");
+    }
   }
 
   if (config.integrationPath === "openclaw") return await runViaOpenClaw(description);
@@ -1014,10 +1029,13 @@ function parseDirectAxlRequest(description: string): { target: string; content: 
   if (!/\b(axl|agent|fleet\s+(manager|master)|manager|master)\b/i.test(text)) return null;
   if (!/\b(send|message|say|tell|ask|ping)\b/i.test(text)) return null;
 
-  const targetMatch =
-    text.match(/\b(?:to|with)\s+([A-Za-z0-9_-]+)(?:\s+in\s+(?:your\s+)?fleet)?/i) ??
+  const viaTarget =
+    text.match(/\bto\s+(.+?)\s+via\s+axl\b/i) ??
+    text.match(/\bvia\s+axl\s+to\s+(.+?)(?:$|[.?!,])/i);
+  const simpleTarget =
+    text.match(/\b(?:to|with)\s+(.+?)(?:\s+in\s+(?:your\s+)?fleet|\s+on\s+axl|\s+over\s+axl|$|[.?!,])/i) ??
     text.match(/\b(fleet\s+manager|fleet\s+master|manager|master)\b/i);
-  const rawTarget = targetMatch?.[1]?.trim();
+  const rawTarget = cleanAxlTarget((viaTarget?.[1] ?? simpleTarget?.[1] ?? "").trim());
   if (!rawTarget) return null;
 
   const quoted = text.match(/["“]([^"”]+)["”]/);
@@ -1036,6 +1054,13 @@ function parseDirectAxlRequest(description: string): { target: string; content: 
   }
 
   return { target: rawTarget, content: `Hi from ${config.role || config.agentId}.` };
+}
+
+function cleanAxlTarget(target: string): string {
+  return target
+    .replace(/^(?:the\s+)?/i, "")
+    .replace(/\s+(?:in\s+(?:your\s+)?fleet|via\s+axl|over\s+axl|using\s+axl)$/i, "")
+    .trim();
 }
 
 // ─── Workspace snapshot & filesystem manifest ──────────────────────────────
