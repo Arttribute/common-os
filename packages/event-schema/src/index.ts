@@ -96,7 +96,11 @@ const ErrorEvent = z.object({
 
 const HeartbeatEvent = z.object({
   type: z.literal("heartbeat"),
-  payload: z.object({}).optional(),
+  payload: z.object({
+    runtime: z.string().optional(),
+    commitSha: z.string().optional(),
+    agentImage: z.string().optional(),
+  }).optional(),
 });
 
 const WorkspaceSnapshotEvent = z.object({

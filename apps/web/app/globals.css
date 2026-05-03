@@ -11,7 +11,6 @@ html, body {
   color: #e2e8f0;
   font-family: 'SF Mono', 'Fira Code', 'Fira Mono', 'Roboto Mono', monospace;
   -webkit-font-smoothing: antialiased;
-  overflow: hidden;
 }
 
 /* Scrollbar styling for HUD panels */

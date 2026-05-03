@@ -29,6 +29,8 @@ const WORKSPACE_DIR  = process.env.COMMONOS_WORKSPACE ?? config.workspaceDir;
 const AXL_API_URL    = process.env.AXL_API_URL ?? "http://localhost:9002";
 const ETH_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 const DAEMON_RUNTIME = "common-os-daemon/agc-direct-stream-v4-axl-hard-route";
+const AGENT_IMAGE    = process.env.COMMONOS_AGENT_IMAGE ?? "";
+const COMMIT_SHA     = process.env.COMMONOS_COMMIT_SHA ?? "";
 
 type AgcMessage = { role: "user" | "assistant"; content: string };
 
@@ -44,6 +46,7 @@ type AxlEnvelope = {
 // Session ID is created once at startup and persisted so the agent remembers
 // all previous conversations across daemon restarts.
 let agentSessionId: string | null = null;
+let agcReady = false;
 
 // ─── World state ──────────────────────────────────────────────────────────
 
@@ -63,8 +66,29 @@ async function firstTimeSetup(): Promise<void> {
 
   if (config.integrationPath === "native") {
     if (!config.commonsApiKey) await bootstrapCommons();
-    await setupAgcAuth();
-    await initSession(); // recover only — new sessions created lazily on first run
+    await ensureAgcReady();
+  }
+}
+
+async function ensureAgcReady(): Promise<void> {
+  if (agcReady) return;
+  if (!config.commonsApiKey || !config.commonsAgentId) {
+    console.log("[daemon] AGC not configured — will retry bootstrap in background");
+    return;
+  }
+  await setupAgcAuth();
+  await initSession(); // recover only — new sessions created lazily on first run
+  agcReady = true;
+}
+
+async function startAgcBootstrapRetryLoop(): Promise<void> {
+  if (config.integrationPath !== "native") return;
+  while (!agcReady) {
+    await sleep(60_000);
+    if (!config.commonsApiKey || !config.commonsAgentId) {
+      await bootstrapCommons();
+    }
+    await ensureAgcReady();
   }
 }
 
@@ -252,11 +276,27 @@ async function registerSessionWithApi(): Promise<void> {
 
 // ─── Main ──────────────────────────────────────────────────────────────────
 
+function emitHeartbeat(): void {
+  agent.emit({
+    type: "heartbeat",
+    payload: {
+      runtime: DAEMON_RUNTIME,
+      commitSha: COMMIT_SHA,
+      agentImage: AGENT_IMAGE,
+    },
+  }).catch((err) => {
+    console.error("[daemon] heartbeat error:", err);
+  });
+}
+
 async function main() {
-  console.log(`[daemon] starting  ${DAEMON_RUNTIME}  agent=${config.agentId}  role=${config.role}  fleet=${config.fleetId}`);
+  console.log(`[daemon] starting  ${DAEMON_RUNTIME}  agent=${config.agentId}  role=${config.role}  fleet=${config.fleetId}  image=${AGENT_IMAGE || "unknown"}  commit=${COMMIT_SHA || "unknown"}`);
 
   await firstTimeSetup();
-  await agent.emit({ type: "state_change", payload: { status: "online" } });
+  await agent.emit({ type: "state_change", payload: { status: "online" } }).catch((err) => {
+    console.error("[daemon] state change error:", err);
+  });
+  emitHeartbeat();
   console.log("[daemon] online");
 
   // Push initial workspace snapshot so the UI can show the pod filesystem immediately
@@ -264,11 +304,10 @@ async function main() {
 
   void registerAxlPeer();
   void discoverFleetPeers();
+  void startAgcBootstrapRetryLoop();
 
   setInterval(() => {
-    agent.emit({ type: "heartbeat" }).catch((err: unknown) => {
-      console.error("[daemon] heartbeat error:", err);
-    });
+    emitHeartbeat();
   }, HEARTBEAT_MS);
 
   startFileWatcher();

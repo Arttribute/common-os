@@ -5,6 +5,7 @@ import { launchAgentPod, launchAgentPodEks } from "./cloud-init.js";
 import { registerAgentENS } from "./ens.js";
 
 const AGC_BASE_URL = (process.env.AGC_API_URL ?? "https://api.agentcommons.io").replace(/\/$/, "");
+const DEFAULT_API_URL = "https://common-os-api-prod-7it3eyacta-ew.a.run.app";
 
 interface ProvisionAgentOptions {
 	fleetId: string;
@@ -64,10 +65,11 @@ export async function provisionAgent(
 			openclawConfig: opts.openclawConfig ?? null,
 			tools: [],
 		},
-		world: { room: opts.room, x: startX, y: startY, facing: "south" },
-		axl: { peerId: null, multiaddr: null },
-		lastHeartbeatAt: null,
-		startedAt: null,
+			world: { room: opts.room, x: startX, y: startY, facing: "south" },
+			axl: { peerId: null, multiaddr: null },
+			lastHeartbeatAt: null,
+			runtime: null,
+			startedAt: null,
 		createdAt: now,
 		updatedAt: now,
 	};
@@ -189,7 +191,7 @@ async function launchCloudInstance(
 	agentToken: string,
 	commonsApiKey: string | null,
 ): Promise<void> {
-	const apiUrl = process.env.API_URL ?? "http://localhost:3001";
+	const apiUrl = process.env.API_URL ?? DEFAULT_API_URL;
 
 	const podOpts = {
 		agentId: agentDoc._id,

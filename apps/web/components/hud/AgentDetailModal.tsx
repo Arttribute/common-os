@@ -187,12 +187,12 @@ function SessionsView({
             {session?.title ?? 'Session'}
           </span>
           {session?.agcSessionId && (
-            <span style={{ fontSize: 7, color: '#1e3a5f', fontFamily: 'monospace' }} title={session.agcSessionId}>
+            <span style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace' }} title={session.agcSessionId}>
               agc {shortId(session.agcSessionId, 12, 6)}
             </span>
           )}
           {session && !session.agcSessionId && (
-            <span style={{ fontSize: 7, color: '#ef4444', fontFamily: 'monospace' }}>
+            <span style={{ fontSize: 10, color: '#ef4444', fontFamily: 'monospace' }}>
               missing agc session
             </span>
           )}
@@ -205,7 +205,7 @@ function SessionsView({
             background: 'rgba(239,68,68,0.08)',
             borderRadius: 4,
             color: '#fca5a5',
-            fontSize: 9,
+            fontSize: 11,
             fontFamily: 'monospace',
             lineHeight: 1.5,
             flexShrink: 0,
@@ -215,11 +215,11 @@ function SessionsView({
         )}
         {messagesLoading ? (
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div style={{ fontSize: 10, color: '#334155', fontFamily: 'monospace' }}>loading…</div>
+            <div style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace' }}>loading…</div>
           </div>
         ) : sessionMessages.length === 0 ? (
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div style={{ fontSize: 10, color: '#334155', fontFamily: 'monospace' }}>no messages yet</div>
+            <div style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace' }}>no messages yet</div>
           </div>
         ) : (
           <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -235,7 +235,7 @@ function SessionsView({
   if (loading) {
     return (
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{ fontSize: 10, color: '#334155', fontFamily: 'monospace' }}>loading sessions…</div>
+        <div style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace' }}>loading sessions…</div>
       </div>
     )
   }
@@ -249,7 +249,7 @@ function SessionsView({
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         flexShrink: 0,
       }}>
-        <span style={{ fontSize: 9, color: '#334155', fontFamily: 'monospace' }}>
+        <span style={{ fontSize: 11, color: '#64748b', fontFamily: 'monospace' }}>
           {sessions.length} session{sessions.length !== 1 ? 's' : ''}
         </span>
         <button
@@ -258,7 +258,7 @@ function SessionsView({
           style={{
             background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.2)',
             borderRadius: 4, color: '#93c5fd', cursor: 'pointer',
-            fontSize: 9, fontFamily: 'monospace', padding: '3px 10px',
+            fontSize: 11, fontFamily: 'monospace', padding: '3px 10px',
             opacity: creating ? 0.5 : 1,
           }}
         >
@@ -274,8 +274,8 @@ function SessionsView({
       ) : sessions.length === 0 ? (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
           <div style={{ fontSize: 20 }}>📭</div>
-          <div style={{ fontSize: 10, color: '#334155', fontFamily: 'monospace' }}>no messages yet</div>
-          <div style={{ fontSize: 9, color: '#1e3a5f', fontFamily: 'monospace' }}>send a message to start chatting</div>
+          <div style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace' }}>no messages yet</div>
+          <div style={{ fontSize: 11, color: '#475569', fontFamily: 'monospace' }}>send a message to start chatting</div>
         </div>
       ) : (
         <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
@@ -310,35 +310,35 @@ function SessionRow({ session, onClick }: { session: AgentSession; onClick: () =
           {session.title}
         </span>
         {isAxl && (
-          <span style={{ fontSize: 7, color: '#06b6d4', fontFamily: 'monospace', background: 'rgba(6,182,212,0.1)', padding: '1px 5px', borderRadius: 3 }}>
+          <span style={{ fontSize: 10, color: '#06b6d4', fontFamily: 'monospace', background: 'rgba(6,182,212,0.1)', padding: '1px 5px', borderRadius: 3 }}>
             AXL
           </span>
         )}
         {session.isDefault && (
-          <span style={{ fontSize: 7, color: '#3b82f6', fontFamily: 'monospace', background: 'rgba(59,130,246,0.1)', padding: '1px 5px', borderRadius: 3 }}>
+          <span style={{ fontSize: 10, color: '#3b82f6', fontFamily: 'monospace', background: 'rgba(59,130,246,0.1)', padding: '1px 5px', borderRadius: 3 }}>
             active
           </span>
         )}
-        <span style={{ fontSize: 8, color: '#1e3a5f', fontFamily: 'monospace' }}>
+        <span style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace' }}>
           {relativeTime(session.lastMessageAt ?? session.createdAt)}
         </span>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ fontSize: 8, color: '#334155', fontFamily: 'monospace' }}>
+        <span style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace' }}>
           {session.messageCount} message{session.messageCount !== 1 ? 's' : ''}
         </span>
         {participant && (
-          <span style={{ fontSize: 7, color: '#1e3a5f', fontFamily: 'monospace' }} title={participant}>
+          <span style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace' }} title={participant}>
             peer {shortId(participant, 10, 4)}
           </span>
         )}
         {session.agcSessionId && (
-          <span style={{ fontSize: 7, color: '#1e293b', fontFamily: 'monospace' }} title={session.agcSessionId}>
+          <span style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace' }} title={session.agcSessionId}>
             agc {shortId(session.agcSessionId, 10, 4)}
           </span>
         )}
         {!session.agcSessionId && (
-          <span style={{ fontSize: 7, color: '#ef4444', fontFamily: 'monospace' }}>
+          <span style={{ fontSize: 10, color: '#ef4444', fontFamily: 'monospace' }}>
             missing agc id
           </span>
         )}
@@ -367,7 +367,7 @@ function SessionCard({ entry }: { entry: SessionEntry }) {
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
           <span
             title={isAxl ? (outbound ? entry.toAgentId ?? entry.axlPeerId ?? undefined : entry.fromAgentId ?? entry.axlPeerId ?? undefined) : undefined}
-            style={{ fontSize: 9, color: isAxl ? '#06b6d4' : '#3b82f6', fontFamily: 'monospace', fontWeight: 700, flexShrink: 0, marginTop: 1 }}
+            style={{ fontSize: 11, color: isAxl ? '#06b6d4' : '#3b82f6', fontFamily: 'monospace', fontWeight: 700, flexShrink: 0, marginTop: 1 }}
           >
             {requestLabel}
           </span>
@@ -375,7 +375,7 @@ function SessionCard({ entry }: { entry: SessionEntry }) {
             <div style={{ fontSize: 10, color: '#cbd5e1', fontFamily: 'monospace', lineHeight: 1.6, wordBreak: 'break-word' }}>
               {entry.content}
             </div>
-            <div style={{ fontSize: 8, color: '#1e3a5f', fontFamily: 'monospace', marginTop: 2 }}>
+            <div style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace', marginTop: 2 }}>
               {relativeTime(entry.createdAt)}
             </div>
           </div>
@@ -384,7 +384,7 @@ function SessionCard({ entry }: { entry: SessionEntry }) {
         {/* Agent response */}
         {entry.response ? (
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-            <span style={{ fontSize: 9, color: outbound ? '#06b6d4' : '#10b981', fontFamily: 'monospace', fontWeight: 700, flexShrink: 0, marginTop: 1 }}>
+            <span style={{ fontSize: 11, color: outbound ? '#06b6d4' : '#10b981', fontFamily: 'monospace', fontWeight: 700, flexShrink: 0, marginTop: 1 }}>
               {responseLabel}
             </span>
             <div style={{ flex: 1 }}>
@@ -406,21 +406,21 @@ function SessionCard({ entry }: { entry: SessionEntry }) {
                   onClick={() => setExpanded(!expanded)}
                   style={{
                     background: 'none', border: 'none', cursor: 'pointer',
-                    fontSize: 8, color: '#3b82f6', fontFamily: 'monospace',
+                    fontSize: 10, color: '#3b82f6', fontFamily: 'monospace',
                     padding: '2px 0', marginTop: 2,
                   }}
                 >
                   {expanded ? '▲ collapse' : '▼ expand'}
                 </button>
               )}
-              <div style={{ fontSize: 8, color: '#1e3a5f', fontFamily: 'monospace', marginTop: 2 }}>
+              <div style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace', marginTop: 2 }}>
                 {relativeTime(entry.respondedAt)}
               </div>
             </div>
           </div>
         ) : entry.status === 'processing' ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingLeft: 28 }}>
-            <span style={{ fontSize: 9, color: '#f59e0b', fontFamily: 'monospace' }}>processing…</span>
+            <span style={{ fontSize: 11, color: '#f59e0b', fontFamily: 'monospace' }}>processing…</span>
           </div>
         ) : null}
       </div>
@@ -432,17 +432,17 @@ function SessionCard({ entry }: { entry: SessionEntry }) {
   return (
     <div style={{ borderLeft: `2px solid ${color}44`, paddingLeft: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <span style={{ fontSize: 9, fontFamily: 'monospace', color: '#f59e0b', fontWeight: 700 }}>TASK</span>
+        <span style={{ fontSize: 11, fontFamily: 'monospace', color: '#f59e0b', fontWeight: 700 }}>TASK</span>
         <span
           style={{
-            fontSize: 8, fontFamily: 'monospace', color,
+            fontSize: 10, fontFamily: 'monospace', color,
             background: `${color}18`, border: `1px solid ${color}44`,
             padding: '1px 5px', borderRadius: 3, textTransform: 'uppercase', letterSpacing: 0.5,
           }}
         >
           {entry.status}
         </span>
-        <span style={{ fontSize: 8, color: '#1e3a5f', fontFamily: 'monospace', marginLeft: 'auto' }}>
+        <span style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace', marginLeft: 'auto' }}>
           {relativeTime(entry.createdAt)}
         </span>
       </div>
@@ -455,7 +455,7 @@ function SessionCard({ entry }: { entry: SessionEntry }) {
             onClick={() => setExpanded(!expanded)}
             style={{
               background: 'none', border: 'none', cursor: 'pointer',
-              fontSize: 8, color: '#475569', fontFamily: 'monospace', padding: 0,
+              fontSize: 10, color: '#475569', fontFamily: 'monospace', padding: 0,
             }}
           >
             {expanded ? '▲ hide output' : '▼ show output'}
@@ -463,7 +463,7 @@ function SessionCard({ entry }: { entry: SessionEntry }) {
           {expanded && (
             <div style={{
               marginTop: 4,
-              fontSize: 9,
+              fontSize: 11,
               color: entry.error ? '#ef4444' : '#64748b',
               fontFamily: 'monospace',
               background: 'rgba(0,0,0,0.3)',
@@ -566,16 +566,16 @@ function ComputerView({ agentRole, pod, snapshot, loading, error }: ComputerView
           display: 'flex',
           alignItems: 'center',
           gap: 4,
-          fontSize: 9,
+          fontSize: 11,
           fontFamily: 'monospace',
           color: '#64748b',
           overflow: 'hidden',
         }}>
-          <span style={{ color: '#334155', flexShrink: 0 }}>📂</span>
+          <span style={{ color: '#64748b', flexShrink: 0 }}>📂</span>
           <span style={{ color: '#475569', flexShrink: 0 }}>workspace</span>
           {path.map((seg, i) => (
             <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
-              <span style={{ color: '#1e293b' }}> › </span>
+              <span style={{ color: '#475569' }}> › </span>
               <span
                 style={{ color: i === path.length - 1 ? '#94a3b8' : '#475569', cursor: 'pointer' }}
                 onClick={() => navigateTo(path.slice(0, i + 1))}
@@ -586,7 +586,7 @@ function ComputerView({ agentRole, pod, snapshot, loading, error }: ComputerView
           ))}
         </div>
 
-        <span style={{ fontSize: 8, color: '#1e293b', fontFamily: 'monospace' }}>{pathStr}</span>
+        <span style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace' }}>{pathStr}</span>
       </div>
 
       {/* Main content area */}
@@ -602,7 +602,7 @@ function ComputerView({ agentRole, pod, snapshot, loading, error }: ComputerView
           flexDirection: 'column',
           gap: 1,
         }}>
-          <div style={{ padding: '4px 10px 8px', fontSize: 7, color: '#1e293b', fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: 1 }}>
+          <div style={{ padding: '4px 10px 8px', fontSize: 10, color: '#475569', fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: 1 }}>
             Devices
           </div>
           <SidebarItem
@@ -611,16 +611,16 @@ function ComputerView({ agentRole, pod, snapshot, loading, error }: ComputerView
             active={true}
             onClick={() => navigateTo([])}
           />
-          <div style={{ marginTop: 12, padding: '4px 10px 6px', fontSize: 7, color: '#1e293b', fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: 1 }}>
+          <div style={{ marginTop: 12, padding: '4px 10px 6px', fontSize: 10, color: '#475569', fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: 1 }}>
             Pod Info
           </div>
           {pod && (
             <>
-              <div style={{ padding: '3px 10px', fontSize: 8, color: '#334155', fontFamily: 'monospace', lineHeight: 1.8 }}>
+              <div style={{ padding: '3px 10px', fontSize: 10, color: '#64748b', fontFamily: 'monospace', lineHeight: 1.8 }}>
                 <div>☁️ {pod.provider}</div>
                 <div>📍 {pod.region}</div>
                 {pod.namespaceId && (
-                  <div style={{ color: '#1e293b', fontSize: 7, wordBreak: 'break-all', marginTop: 2 }}>
+                  <div style={{ color: '#475569', fontSize: 10, wordBreak: 'break-all', marginTop: 2 }}>
                     {pod.namespaceId.slice(0, 16)}…
                   </div>
                 )}
@@ -633,14 +633,14 @@ function ComputerView({ agentRole, pod, snapshot, loading, error }: ComputerView
         <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           {loading ? (
             <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <div style={{ fontSize: 10, color: '#334155', fontFamily: 'monospace' }}>loading workspace…</div>
+              <div style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace' }}>loading workspace…</div>
             </div>
           ) : !snapshot ? (
             <NoSnapshot agentRole={agentRole} pod={pod} error={error} />
           ) : sortedNodes.length === 0 ? (
             <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 6 }}>
               <div style={{ fontSize: 16 }}>📂</div>
-              <div style={{ fontSize: 9, color: '#334155', fontFamily: 'monospace' }}>empty folder</div>
+              <div style={{ fontSize: 11, color: '#64748b', fontFamily: 'monospace' }}>empty folder</div>
             </div>
           ) : (
             <div style={{
@@ -675,14 +675,14 @@ function ComputerView({ agentRole, pod, snapshot, loading, error }: ComputerView
             gap: 16,
             flexShrink: 0,
           }}>
-            <span style={{ fontSize: 8, color: '#1e3a5f', fontFamily: 'monospace' }}>
+            <span style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace' }}>
               {sortedNodes.filter((n) => n.isDir).length} folder(s)
             </span>
-            <span style={{ fontSize: 8, color: '#1e3a5f', fontFamily: 'monospace' }}>
+            <span style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace' }}>
               {sortedNodes.filter((n) => !n.isDir).length} file(s)
             </span>
             {snapshot && (
-              <span style={{ fontSize: 8, color: '#0f172a', fontFamily: 'monospace', marginLeft: 'auto' }}>
+              <span style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace', marginLeft: 'auto' }}>
                 workspace snapshot
               </span>
             )}
@@ -708,9 +708,9 @@ function NavButton({ children, disabled, onClick, title }: {
         background: disabled ? 'transparent' : 'rgba(255,255,255,0.05)',
         border: '1px solid rgba(255,255,255,0.08)',
         borderRadius: 3,
-        color: disabled ? '#1e293b' : '#475569',
+        color: disabled ? '#475569' : '#475569',
         cursor: disabled ? 'default' : 'pointer',
-        fontSize: 9,
+        fontSize: 11,
         fontFamily: 'monospace',
         width: 22,
         height: 22,
@@ -742,7 +742,7 @@ function SidebarItem({ icon, label, active, onClick }: {
       }}
     >
       <span style={{ fontSize: 11 }}>{icon}</span>
-      <span style={{ fontSize: 9, color: active ? '#93c5fd' : '#475569', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      <span style={{ fontSize: 11, color: active ? '#93c5fd' : '#475569', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {label}
       </span>
     </div>
@@ -773,7 +773,7 @@ function FileItem({ node, onOpen }: { node: FsNode; onOpen: () => void }) {
     >
       <span style={{ fontSize: 22, lineHeight: 1 }}>{fileIcon(node.name, node.isDir)}</span>
       <span style={{
-        fontSize: 8,
+        fontSize: 10,
         color: node.isDir ? '#e8b44a' : '#8ab4d4',
         fontFamily: 'monospace',
         textAlign: 'center',
@@ -807,9 +807,9 @@ function NoSnapshot({ agentRole, pod, error }: {
       padding: 24,
     }}>
       <div style={{ fontSize: 32 }}>🖥️</div>
-      <div style={{ fontSize: 11, color: '#334155', fontFamily: 'monospace', textAlign: 'center', lineHeight: 1.8 }}>
+      <div style={{ fontSize: 11, color: '#64748b', fontFamily: 'monospace', textAlign: 'center', lineHeight: 1.8 }}>
         {agentRole} pod is online<br />
-        <span style={{ fontSize: 9, color: '#1e3a5f' }}>
+        <span style={{ fontSize: 11, color: '#475569' }}>
           Workspace snapshot will appear once the agent processes its first task.
         </span>
       </div>
@@ -821,7 +821,7 @@ function NoSnapshot({ agentRole, pod, error }: {
           background: 'rgba(239,68,68,0.08)',
           borderRadius: 4,
           color: '#fca5a5',
-          fontSize: 9,
+          fontSize: 11,
           fontFamily: 'monospace',
           lineHeight: 1.5,
           textAlign: 'center',
@@ -841,9 +841,9 @@ function NoSnapshot({ agentRole, pod, error }: {
           gap: 4,
           alignItems: 'center',
         }}>
-          <div style={{ fontSize: 8, color: '#334155', fontFamily: 'monospace' }}>☁️ {pod.provider} · 📍 {pod.region}</div>
+          <div style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace' }}>☁️ {pod.provider} · 📍 {pod.region}</div>
           {pod.namespaceId && (
-            <div style={{ fontSize: 7, color: '#1e293b', fontFamily: 'monospace' }}>{pod.namespaceId}</div>
+            <div style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace' }}>{pod.namespaceId}</div>
           )}
         </div>
       )}
@@ -1104,7 +1104,7 @@ export function AgentDetailModal() {
               {shortRole}
             </span>
             {agent.permissionTier === 'manager' && (
-              <span style={{ fontSize: 7, color: '#f59e0b', fontFamily: 'monospace', background: 'rgba(245,158,11,0.1)', padding: '1px 5px', borderRadius: 3, border: '1px solid rgba(245,158,11,0.3)' }}>
+              <span style={{ fontSize: 10, color: '#f59e0b', fontFamily: 'monospace', background: 'rgba(245,158,11,0.1)', padding: '1px 5px', borderRadius: 3, border: '1px solid rgba(245,158,11,0.3)' }}>
                 MGR
               </span>
             )}
@@ -1114,13 +1114,13 @@ export function AgentDetailModal() {
           {/* Pod info in title bar */}
           {agent.pod && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 8, color: '#1e3a5f', fontFamily: 'monospace' }}>
+              <span style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace' }}>
                 {agent.pod.provider} · {agent.pod.region}
               </span>
             </div>
           )}
 
-          <span style={{ fontSize: 10, color: '#1e293b', fontFamily: 'monospace', marginLeft: 4 }} title={agent.agentId}>
+          <span style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace', marginLeft: 4 }} title={agent.agentId}>
             cos {shortId(agent.agentId, 12, 4)}
           </span>
         </div>
@@ -1242,13 +1242,13 @@ function IdentityField({
 }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
-      <span style={{ fontSize: 7, color: '#1e3a5f', fontFamily: 'monospace', textTransform: 'uppercase', flexShrink: 0 }}>
+      <span style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace', textTransform: 'uppercase', flexShrink: 0 }}>
         {label}
       </span>
       <span
         title={value ?? 'missing'}
         style={{
-          fontSize: 8,
+          fontSize: 10,
           color,
           fontFamily: 'monospace',
           overflow: 'hidden',
@@ -1261,7 +1261,7 @@ function IdentityField({
       </span>
       {badge && (
         <span style={{
-          fontSize: 7,
+          fontSize: 10,
           color,
           fontFamily: 'monospace',
           border: `1px solid ${color}33`,
@@ -1309,7 +1309,7 @@ function StatusPill({ status }: { status: string }) {
       padding: '1px 6px',
     }}>
       <span style={{ width: 5, height: 5, borderRadius: '50%', background: color, display: 'inline-block', boxShadow: `0 0 4px ${color}` }} />
-      <span style={{ fontSize: 8, color, fontFamily: 'monospace' }}>{status}</span>
+      <span style={{ fontSize: 10, color, fontFamily: 'monospace' }}>{status}</span>
     </div>
   )
 }
@@ -1324,7 +1324,7 @@ function TabButton({ active, onClick, children }: {
         background: 'none',
         border: 'none',
         borderBottom: active ? '2px solid #3b82f6' : '2px solid transparent',
-        color: active ? '#93c5fd' : '#334155',
+        color: active ? '#93c5fd' : '#64748b',
         cursor: 'pointer',
         fontSize: 10,
         fontFamily: 'monospace',

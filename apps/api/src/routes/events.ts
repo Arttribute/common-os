@@ -132,9 +132,17 @@ router.post("/", async (c) => {
 				},
 			);
 		} else if (event.type === "heartbeat") {
+			const runtimePayload = event.payload
+				? {
+					"runtime.name": event.payload.runtime ?? null,
+					"runtime.commitSha": event.payload.commitSha ?? null,
+					"runtime.agentImage": event.payload.agentImage ?? null,
+					"runtime.updatedAt": now,
+				}
+				: {};
 			await agentCol.updateOne(
 				{ _id: agentId },
-				{ $set: { lastHeartbeatAt: now, updatedAt: now } },
+				{ $set: { lastHeartbeatAt: now, updatedAt: now, ...runtimePayload } },
 			);
 		} else if (event.type === "task_start") {
 			await (await tasks()).updateOne(

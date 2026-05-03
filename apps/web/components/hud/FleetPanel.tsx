@@ -100,14 +100,14 @@ function AgentRow({ agent, selected, onSelect }: {
         )}
         <span
           style={{
-            marginLeft: 'auto', fontSize: 9, color: dotColor,
+            marginLeft: 'auto', fontSize: 10, color: dotColor,
             fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: 0.5,
           }}
         >
           {statusLabel(agent.status)}
         </span>
         {agent.permissionTier === 'manager' && (
-          <span style={{ fontSize: 8, color: '#f59e0b', fontFamily: 'monospace', marginLeft: 2 }}>
+          <span style={{ fontSize: 10, color: '#f59e0b', fontFamily: 'monospace', marginLeft: 2 }}>
             MGR
           </span>
         )}
@@ -116,11 +116,11 @@ function AgentRow({ agent, selected, onSelect }: {
       {/* Provisioning: show current creation step */}
       {isProvisioning && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 1, paddingLeft: 13 }}>
-          <div style={{ fontSize: 9, color: '#4338ca', fontFamily: 'monospace' }}>
+          <div style={{ fontSize: 10, color: '#6366f1', fontFamily: 'monospace' }}>
             · {provisioningStep(agent.createdAt)}
           </div>
           {agent.pod && (
-            <div style={{ fontSize: 8, color: '#1e293b', fontFamily: 'monospace' }}>
+            <div style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace' }}>
               {agent.pod.provider} · {agent.pod.region}
             </div>
           )}
@@ -129,19 +129,19 @@ function AgentRow({ agent, selected, onSelect }: {
       )}
 
       {!isProvisioning && agent.currentAction && (
-        <div style={{ fontSize: 9, color: '#64748b', paddingLeft: 13, fontFamily: 'monospace' }}>
+        <div style={{ fontSize: 10, color: '#94a3b8', paddingLeft: 13, fontFamily: 'monospace' }}>
           · {agent.currentAction}
         </div>
       )}
 
       {!isProvisioning && (
-        <div style={{ fontSize: 8, color: agcOk ? '#14532d' : '#7f1d1d', paddingLeft: 13, fontFamily: 'monospace' }} title={agcId ?? 'Agent Commons wallet not resolved'}>
+        <div style={{ fontSize: 10, color: agcOk ? '#4ade80' : '#f87171', paddingLeft: 13, fontFamily: 'monospace' }} title={agcId ?? 'Agent Commons wallet not resolved'}>
           agc {shortId(agcId)}
         </div>
       )}
 
       {!isProvisioning && agent.currentTask && !agent.currentAction && (
-        <div style={{ fontSize: 9, color: '#334155', paddingLeft: 13, fontFamily: 'monospace' }}>
+        <div style={{ fontSize: 10, color: '#64748b', paddingLeft: 13, fontFamily: 'monospace' }}>
           {agent.currentTask.description.slice(0, 48)}…
         </div>
       )}
@@ -247,7 +247,7 @@ export function FleetPanel() {
         </span>
         <span
           style={{
-            marginLeft: 'auto', fontSize: 9, color: '#475569', fontFamily: 'monospace',
+            marginLeft: 'auto', fontSize: 10, color: '#64748b', fontFamily: 'monospace',
             background: 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: 4,
           }}
         >
@@ -256,7 +256,7 @@ export function FleetPanel() {
         {provisioningCount > 0 && (
           <span
             style={{
-              fontSize: 8, color: '#6366f1', fontFamily: 'monospace',
+              fontSize: 10, color: '#6366f1', fontFamily: 'monospace',
               background: 'rgba(99,102,241,0.1)', padding: '2px 5px', borderRadius: 4,
               border: '1px solid rgba(99,102,241,0.3)',
             }}
@@ -270,7 +270,7 @@ export function FleetPanel() {
       <div style={{ padding: '4px 4px', maxHeight: 360, overflowY: 'auto' }}>
         {sorted.length === 0 && (
           <div style={{
-            padding: 12, fontSize: 10, color: '#334155',
+            padding: 12, fontSize: 11, color: '#64748b',
             textAlign: 'center', fontFamily: 'monospace',
           }}>
             No agents deployed

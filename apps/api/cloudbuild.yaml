@@ -3,7 +3,7 @@ steps:
     args:
       - build
       - -t
-      - "europe-west1-docker.pkg.dev/$PROJECT_ID/common-os/api:$SHORT_SHA"
+      - "europe-west1-docker.pkg.dev/$PROJECT_ID/common-os/api:$_IMAGE_TAG"
       - -f
       - apps/api/Dockerfile
       - "."
@@ -11,7 +11,7 @@ steps:
   - name: "gcr.io/cloud-builders/docker"
     args:
       - tag
-      - "europe-west1-docker.pkg.dev/$PROJECT_ID/common-os/api:$SHORT_SHA"
+      - "europe-west1-docker.pkg.dev/$PROJECT_ID/common-os/api:$_IMAGE_TAG"
       - "europe-west1-docker.pkg.dev/$PROJECT_ID/common-os/api:latest"
 
   - name: "gcr.io/cloud-builders/docker"
@@ -35,8 +35,12 @@ steps:
       - --memory=512Mi
       - --no-cpu-throttling
       - --service-account=common-os-api@$PROJECT_ID.iam.gserviceaccount.com
+      - --update-env-vars=API_URL=https://common-os-api-prod-7it3eyacta-ew.a.run.app,AGENT_IMAGE_URL=europe-west1-docker.pkg.dev/$PROJECT_ID/common-os/agent:latest,GCP_PROJECT_ID=$PROJECT_ID,GCP_REGION=europe-west1,CLOUD_PROVIDER=gcp
 
 timeout: 1800s
 
 options:
   logging: CLOUD_LOGGING_ONLY
+
+substitutions:
+  _IMAGE_TAG: manual

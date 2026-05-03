@@ -24,6 +24,9 @@ cat > /etc/common-os/config.json << CONFIGEOF
 CONFIGEOF
 
 echo "Config written to /etc/common-os/config.json"
+echo "CommonOS agent image: ${COMMONOS_AGENT_IMAGE:-unknown}"
+echo "CommonOS agent commit: ${COMMONOS_COMMIT_SHA:-unknown}"
+echo "CommonOS image build date: ${COMMONOS_BUILD_DATE:-unknown}"
 
 # ── AXL — P2P inter-agent communication ─────────────────────────────────────
 # The AXL node runs as a sidecar. It joins the Yggdrasil mesh and exposes a

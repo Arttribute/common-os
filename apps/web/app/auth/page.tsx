@@ -17,7 +17,7 @@ export default function AuthPage() {
   if (!privyEnabled) {
     return (
       <div style={{ ...centeredStyle }}>
-        <span style={{ color: '#334155', fontSize: 11, fontFamily: 'monospace' }}>redirecting…</span>
+        <span style={{ color: '#64748b', fontSize: 12, fontFamily: 'monospace' }}>redirecting…</span>
       </div>
     )
   }

@@ -15,8 +15,8 @@ const panel: React.CSSProperties = {
 }
 
 const label: React.CSSProperties = {
-  fontSize: 9,
-  color: '#475569',
+  fontSize: 10,
+  color: '#64748b',
   letterSpacing: 1,
   textTransform: 'uppercase',
   marginBottom: 6,
@@ -69,7 +69,7 @@ export default function SettingsPage() {
         <span style={{ fontSize: 16, fontWeight: 700, letterSpacing: -0.5 }}>
           common<span style={{ color: '#f59e0b' }}>os</span>
         </span>
-        <span style={{ fontSize: 11, color: '#334155' }}>/ settings</span>
+        <span style={{ fontSize: 12, color: '#64748b' }}>/ settings</span>
         <span style={{ marginLeft: 'auto' }} />
         <button
           onClick={() => router.push('/dashboard')}
@@ -101,7 +101,7 @@ export default function SettingsPage() {
         <div style={panel}>
           <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}>
             <div style={label}>api key</div>
-            <span style={{ marginLeft: 'auto', fontSize: 9, color: '#334155' }}>
+            <span style={{ marginLeft: 'auto', fontSize: 10, color: '#64748b' }}>
               {apiKey ? 'stored from first login' : 'not available — re-login to get a new key'}
             </span>
           </div>
@@ -127,12 +127,12 @@ export default function SettingsPage() {
                   {copiedKey ? '✓' : '⎘'}
                 </button>
               </div>
-              <div style={{ fontSize: 9, color: '#334155', marginTop: 8 }}>
+              <div style={{ fontSize: 11, color: '#64748b', marginTop: 8 }}>
                 Keep this secret. It grants full control over your fleets.
               </div>
             </div>
           ) : (
-            <div style={{ fontSize: 11, color: '#334155' }}>
+            <div style={{ fontSize: 12, color: '#64748b' }}>
               API key was shown once at account creation. Sign out and back in to generate a new one.
             </div>
           )}
@@ -163,10 +163,10 @@ export default function SettingsPage() {
           </div>
 
           <div style={{ marginTop: 16, borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: 14 }}>
-            <div style={{ fontSize: 9, color: '#475569', marginBottom: 8, letterSpacing: 1, textTransform: 'uppercase' }}>
+            <div style={{ fontSize: 10, color: '#64748b', marginBottom: 8, letterSpacing: 1, textTransform: 'uppercase' }}>
               common commands
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {[
                 ['fleet create', 'commonos fleet create --name my-fleet'],
                 ['agent deploy', 'commonos agent deploy --fleet <id> --role engineer'],
@@ -175,8 +175,8 @@ export default function SettingsPage() {
                 ['world view', 'commonos world snapshot <fleet-id>'],
               ].map(([name, cmd]) => (
                 <div key={name} style={{ display: 'flex', gap: 12, alignItems: 'baseline' }}>
-                  <span style={{ fontSize: 9, color: '#334155', minWidth: 80, flexShrink: 0 }}>{name}</span>
-                  <span style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace' }}>{cmd}</span>
+                  <span style={{ fontSize: 11, color: '#64748b', minWidth: 88, flexShrink: 0 }}>{name}</span>
+                  <span style={{ fontSize: 11, color: '#94a3b8', fontFamily: 'monospace' }}>{cmd}</span>
                 </div>
               ))}
             </div>
@@ -191,8 +191,8 @@ export default function SettingsPage() {
 function Row({ k, v, dim }: { k: string; v: string; dim?: boolean }) {
   return (
     <div style={{ display: 'flex', gap: 16, alignItems: 'baseline' }}>
-      <span style={{ fontSize: 10, color: '#475569', minWidth: 80 }}>{k}</span>
-      <span style={{ fontSize: 11, color: dim ? '#334155' : '#94a3b8', fontFamily: 'monospace' }}>{v}</span>
+      <span style={{ fontSize: 11, color: '#64748b', minWidth: 80 }}>{k}</span>
+      <span style={{ fontSize: 12, color: dim ? '#64748b' : '#94a3b8', fontFamily: 'monospace' }}>{v}</span>
     </div>
   )
 }
@@ -206,7 +206,7 @@ function CodeLine({ label: lbl, code }: { label: string; code: string }) {
   }
   return (
     <div>
-      <div style={{ fontSize: 9, color: '#475569', marginBottom: 4 }}>{lbl}</div>
+      <div style={{ fontSize: 10, color: '#64748b', marginBottom: 4 }}>{lbl}</div>
       <div style={{ ...codeBlock, display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ flex: 1 }}>{code}</span>
         <button onClick={() => void copy()} style={iconBtn} title="copy">
@@ -222,8 +222,8 @@ const ghostBtn: React.CSSProperties = {
   background: 'none',
   border: '1px solid rgba(255,255,255,0.08)',
   borderRadius: 6,
-  color: '#475569',
-  fontSize: 10,
+  color: '#94a3b8',
+  fontSize: 11,
   fontFamily: 'monospace',
   cursor: 'pointer',
 }
@@ -231,7 +231,7 @@ const ghostBtn: React.CSSProperties = {
 const iconBtn: React.CSSProperties = {
   background: 'none',
   border: 'none',
-  color: '#475569',
+  color: '#64748b',
   cursor: 'pointer',
   fontSize: 13,
   padding: '0 2px',

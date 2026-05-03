@@ -59,7 +59,7 @@ export function Inspector() {
           {shortRole}
         </span>
         {agent.permissionTier === 'manager' && (
-          <span style={{ fontSize: 8, color: '#f59e0b', fontFamily: 'monospace' }}>MANAGER</span>
+          <span style={{ fontSize: 10, color: '#f59e0b', fontFamily: 'monospace' }}>MANAGER</span>
         )}
         <button
           onClick={() => selectAgent(null)}
@@ -126,7 +126,7 @@ export function Inspector() {
         {/* Current task */}
         {agent.currentTask && (
           <Section title="Current Task">
-            <div style={{ fontSize: 9, color: '#cbd5e1', fontFamily: 'monospace', lineHeight: 1.5 }}>
+            <div style={{ fontSize: 11, color: '#cbd5e1', fontFamily: 'monospace', lineHeight: 1.5 }}>
               {agent.currentTask.description}
             </div>
           </Section>
@@ -135,7 +135,7 @@ export function Inspector() {
         {/* Current action */}
         {agent.currentAction && (
           <Section title="Doing">
-            <div style={{ fontSize: 9, color: '#f59e0b', fontFamily: 'monospace' }}>
+            <div style={{ fontSize: 11, color: '#f59e0b', fontFamily: 'monospace' }}>
               · {agent.currentAction}
             </div>
           </Section>
@@ -145,7 +145,7 @@ export function Inspector() {
         {agent.recentActions.length > 0 && (
           <Section title="Recent">
             {agent.recentActions.map((a, i) => (
-              <div key={i} style={{ fontSize: 9, color: '#475569', fontFamily: 'monospace' }}>
+              <div key={i} style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace' }}>
                 · {a}
               </div>
             ))}
@@ -170,7 +170,7 @@ export function Inspector() {
             borderRadius: 5,
             color: '#93c5fd',
             cursor: 'pointer',
-            fontSize: 9,
+            fontSize: 10,
             fontFamily: 'monospace',
             padding: '4px 10px',
             display: 'flex',
@@ -200,8 +200,8 @@ function CreationStatus({ createdAt }: { createdAt?: number }) {
     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
       <PulsingDot color="#6366f1" />
       <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-        <span style={{ fontSize: 9, color: '#6366f1', fontFamily: 'monospace' }}>provisioning</span>
-        <span style={{ fontSize: 8, color: '#334155', fontFamily: 'monospace' }}>· {step}</span>
+        <span style={{ fontSize: 10, color: '#6366f1', fontFamily: 'monospace' }}>provisioning</span>
+        <span style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace' }}>· {step}</span>
       </div>
     </div>
   )
@@ -237,14 +237,14 @@ function Row({ label, value, mono, truncate }: {
   return (
     <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
       <span style={{
-        fontSize: 8, color: '#334155', fontFamily: 'monospace',
+        fontSize: 10, color: '#64748b', fontFamily: 'monospace',
         minWidth: 32, textTransform: 'uppercase', letterSpacing: 0.5, flexShrink: 0,
       }}>
         {label}
       </span>
       <span style={{
-        fontSize: 9,
-        color: '#64748b',
+        fontSize: 10,
+        color: '#94a3b8',
         fontFamily: mono ? 'monospace' : 'inherit',
         ...(truncate ? { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 140 } : { wordBreak: 'break-all' }),
       }}>
@@ -258,7 +258,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   return (
     <div>
       <div style={{
-        fontSize: 8, color: '#334155', fontFamily: 'monospace',
+        fontSize: 10, color: '#64748b', fontFamily: 'monospace',
         textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4,
       }}>
         {title}
@@ -282,7 +282,7 @@ function StatusBadge({ status }: { status: string }) {
         width: 6, height: 6, borderRadius: '50%',
         background: color, display: 'inline-block', boxShadow: `0 0 4px ${color}`,
       }} />
-      <span style={{ fontSize: 9, color, fontFamily: 'monospace' }}>{status}</span>
+      <span style={{ fontSize: 10, color, fontFamily: 'monospace' }}>{status}</span>
     </div>
   )
 }
