@@ -67,6 +67,61 @@ async function ensureDefaultSession(
   return agcSessionId
 }
 
+function normalizeMention(value: string): string {
+  return value.toLowerCase().trim().replace(/^@/, '').replace(/[-_]+/g, ' ').replace(/\s+/g, ' ')
+}
+
+function roleAliases(role: string): string[] {
+  const normalized = normalizeMention(role)
+  return Array.from(new Set([
+    normalized,
+    normalized.replace(/\s+agent$/, ''),
+    normalized.replace(/\s+agent\s+/g, ' '),
+    normalized.replace(/\s+/g, ''),
+    normalized.replace(/\s+/g, '-'),
+  ].filter(Boolean)))
+}
+
+function extractMentionTarget(content: string): string | null {
+  const match = content.match(/(^|\s)@([A-Za-z0-9][A-Za-z0-9_-]*)/)
+  return match?.[2]?.trim() ?? null
+}
+
+async function resolveMentionTarget(
+  content: string,
+  opts: { agentId: string; fleetId: string; tenantId: string; explicitTargetAgentId?: string | null },
+): Promise<{ agentId: string; peerId: string } | null> {
+  const targetAgentId = opts.explicitTargetAgentId ?? null
+  const mention = targetAgentId ? null : extractMentionTarget(content)
+  if (!targetAgentId && !mention) return null
+  if (targetAgentId === opts.agentId) throw new Error('AXL target must be another agent')
+
+  const col = await agents()
+  if (targetAgentId) {
+    const target = await col.findOne(
+      { _id: targetAgentId, fleetId: opts.fleetId, tenantId: opts.tenantId },
+      { _id: 1, axl: 1 },
+    ).lean()
+    if (!target) throw new Error('AXL target agent not found')
+    if (!target.axl?.peerId) throw new Error('AXL target agent has no peer ID yet')
+    return { agentId: target._id, peerId: target.axl.peerId }
+  }
+
+  const needle = normalizeMention(mention ?? '')
+  const candidates = await col.find(
+    { fleetId: opts.fleetId, tenantId: opts.tenantId, _id: { $ne: opts.agentId } },
+    { _id: 1, config: 1, axl: 1 },
+  ).lean()
+
+  const target = candidates.find((candidate) => (
+    normalizeMention(candidate._id) === needle ||
+    roleAliases(candidate.config?.role ?? '').some((alias) => alias === needle || alias.replace(/\s+/g, '') === needle.replace(/\s+/g, ''))
+  ))
+  if (!target) throw new Error(`AXL mention target @${mention} not found`)
+  if (!target.axl?.peerId) throw new Error(`AXL mention target @${mention} has no peer ID yet`)
+  return { agentId: target._id, peerId: target.axl.peerId }
+}
+
 const router = new Hono<Env>()
 
 // POST /fleets/:id/agents/:agentId/human-message — human sends a message to an agent
@@ -84,16 +139,19 @@ router.post('/:id/agents/:agentId/human-message', async (c) => {
 
     let axlTargetAgentId: string | null = null
     let axlTargetPeerId: string | null = null
-    if (body.axlTargetAgentId) {
-      if (body.axlTargetAgentId === agentId) return c.json({ error: 'AXL target must be another agent' }, 400)
-      const target = await (await agents()).findOne(
-        { _id: body.axlTargetAgentId, fleetId, tenantId },
-        { _id: 1, axl: 1 },
-      ).lean()
-      if (!target) return c.json({ error: 'AXL target agent not found' }, 404)
-      if (!target.axl?.peerId) return c.json({ error: 'AXL target agent has no peer ID yet' }, 409)
-      axlTargetAgentId = target._id
-      axlTargetPeerId = target.axl.peerId
+    try {
+      const target = await resolveMentionTarget(body.content, {
+        agentId,
+        fleetId,
+        tenantId,
+        explicitTargetAgentId: body.axlTargetAgentId ?? null,
+      })
+      axlTargetAgentId = target?.agentId ?? null
+      axlTargetPeerId = target?.peerId ?? null
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'AXL target resolution failed'
+      const status = message.includes('not found') ? 404 : message.includes('peer ID') ? 409 : 400
+      return c.json({ error: message }, status)
     }
 
     // Resolve or find the target session — auto-create if none exists
