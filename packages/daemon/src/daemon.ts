@@ -46,6 +46,7 @@ type AxlEnvelope = {
 // Session ID is created once at startup and persisted so the agent remembers
 // all previous conversations across daemon restarts.
 let agentSessionId: string | null = null;
+let agcReady = false;
 
 // ─── World state ──────────────────────────────────────────────────────────
 
@@ -65,8 +66,29 @@ async function firstTimeSetup(): Promise<void> {
 
   if (config.integrationPath === "native") {
     if (!config.commonsApiKey) await bootstrapCommons();
-    await setupAgcAuth();
-    await initSession(); // recover only — new sessions created lazily on first run
+    await ensureAgcReady();
+  }
+}
+
+async function ensureAgcReady(): Promise<void> {
+  if (agcReady) return;
+  if (!config.commonsApiKey || !config.commonsAgentId) {
+    console.log("[daemon] AGC not configured — will retry bootstrap in background");
+    return;
+  }
+  await setupAgcAuth();
+  await initSession(); // recover only — new sessions created lazily on first run
+  agcReady = true;
+}
+
+async function startAgcBootstrapRetryLoop(): Promise<void> {
+  if (config.integrationPath !== "native") return;
+  while (!agcReady) {
+    await sleep(60_000);
+    if (!config.commonsApiKey || !config.commonsAgentId) {
+      await bootstrapCommons();
+    }
+    await ensureAgcReady();
   }
 }
 
@@ -282,6 +304,7 @@ async function main() {
 
   void registerAxlPeer();
   void discoverFleetPeers();
+  void startAgcBootstrapRetryLoop();
 
   setInterval(() => {
     emitHeartbeat();
