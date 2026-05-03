@@ -102,10 +102,10 @@ export default function HomePage() {
             fontFamily: "var(--font-pixel)",
             fontSize: 28, lineHeight: 1.75, marginBottom: 44, maxWidth: 580,
           }}>
-            Agent swarms.<br />
-            A dedicated<br />
-            computer<br />
-            per agent.
+            Run agent<br />
+            swarms. Own<br />
+            runtime. Own<br />
+            filesystem.
           </h1>
 
           <p style={{ fontSize: 15, color: C.muted, lineHeight: 1.9, maxWidth: 500, marginBottom: 16 }}>
