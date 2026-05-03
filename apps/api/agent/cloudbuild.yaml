@@ -18,11 +18,11 @@ steps:
     args:
       - build
       - --build-arg
-      - "COMMONOS_COMMIT_SHA=$COMMIT_SHA"
+      - "COMMONOS_COMMIT_SHA=$_COMMONOS_COMMIT_SHA"
       - --build-arg
       - "COMMONOS_BUILD_DATE=$BUILD_ID"
       - -t
-      - "europe-west1-docker.pkg.dev/$PROJECT_ID/common-os/agent:$SHORT_SHA"
+      - "europe-west1-docker.pkg.dev/$PROJECT_ID/common-os/agent:$_IMAGE_TAG"
       - -f
       - apps/api/agent/Dockerfile
       - "."
@@ -30,7 +30,7 @@ steps:
   - name: "gcr.io/cloud-builders/docker"
     args:
       - tag
-      - "europe-west1-docker.pkg.dev/$PROJECT_ID/common-os/agent:$SHORT_SHA"
+      - "europe-west1-docker.pkg.dev/$PROJECT_ID/common-os/agent:$_IMAGE_TAG"
       - "europe-west1-docker.pkg.dev/$PROJECT_ID/common-os/agent:latest"
 
   - name: "gcr.io/cloud-builders/docker"
@@ -43,3 +43,7 @@ timeout: 1800s
 
 options:
   logging: CLOUD_LOGGING_ONLY
+
+substitutions:
+  _COMMONOS_COMMIT_SHA: unknown
+  _IMAGE_TAG: manual
