@@ -27,6 +27,7 @@ const HEALTH_MS      = 10_000;
 const AXL_INBOX_MS   = 5_000;
 const WORKSPACE_DIR  = process.env.COMMONOS_WORKSPACE ?? config.workspaceDir;
 const AXL_API_URL    = process.env.AXL_API_URL ?? "http://localhost:9002";
+const AXL_LISTEN_PORT = process.env.AXL_LISTEN_PORT ?? "9001";
 const ETH_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 const DAEMON_RUNTIME = "common-os-daemon/agc-direct-stream-v4-axl-hard-route";
 const AGENT_IMAGE    = process.env.COMMONOS_AGENT_IMAGE ?? "";
@@ -406,7 +407,7 @@ async function registerAxlPeer(): Promise<void> {
 
       const data = await res.json() as { our_public_key?: string; our_ipv6?: string };
       const peerId    = data.our_public_key ?? null;
-      const multiaddr = data.our_ipv6 ?? null;
+      const dialAddr  = axlDialAddress(data.our_ipv6);
 
       if (!peerId) throw new Error("AXL returned no public key");
 
@@ -416,10 +417,10 @@ async function registerAxlPeer(): Promise<void> {
           Authorization: `Bearer ${config.agentToken}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ "axl.peerId": peerId, "axl.multiaddr": multiaddr }),
+        body: JSON.stringify({ "axl.peerId": peerId, "axl.multiaddr": dialAddr }),
       });
 
-      console.log(`[daemon] AXL peer registered  peerId=${peerId.slice(0, 16)}…  ipv6=${multiaddr}`);
+      console.log(`[daemon] AXL peer registered  peerId=${peerId.slice(0, 16)}…  dial=${dialAddr ?? "unknown"}  ipv6=${data.our_ipv6 ?? "unknown"}`);
       return;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -428,6 +429,13 @@ async function registerAxlPeer(): Promise<void> {
     }
   }
   console.warn("[daemon] AXL peer registration failed after 5 attempts — continuing without P2P");
+}
+
+function axlDialAddress(overlayIpv6?: string): string | null {
+  if (process.env.POD_IP) return `tls://${process.env.POD_IP}:${AXL_LISTEN_PORT}`;
+  if (!overlayIpv6) return null;
+  const host = overlayIpv6.includes(":") ? `[${overlayIpv6}]` : overlayIpv6;
+  return `tls://${host}:${AXL_LISTEN_PORT}`;
 }
 
 // ─── AXL fleet peer discovery ─────────────────────────────────────────────
