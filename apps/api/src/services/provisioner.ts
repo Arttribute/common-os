@@ -129,6 +129,9 @@ export async function registerWithAgentCommons(
 	const headers = {
 		"Authorization": `Bearer ${platformKey}`,
 		"x-api-key": platformKey,
+		...(process.env.AGC_INITIATOR ?? process.env.AGENTCOMMONS_INITIATOR
+			? { "x-initiator": process.env.AGC_INITIATOR ?? process.env.AGENTCOMMONS_INITIATOR }
+			: {}),
 		"Content-Type": "application/json",
 	};
 

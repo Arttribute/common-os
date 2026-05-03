@@ -13,7 +13,12 @@ async function createAgcSession(commonsAgentId: string, title: string): Promise<
   try {
     const res = await fetch(`${AGC_BASE_URL}/v1/sessions`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}`, 'x-api-key': apiKey },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+        'x-api-key': apiKey,
+        ...(AGC_INITIATOR ? { 'x-initiator': AGC_INITIATOR } : {}),
+      },
       body: JSON.stringify({
         agentId: commonsAgentId,
         title,
@@ -44,7 +49,7 @@ router.get('/:id/agents/:agentId/sessions', async (c) => {
         fleetId: c.req.param('id'),
         tenantId: c.get('tenantId'),
       })
-      .sort({ createdAt: -1 })
+      .sort({ lastMessageAt: -1, createdAt: -1 })
       .lean()
     return c.json(list)
   } catch (err) {

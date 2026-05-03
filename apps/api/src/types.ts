@@ -178,6 +178,9 @@ export interface AgentSessionDoc {
   tenantId: string
   agcSessionId: string | null
   title: string
+  source?: 'human' | 'axl'
+  participantAgentId?: string | null
+  participantPeerId?: string | null
   isDefault: boolean
   messageCount: number
   lastMessageAt: Date | null
@@ -195,7 +198,9 @@ export interface HumanMessageDoc {
   response: string | null
   respondedAt: Date | null
   source?: 'human' | 'axl'
+  axlDirection?: 'inbound' | 'outbound' | null
   fromAgentId?: string | null
+  toAgentId?: string | null
   axlPeerId?: string | null
   axlMessageId?: string | null
   createdAt: Date
