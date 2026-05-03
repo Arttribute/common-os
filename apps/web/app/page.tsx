@@ -102,10 +102,10 @@ export default function HomePage() {
             fontFamily: "var(--font-pixel)",
             fontSize: 28, lineHeight: 1.75, marginBottom: 44, maxWidth: 580,
           }}>
-            Run agent<br />
-            swarms. Each<br />
-            with their own<br />
-            computer.
+            Agent swarms.<br />
+            A dedicated<br />
+            workspace<br />
+            per agent.
           </h1>
 
           <p style={{ fontSize: 15, color: C.muted, lineHeight: 1.9, maxWidth: 500, marginBottom: 16 }}>
@@ -121,9 +121,10 @@ export default function HomePage() {
           }}>
             <div style={{ fontSize: 10, color: C.dim, marginBottom: 12, letterSpacing: 1 }}>QUICKSTART</div>
             {[
-              { prompt: "$", cmd: "cos fleet create --name \"product-team\"", color: C.text },
-              { prompt: "$", cmd: "cos agent deploy --fleet flt_xyz --role \"researcher\"", color: C.text },
-              { prompt: "$", cmd: "cos task send agt_xyz \"analyze the market\"", color: C.text },
+              { prompt: "$", cmd: "npm install -g @common-os/cli",                          color: C.muted },
+              { prompt: "$", cmd: "cos fleet create --name \"product-team\"",               color: C.text  },
+              { prompt: "$", cmd: "cos agent deploy --fleet flt_xyz --role \"researcher\"", color: C.text  },
+              { prompt: "$", cmd: "cos task send agt_xyz \"analyze the market\"",           color: C.text  },
             ].map(({ prompt, cmd, color }) => (
               <div key={cmd} style={{ fontSize: 12, lineHeight: 1.9 }}>
                 <span style={{ color: C.amber }}>{prompt} </span>
@@ -510,7 +511,7 @@ export default function HomePage() {
           </h2>
 
           <p style={{ fontSize: 14, color: C.muted, lineHeight: 1.95, maxWidth: 420, margin: "0 auto 52px" }}>
-            Every agent gets its own <span style={{ color: C.text }}>dedicated</span> computer. Isolated, persistent, always on. Your workspace stays yours.
+            Every agent gets its own <span style={{ color: C.text }}>dedicated workspace</span>. Isolated, persistent, always on. Your environment stays yours.
           </p>
 
           <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
