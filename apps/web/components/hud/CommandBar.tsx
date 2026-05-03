@@ -171,7 +171,7 @@ export function CommandBar() {
           >
             <span style={{ color: '#f59e0b', fontSize: 10 }}>@</span>
             <span style={{ flex: 1, fontSize: 10 }}>{agent.role.replace(/-/g, ' ')}</span>
-            <span style={{ color: '#334155', fontSize: 8 }}>{agent.agentId.slice(0, 8)}</span>
+            <span style={{ color: '#64748b', fontSize: 10 }}>{agent.agentId.slice(0, 8)}</span>
           </button>
         ))}
       </div>
@@ -195,7 +195,7 @@ export function CommandBar() {
         zIndex: 10,
       }}
     >
-      <span style={{ fontSize: 9, color: '#334155', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
+      <span style={{ fontSize: 11, color: '#64748b', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
         {selected ? `→ ${shortRole}` : '→ select agent'}
       </span>
 
@@ -248,8 +248,8 @@ export function CommandBar() {
           background: selectedId && input.trim() ? 'rgba(245, 158, 11, 0.15)' : 'transparent',
           border: `1px solid ${selectedId && input.trim() ? 'rgba(245, 158, 11, 0.3)' : 'rgba(255,255,255,0.05)'}`,
           borderRadius: 5,
-          color: selectedId && input.trim() ? '#f59e0b' : '#334155',
-          fontSize: 9,
+          color: selectedId && input.trim() ? '#f59e0b' : '#475569',
+          fontSize: 11,
           fontFamily: 'monospace',
           padding: '4px 10px',
           cursor: selectedId && input.trim() ? 'pointer' : 'default',

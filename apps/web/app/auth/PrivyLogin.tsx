@@ -41,7 +41,7 @@ export default function PrivyLogin() {
         common<span style={{ color: '#f59e0b' }}>os</span>
       </h1>
 
-      <p style={{ fontSize: 11, color: '#334155', letterSpacing: 1 }}>
+      <p style={{ fontSize: 12, color: '#94a3b8', letterSpacing: 1 }}>
         sign in to manage your fleet
       </p>
 

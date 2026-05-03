@@ -104,12 +104,12 @@ export default function HomePage() {
           }}>
             Agent swarms.<br />
             A dedicated<br />
-            workspace<br />
+            computer<br />
             per agent.
           </h1>
 
           <p style={{ fontSize: 15, color: C.muted, lineHeight: 1.9, maxWidth: 500, marginBottom: 16 }}>
-            Deploy a swarm with one command — every agent gets its own <span style={{ color: C.text }}>dedicated</span> pod, persistent filesystem, and P2P messaging. No shared state. No interference.
+            Deploy a swarm with one command — every agent gets its own <span style={{ color: C.text }}>dedicated computer</span>, persistent filesystem, and P2P messaging. No shared state. No interference.
           </p>
 
           {/* CLI teaser */}
@@ -511,7 +511,7 @@ export default function HomePage() {
           </h2>
 
           <p style={{ fontSize: 14, color: C.muted, lineHeight: 1.95, maxWidth: 420, margin: "0 auto 52px" }}>
-            Every agent gets its own <span style={{ color: C.text }}>dedicated workspace</span>. Isolated, persistent, always on. Your environment stays yours.
+            Every agent gets its own <span style={{ color: C.text }}>dedicated computer</span>. Isolated, persistent, always on. Your environment stays yours.
           </p>
 
           <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>

@@ -37,7 +37,7 @@ const badge = (color: string): React.CSSProperties => ({
   display: 'inline-block',
   padding: '2px 7px',
   borderRadius: 4,
-  fontSize: 9,
+  fontSize: 10,
   fontFamily: 'monospace',
   letterSpacing: 0.5,
   background: `${color}18`,
@@ -230,7 +230,7 @@ export default function DashboardPage() {
   if (!ready || (!authenticated && !onboarding)) {
     return (
       <div style={{ ...centeredPage }}>
-        <span style={{ color: '#334155', fontSize: 11, ...mono }}>loading…</span>
+        <span style={{ color: '#64748b', fontSize: 12, ...mono }}>loading…</span>
       </div>
     )
   }
@@ -238,7 +238,7 @@ export default function DashboardPage() {
   if (onboarding || (authenticated && !tenantId)) {
     return (
       <div style={{ ...centeredPage }}>
-        <span style={{ color: '#334155', fontSize: 11, ...mono }}>setting up your account…</span>
+        <span style={{ color: '#64748b', fontSize: 12, ...mono }}>setting up your account…</span>
       </div>
     )
   }
@@ -281,13 +281,13 @@ export default function DashboardPage() {
 
         {/* Section header */}
         <div style={{ display: 'flex', alignItems: 'center', marginBottom: 24, gap: 12 }}>
-          <h2 style={{ fontSize: 13, fontWeight: 600, color: '#94a3b8', margin: 0 }}>
+          <h2 style={{ fontSize: 14, fontWeight: 600, color: '#cbd5e1', margin: 0 }}>
             fleets
           </h2>
           <span
             style={{
-              fontSize: 9,
-              color: '#475569',
+              fontSize: 10,
+              color: '#64748b',
               background: 'rgba(255,255,255,0.04)',
               padding: '2px 7px',
               borderRadius: 4,
@@ -351,11 +351,11 @@ export default function DashboardPage() {
 
         {/* Fleet list */}
         {loading ? (
-          <div style={{ fontSize: 10, color: '#334155', padding: '16px 0' }}>loading fleets…</div>
+          <div style={{ fontSize: 11, color: '#64748b', padding: '16px 0' }}>loading fleets…</div>
         ) : fleets.length === 0 ? (
           <div style={{ ...panel, textAlign: 'center', padding: 40 }}>
-            <div style={{ fontSize: 12, color: '#334155', marginBottom: 8 }}>no fleets yet</div>
-            <div style={{ fontSize: 10, color: '#1e293b' }}>
+            <div style={{ fontSize: 13, color: '#94a3b8', marginBottom: 8 }}>no fleets yet</div>
+            <div style={{ fontSize: 12, color: '#64748b' }}>
               create a fleet to deploy your first agents
             </div>
           </div>
@@ -402,7 +402,7 @@ function UserEmail() {
   const email = user?.email?.address ?? user?.wallet?.address?.slice(0, 10)
   if (!email) return null
   return (
-    <span style={{ fontSize: 10, color: '#475569', letterSpacing: 0.5 }}>
+    <span style={{ fontSize: 11, color: '#64748b', letterSpacing: 0.5 }}>
       {email}
     </span>
   )
@@ -468,7 +468,7 @@ function FleetCard({
         />
         <span style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{fleet.name}</span>
         <span style={badge('#6366f1')}>{fleet.worldType}</span>
-        <span style={{ marginLeft: 'auto', fontSize: 10, color: '#475569' }}>
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: '#64748b' }}>
           {fleet.agentCount} agents
         </span>
         <button
@@ -477,7 +477,7 @@ function FleetCard({
         >
           open world →
         </button>
-        <span style={{ fontSize: 10, color: '#334155', marginLeft: 4 }}>
+        <span style={{ fontSize: 10, color: '#64748b', marginLeft: 4 }}>
           {expanded ? '▲' : '▼'}
         </span>
       </div>
@@ -487,9 +487,9 @@ function FleetCard({
         <div style={{ marginTop: 14, borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: 12 }}>
           {/* Agent list */}
           {!agents ? (
-            <div style={{ fontSize: 10, color: '#334155', padding: '8px 0' }}>loading agents…</div>
+            <div style={{ fontSize: 11, color: '#64748b', padding: '8px 0' }}>loading agents…</div>
           ) : agents.length === 0 ? (
-            <div style={{ fontSize: 10, color: '#334155', padding: '8px 0' }}>
+            <div style={{ fontSize: 11, color: '#64748b', padding: '8px 0' }}>
               no agents deployed
             </div>
           ) : (
@@ -526,7 +526,7 @@ function FleetCard({
                       agc {shortId(agcId)}
                     </span>
                   )}
-                  <span style={{ marginLeft: 'auto', fontSize: 9, color: '#334155' }}>
+                  <span style={{ marginLeft: 'auto', fontSize: 10, color: '#64748b' }}>
                     {agent.status}
                   </span>
                   <button
@@ -643,7 +643,7 @@ const actionBtn: React.CSSProperties = {
   border: '1px solid rgba(245, 158, 11, 0.3)',
   borderRadius: 6,
   color: '#f59e0b',
-  fontSize: 10,
+  fontSize: 11,
   fontFamily: 'monospace',
   cursor: 'pointer',
   letterSpacing: 0.3,
@@ -655,16 +655,16 @@ const ghostBtn: React.CSSProperties = {
   background: 'none',
   border: '1px solid rgba(255,255,255,0.08)',
   borderRadius: 6,
-  color: '#475569',
-  fontSize: 10,
+  color: '#94a3b8',
+  fontSize: 11,
   fontFamily: 'monospace',
   cursor: 'pointer',
   letterSpacing: 0.3,
 }
 
 const labelStyle: React.CSSProperties = {
-  fontSize: 9,
-  color: '#475569',
+  fontSize: 10,
+  color: '#64748b',
   letterSpacing: 0.5,
   textTransform: 'uppercase',
 }

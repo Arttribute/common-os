@@ -43,8 +43,8 @@ export function HUD() {
           position: 'absolute',
           bottom: 60,
           right: 16,
-          fontSize: 8,
-          color: '#1e293b',
+          fontSize: 10,
+          color: '#475569',
           fontFamily: 'monospace',
           lineHeight: 1.8,
           textAlign: 'right',
@@ -86,7 +86,7 @@ function ConnectionDot({ status }: { status: string }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
       <span style={{ width: 5, height: 5, borderRadius: '50%', background: color, display: 'inline-block' }} />
-      <span style={{ fontSize: 8, color: '#334155', fontFamily: 'monospace' }}>{labels[status] ?? status}</span>
+      <span style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace' }}>{labels[status] ?? status}</span>
     </div>
   )
 }
