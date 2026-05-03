@@ -126,7 +126,7 @@ export default function HomePage() {
           </h1>
 
           <p style={{ fontSize: 15, color: C.muted, lineHeight: 1.9, maxWidth: 480, marginBottom: 52 }}>
-            The same power that makes Claude Code unstoppable — a real computer, running your tasks — now available to every agent in your fleet.
+            The same power that makes agentic AI tools unstoppable — a real computer, running your tasks — now available to every agent in your fleet.
           </p>
 
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "center" }}>
@@ -179,14 +179,14 @@ export default function HomePage() {
               maxWidth: 480,
             }}>
               The reason<br />
-              Claude Code<br />
+              agentic AI<br />
               works.
             </h2>
 
             <div className="two-col" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 60, alignItems: "start" }}>
               <div>
                 <p style={{ fontSize: 14, color: C.muted, lineHeight: 1.95, marginBottom: 24 }}>
-                  Claude Code isn't just smarter prompting. It has a computer. It reads your files, runs your code, keeps processes alive between steps, and picks up exactly where it left off. That persistent runtime is the difference between a tool that responds and one that actually gets things done.
+                  The most capable AI agents aren't just smarter prompting. They have a computer. They read files, run code, keep processes alive between steps, and pick up exactly where they left off. That persistent runtime is the difference between a tool that responds and one that actually gets things done.
                 </p>
                 <p style={{ fontSize: 14, color: C.muted, lineHeight: 1.95, marginBottom: 24 }}>
                   Your onchain agents deserve the same. Without persistent compute, they're just API calls — stateless, short-lived, incapable of long-horizon work.
@@ -522,7 +522,7 @@ const os = new CommonOS()
 `}<span style={{ color: C.dim }}>{`// Each agent gets its own isolated pod`}</span>{`
 const fleet = await os.deploy({
   size: 10,
-  image: "claude-code",
+  image: "agent",
 })
 
 `}<span style={{ color: C.dim }}>{`// Long-running tasks that actually persist`}</span>{`
