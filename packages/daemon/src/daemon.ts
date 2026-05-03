@@ -848,6 +848,8 @@ async function pollMessages(): Promise<void> {
           fromAgentId?: string | null;
           axlPeerId?: string | null;
           axlMessageId?: string | null;
+          axlTargetAgentId?: string | null;
+          axlTargetPeerId?: string | null;
         };
         if (msg?.id && msg?.content) {
           await handleMessage(msg);
@@ -870,13 +872,18 @@ async function handleMessage(msg: {
   fromAgentId?: string | null;
   axlPeerId?: string | null;
   axlMessageId?: string | null;
+  axlTargetAgentId?: string | null;
+  axlTargetPeerId?: string | null;
 }): Promise<void> {
   console.log(`[daemon] message ${msg.id}: ${msg.content.slice(0, 80)}`);
 
   await agent.emit({ type: "state_change", payload: { status: "working" } });
 
   try {
-    const runResult = await executeTask(msg.content, msg.agcSessionId ?? undefined, msg.messages);
+    const runResult = await executeTask(msg.content, msg.agcSessionId ?? undefined, msg.messages, {
+      axlTargetAgentId: msg.axlTargetAgentId,
+      axlTargetPeerId: msg.axlTargetPeerId,
+    });
     const response = typeof runResult === "string" ? runResult : runResult.response;
 
     await fetch(
@@ -995,7 +1002,32 @@ async function executeTask(
   description: string,
   agcSessionId?: string,
   messages?: AgcMessage[],
+  routing?: { axlTargetAgentId?: string | null; axlTargetPeerId?: string | null },
 ): Promise<string | { response: string; agcSessionId?: string }> {
+  if (routing?.axlTargetAgentId || routing?.axlTargetPeerId) {
+    const target = routing.axlTargetAgentId ?? routing.axlTargetPeerId ?? "";
+    try {
+      const resolved = routing.axlTargetAgentId && routing.axlTargetPeerId
+        ? { agentId: routing.axlTargetAgentId, peerId: routing.axlTargetPeerId }
+        : await resolveAxlTarget(target);
+      const content = messageContentForMention(description, resolved.agentId);
+      await sendAxlMessage(resolved.peerId, resolved.agentId, content, { type: "request" });
+      return [
+        `Sent via AXL to ${resolved.agentId}.`,
+        `Content: ${content}`,
+      ].join("\n");
+    } catch (err) {
+      return [
+        `AXL send failed before invoking Agent Commons native A2A.`,
+        `Target: ${target}`,
+        `Reason: ${err instanceof Error ? err.message : String(err)}`,
+        "",
+        "Known AXL peers:",
+        axlPeerDirectory(),
+      ].join("\n");
+    }
+  }
+
   const axlRequest = parseDirectAxlRequest(description);
   if (axlRequest) {
     try {
@@ -1022,6 +1054,21 @@ async function executeTask(
   if (config.integrationPath === "native") return await runViaNative(description, agcSessionId, messages);
   await sleep(2_000);
   return `completed: ${description}`;
+}
+
+function messageContentForMention(description: string, targetAgentId: string): string {
+  const withoutMention = description
+    .replace(/@\[[^\]]+\]\([^)]+\)/g, "")
+    .replace(/@\S+/g, "")
+    .replace(new RegExp(targetAgentId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"), "")
+    .trim();
+
+  const cleaned = withoutMention
+    .replace(/^(?:please\s+)?(?:send|message|tell|ask|ping)\b(?:\s+(?:a\s+)?message)?(?:\s+to)?\s*/i, "")
+    .replace(/\bvia\s+axl\b/ig, "")
+    .trim();
+
+  return cleaned || `Hi from ${config.role || config.agentId}.`;
 }
 
 function parseDirectAxlRequest(description: string): { target: string; content: string } | null {

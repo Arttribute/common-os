@@ -302,6 +302,8 @@ router.get('/:agentId/messages/next', async (c) => {
         fromAgentId: claimed.fromAgentId ?? null,
         axlPeerId: claimed.axlPeerId ?? null,
         axlMessageId: claimed.axlMessageId ?? null,
+        axlTargetAgentId: claimed.axlTargetAgentId ?? null,
+        axlTargetPeerId: claimed.axlTargetPeerId ?? null,
       })
     } catch {
       return c.json({ error: 'database error' }, 503)
@@ -331,6 +333,8 @@ router.get('/:agentId/messages/next', async (c) => {
       fromAgentId: msg.fromAgentId ?? null,
       axlPeerId: msg.axlPeerId ?? null,
       axlMessageId: msg.axlMessageId ?? null,
+      axlTargetAgentId: msg.axlTargetAgentId ?? null,
+      axlTargetPeerId: msg.axlTargetPeerId ?? null,
     })
   } catch {
     return c.json({ error: 'database error' }, 503)
