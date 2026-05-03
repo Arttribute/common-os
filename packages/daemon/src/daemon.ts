@@ -407,6 +407,7 @@ async function discoverFleetPeers(): Promise<void> {
 
     const peers = (await res.json()) as Array<{
       agentId: string;
+      role?: string | null;
       peerId: string | null;
       multiaddr: string | null;
       permissionTier: string;
@@ -416,6 +417,12 @@ async function discoverFleetPeers(): Promise<void> {
       if (peer.peerId && peer.agentId !== config.agentId) {
         peerIdToAgentId.set(peer.peerId, peer.agentId);
         agentIdToPeerId.set(peer.agentId, peer.peerId);
+        if (peer.role) {
+          agentIdToRole.set(peer.agentId, peer.role);
+          for (const alias of roleAliases(peer.role)) {
+            peerAliasToAgentId.set(alias, peer.agentId);
+          }
+        }
       }
     }
     console.log(`[daemon] fleet peer map updated  ${peerIdToAgentId.size} peer(s)`);
@@ -440,6 +447,8 @@ async function discoverFleetPeers(): Promise<void> {
 
 const peerIdToAgentId = new Map<string, string>();
 const agentIdToPeerId = new Map<string, string>();
+const agentIdToRole = new Map<string, string>();
+const peerAliasToAgentId = new Map<string, string>();
 
 function parseAxlPayload(raw: string): AxlEnvelope {
   try {
@@ -450,6 +459,37 @@ function parseAxlPayload(raw: string): AxlEnvelope {
   } catch {}
 
   return { type: "request", content: raw };
+}
+
+function roleAliases(role: string): string[] {
+  const normalized = role.toLowerCase().trim();
+  const compact = normalized.replace(/[-_]+/g, " ");
+  return Array.from(new Set([
+    normalized,
+    compact,
+    compact.replace(/\s+agent$/, ""),
+    compact.replace(/\s+/g, "-"),
+    compact.replace(/\s+/g, ""),
+  ].filter(Boolean)));
+}
+
+function axlPeerDirectory(): string {
+  const rows = Array.from(agentIdToPeerId.entries())
+    .map(([agentId, peerId]) => {
+      const role = agentIdToRole.get(agentId) ?? "unknown role";
+      const manager = agentId === config.managerAgentId ? " manager" : "";
+      return `| ${role}${manager} | ${agentId} | ${peerId} |`;
+    });
+
+  if (rows.length === 0) {
+    return "No fleet AXL peers are cached yet. Use cli_send_axl_message anyway; it will refresh peer discovery before sending.";
+  }
+
+  return [
+    "| Role | Agent ID | AXL peer ID |",
+    "|------|----------|-------------|",
+    ...rows,
+  ].join("\n");
 }
 
 function formatAxlPayload(envelope: Required<Pick<AxlEnvelope, "type" | "content">> & AxlEnvelope): string {
@@ -713,6 +753,12 @@ async function resolveAxlTarget(target: string): Promise<{ agentId: string; peer
   let peerId = agentIdToPeerId.get(normalized);
   if (peerId) return { agentId: normalized, peerId };
 
+  const aliasAgentId = peerAliasToAgentId.get(normalized.toLowerCase()) ?? peerAliasToAgentId.get(normalized.toLowerCase().replace(/[-_]+/g, " "));
+  if (aliasAgentId) {
+    peerId = agentIdToPeerId.get(aliasAgentId);
+    if (peerId) return { agentId: aliasAgentId, peerId };
+  }
+
   const resolved = await resolveAgentByName(normalized);
   if (resolved?.agentId && resolved.peerId) {
     peerIdToAgentId.set(resolved.peerId, resolved.agentId);
@@ -728,6 +774,12 @@ async function resolveAxlTarget(target: string): Promise<{ agentId: string; peer
   await discoverFleetPeers();
   peerId = agentIdToPeerId.get(normalized);
   if (peerId) return { agentId: normalized, peerId };
+
+  const refreshedAliasAgentId = peerAliasToAgentId.get(normalized.toLowerCase()) ?? peerAliasToAgentId.get(normalized.toLowerCase().replace(/[-_]+/g, " "));
+  if (refreshedAliasAgentId) {
+    peerId = agentIdToPeerId.get(refreshedAliasAgentId);
+    if (peerId) return { agentId: refreshedAliasAgentId, peerId };
+  }
 
   const agentId = peerIdToAgentId.get(normalized);
   if (agentId) return { agentId, peerId: normalized };
@@ -940,10 +992,50 @@ async function executeTask(
   agcSessionId?: string,
   messages?: AgcMessage[],
 ): Promise<string | { response: string; agcSessionId?: string }> {
+  const axlRequest = parseDirectAxlRequest(description);
+  if (axlRequest) {
+    const resolved = await resolveAxlTarget(axlRequest.target);
+    await sendAxlMessage(resolved.peerId, resolved.agentId, axlRequest.content, { type: "request" });
+    return [
+      `Sent via AXL to ${resolved.agentId}.`,
+      `Target: ${axlRequest.target}`,
+      `Content: ${axlRequest.content}`,
+    ].join("\n");
+  }
+
   if (config.integrationPath === "openclaw") return await runViaOpenClaw(description);
   if (config.integrationPath === "native") return await runViaNative(description, agcSessionId, messages);
   await sleep(2_000);
   return `completed: ${description}`;
+}
+
+function parseDirectAxlRequest(description: string): { target: string; content: string } | null {
+  const text = description.trim();
+  if (!/\b(axl|agent|fleet\s+(manager|master)|manager|master)\b/i.test(text)) return null;
+  if (!/\b(send|message|say|tell|ask|ping)\b/i.test(text)) return null;
+
+  const targetMatch =
+    text.match(/\b(?:to|with)\s+([A-Za-z0-9_-]+)(?:\s+in\s+(?:your\s+)?fleet)?/i) ??
+    text.match(/\b(fleet\s+manager|fleet\s+master|manager|master)\b/i);
+  const rawTarget = targetMatch?.[1]?.trim();
+  if (!rawTarget) return null;
+
+  const quoted = text.match(/["“]([^"”]+)["”]/);
+  if (quoted?.[1]) return { target: rawTarget, content: quoted[1].trim() };
+
+  if (/\bsay\s+hi\b/i.test(text) || /\bping\b/i.test(text)) {
+    return { target: rawTarget, content: `Hi from ${config.role || config.agentId}.` };
+  }
+
+  const askMatch = text.match(/\bask\s+.+?\s+(?:if|whether|to)\s+(.+)$/i);
+  if (askMatch?.[1]) return { target: rawTarget, content: askMatch[1].trim() };
+
+  const tellMatch = text.match(/\btell\s+.+?\s+(?:that\s+)?(.+)$/i);
+  if (tellMatch?.[1] && !/\bvia\s+axl\s+to\b/i.test(tellMatch[1])) {
+    return { target: rawTarget, content: tellMatch[1].trim() };
+  }
+
+  return { target: rawTarget, content: `Hi from ${config.role || config.agentId}.` };
 }
 
 // ─── Workspace snapshot & filesystem manifest ──────────────────────────────
@@ -1017,28 +1109,47 @@ function buildRunPrompt(description: string, messages?: AgcMessage[]): string {
 
 function buildCliContext(): string {
   return `
-## CLI Local File System - ACTIVE
+## CLI Local Tools - ACTIVE
 
-You are running inside a CommonOS agent pod with DIRECT access to this pod's workspace.
+You are running inside a CommonOS agent pod with DIRECT access to this pod's workspace and CommonOS AXL messaging. The following cli_* tools are in your tool list and execute inside the pod in real time.
 
-Session root: ${WORKSPACE_DIR}
+**Session root:** ${WORKSPACE_DIR}
 
-Current file system snapshot:
+### Current file system (live snapshot)
 
 \`\`\`
 ${buildWorkspaceSnapshot(WORKSPACE_DIR)}
 \`\`\`
 
-Mandatory rules:
-1. When asked to create, edit, inspect, search, or run something in the pod, call the cli_* tools directly.
-2. Do not say you cannot access the filesystem. You can use cli_read_file, cli_write_file, cli_list_directory, cli_search_files, and cli_run_command.
-3. File operations are sandboxed to the session root. Return the actual path or command output after using a tool.
-4. For markdown file requests, write the .md file with cli_write_file and return its path.
-5. For agent-to-agent communication in CommonOS, use cli_send_axl_message by default. Do not use Agent Commons native A2A unless the user explicitly asks for Agent Commons/native A2A or cli_send_axl_message fails.
+### MANDATORY RULES - READ CAREFULLY
 
-CommonOS AXL messaging tool:
-- cli_send_axl_message({ "target": "<agent id, peer id, fleet manager, or fleet master>", "content": "<message>" })
-- The tool sends over AXL, records the conversation for observability, and returns the recipient and delivery path.
+1. **Call cli_* tools immediately and directly.** Do not create Agent Commons tasks for pod file operations or CommonOS fleet messaging.
+2. **Use AXL for CommonOS agent-to-agent communication by default.** When the user asks you to message, ask, ping, say hi to, or check another agent in this fleet, call \`cli_send_axl_message\`.
+3. **Do not use \`interactWithAgent\` for CommonOS fleet messages** unless the user explicitly asks for Agent Commons native A2A or \`cli_send_axl_message\` returns an error.
+4. **Never say \`cli_send_axl_message\` is unavailable.** It is available in this pod through the local CLI tool bridge.
+5. File operations are sandboxed to the session root. Return the actual path or command output after using a tool.
+6. For markdown file requests, write the .md file with \`cli_write_file\` and return its path.
+
+### Available CLI tools
+
+| Tool | What it does |
+|------|-------------|
+| \`cli_list_directory\` | List files and folders at a path |
+| \`cli_read_file\` | Read a file |
+| \`cli_write_file\` | Write or overwrite a file |
+| \`cli_search_files\` | Find files matching a pattern |
+| \`cli_run_command\` | Run a short command and return its output |
+| \`cli_send_axl_message\` | Send a CommonOS fleet message over AXL and record it for observability |
+
+### cli_send_axl_message schema
+
+\`\`\`json
+{"target":"<agent id, AXL peer id, role/name like Pumba, fleet manager, or fleet master>","content":"<message to send>"}
+\`\`\`
+
+### Cached AXL peers in this fleet
+
+${axlPeerDirectory()}
 `.trim();
 }
 

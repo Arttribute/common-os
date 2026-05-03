@@ -166,13 +166,14 @@ router.get("/:id/peers", async (c) => {
 		const list = await (await agents())
 			.find(
 				{ fleetId: c.req.param("id"), tenantId: c.get("tenantId") },
-				{ _id: 1, permissionTier: 1, axl: 1 },
+				{ _id: 1, permissionTier: 1, config: 1, axl: 1 },
 			)
 			.lean();
 
 		return c.json(
 			list.map((a) => ({
 				agentId: a._id,
+				role: a.config?.role ?? null,
 				permissionTier: a.permissionTier,
 				peerId: a.axl.peerId,
 				multiaddr: a.axl.multiaddr,
