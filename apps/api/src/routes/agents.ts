@@ -4,7 +4,7 @@ import { agents, fleets, messages } from "../db/mongo.js";
 import { broadcastToFleet } from "../db/memory.js";
 import { provisionAgent } from "../services/provisioner.js";
 import { terminateAgentPod, terminateAgentPodEks } from "../services/cloud-init.js";
-import { registerAgentENS } from "../services/ens.js";
+import { registerAgentENS, buildAgentEnsName } from "../services/ens.js";
 import { removeAgentFromWorldState } from "../services/world.js";
 import type { Env, MessageDoc } from "../types.js";
 
@@ -134,6 +134,18 @@ router.patch("/:id/agents/:agentId", async (c) => {
 				},
 				agent.commons.walletAddress,
 			);
+			// Notify fleet subscribers so the frontend ENS passport updates live
+			broadcastToFleet(agent.fleetId, {
+				type: 'agent_event',
+				agentId: agent._id,
+				event: {
+					type: 'identity_updated',
+					payload: {
+						ensName: buildAgentEnsName(agent._id),
+						ensStatus: 'pending',
+					},
+				},
+			});
 		}
 		return c.json({ ok: true });
 	} catch {

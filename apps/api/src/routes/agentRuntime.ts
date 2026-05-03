@@ -137,69 +137,76 @@ async function buildMessageHistory(
 
 const router = new Hono<Env>()
 
-// GET /agents/resolve/:name — resolve agent by name, agentId, AXL peerId, or ENS name.
-// Supports: agentId (agt_abc123), AXL peerId (Qm... / 12D3...), and ENS names.
-// Public endpoint — used by web UI for ENS display and by daemons for P2P discovery.
+// GET /agents/resolve/:name — cross-fleet agent discovery.
+//
+// Two-layer design:
+//   Identity layer — ENS is the canonical, global registry. Any agent can be
+//     found by ENS name (agent-xyz.agents.commonos.eth) across any fleet.
+//   Transport layer — DB holds the current AXL routing (peerId + multiaddr).
+//     DB is always authoritative; ENS fields are a cache that may lag by one
+//     block (~12s). When ENS resolves an agentId we always enrich with fresh
+//     DB routing before returning.
+//
+// Resolution order:
+//   1. AXL peerId (Qm... / 12D3...) — direct DB index, fastest path
+//   2. agentId (no dots) — cross-fleet DB lookup by _id
+//   3. ENS name (dotted) — on-chain lookup, then DB-enriched transport
 router.get('/resolve/:name', async (c) => {
   const rawName = decodeURIComponent(c.req.param('name'))
   const col = await agents()
 
+  // Shared projection — identity + AXL transport fields only
+  const proj = { _id: 1, axl: 1, config: 1, fleetId: 1, commons: 1, status: 1 } as const
+
+  function agentToResponse(agent: Awaited<ReturnType<typeof col.findOne>>, source: 'db' | 'ens') {
+    if (!agent) return null
+    return {
+      name: buildAgentEnsName(agent._id),
+      agentId: agent._id,
+      commonsAgentId: agent.commons?.agentId ?? null,
+      fleetId: agent.fleetId,
+      role: agent.config?.role ?? null,
+      status: agent.status,
+      peerId: agent.axl?.peerId ?? null,
+      multiaddr: agent.axl?.multiaddr ?? null,
+      walletAddress: agent.commons?.walletAddress ?? null,
+      source,
+    }
+  }
+
   try {
-    // peerId format: legacy base58 multihash (Qm...) or newer base36 (12D3...)
+    // 1. AXL peerId — base58 multihash (Qm...) or base36 multibase (12D3...)
     const looksLikePeerId = /^(Qm[1-9A-HJ-NP-Za-km-z]{40,}|12D3[a-zA-Z0-9]{40,})/.test(rawName)
-
     if (looksLikePeerId) {
-      const agent = await col.findOne(
-        { 'axl.peerId': rawName },
-        { _id: 1, axl: 1, config: 1, fleetId: 1, commons: 1, status: 1 },
-      ).lean()
-
-      if (agent) {
-        return c.json({
-          name: buildAgentEnsName(agent._id),
-          agentId: agent._id,
-          commonsAgentId: agent.commons?.agentId ?? null,
-          fleetId: agent.fleetId,
-          role: agent.config?.role ?? null,
-          status: agent.status,
-          peerId: agent.axl?.peerId ?? null,
-          multiaddr: agent.axl?.multiaddr ?? null,
-          walletAddress: agent.commons?.walletAddress ?? null,
-          url: null,
-          description: null,
-          source: 'db',
-        })
-      }
+      const agent = await col.findOne({ 'axl.peerId': rawName }, proj).lean()
+      if (agent) return c.json(agentToResponse(agent, 'db'))
     }
 
-    // Direct DB lookup for agentId / non-dotted names (tenant-scoped)
+    // 2. agentId — cross-fleet, no tenant scope (discovery is intentionally global)
     if (!rawName.includes('.')) {
-      const agent = await col.findOne({
-        _id: rawName,
-        tenantId: c.get('tenantId'),
-      }).lean()
-
-      if (agent) {
-        return c.json({
-          name: buildAgentEnsName(agent._id),
-          agentId: agent._id,
-          commonsAgentId: agent.commons?.agentId ?? null,
-          fleetId: agent.fleetId,
-          role: agent.config?.role ?? null,
-          status: agent.status,
-          peerId: agent.axl?.peerId ?? null,
-          multiaddr: agent.axl?.multiaddr ?? null,
-          walletAddress: agent.commons?.walletAddress ?? null,
-          url: null,
-          description: null,
-          source: 'db',
-        })
-      }
+      const agent = await col.findOne({ _id: rawName }, proj).lean()
+      if (agent) return c.json(agentToResponse(agent, 'db'))
     }
 
-    // ENS lookup (for dotted names or fallback when no DB match)
+    // 3. ENS name — resolve identity on-chain, then enrich with fresh DB transport.
+    //    ENS is the source of truth for identity; DB is the source of truth for
+    //    current AXL routing (peerId/multiaddr may lag on-chain by one block).
     const record = await lookupAgentENS(rawName)
     if (!record) return c.json({ error: 'agent not found' }, 404)
+
+    // If ENS returned an agentId, try DB for fresh AXL routing
+    if (record.agentId) {
+      const dbAgent = await col.findOne({ _id: record.agentId }, proj).lean()
+      if (dbAgent) {
+        return c.json({
+          ...record,
+          peerId: dbAgent.axl?.peerId ?? record.peerId,
+          multiaddr: dbAgent.axl?.multiaddr ?? record.multiaddr,
+          source: 'ens',
+        })
+      }
+    }
+
     return c.json({ ...record, source: 'ens' })
   } catch {
     return c.json({ error: 'lookup failed' }, 503)
