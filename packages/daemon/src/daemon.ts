@@ -28,6 +28,7 @@ const AXL_INBOX_MS   = 5_000;
 const WORKSPACE_DIR  = process.env.COMMONOS_WORKSPACE ?? config.workspaceDir;
 const AXL_API_URL    = process.env.AXL_API_URL ?? "http://localhost:9002";
 const ETH_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
+const DAEMON_RUNTIME = "common-os-daemon/agc-direct-stream-v2";
 
 type AgcMessage = { role: "user" | "assistant"; content: string };
 
@@ -252,7 +253,7 @@ async function registerSessionWithApi(): Promise<void> {
 // ─── Main ──────────────────────────────────────────────────────────────────
 
 async function main() {
-  console.log(`[daemon] starting  agent=${config.agentId}  role=${config.role}  fleet=${config.fleetId}`);
+  console.log(`[daemon] starting  ${DAEMON_RUNTIME}  agent=${config.agentId}  role=${config.role}  fleet=${config.fleetId}`);
 
   await firstTimeSetup();
   await agent.emit({ type: "state_change", payload: { status: "online" } });
@@ -894,7 +895,9 @@ function cleanAgcOutput(raw: string): string {
 }
 
 function buildRunPrompt(description: string, messages?: AgcMessage[]): string {
-  if (!messages || messages.length <= 1) return description;
+  if (!messages || messages.length <= 1) {
+    return [buildCliContext(), "", description].join("\n");
+  }
 
   const transcript = messages
     .slice(-12)
@@ -902,6 +905,8 @@ function buildRunPrompt(description: string, messages?: AgcMessage[]): string {
     .join("\n\n");
 
   return [
+    buildCliContext(),
+    "",
     "Continue this CommonOS conversation. Use the prior turns as context, but answer only the latest user request.",
     "",
     transcript,
@@ -936,6 +941,7 @@ function agcHeaders(): Record<string, string> {
     "Content-Type": "application/json",
     "Authorization": `Bearer ${key}`,
     "x-api-key": key,
+    ...(AGC_INITIATOR ? { "x-initiator": AGC_INITIATOR } : {}),
   };
 }
 
@@ -1075,7 +1081,9 @@ async function runViaNative(
   const agentId = config.commonsAgentId || config.agentId;
   const prompt = buildRunPrompt(description, messages);
 
-  console.log(`[daemon] agc stream  agent=${agentId.slice(0, 12)}  session=${sessionIdToUse?.slice(0, 12) ?? "new"}`);
+  console.log(
+    `[daemon] agc stream  runtime=${DAEMON_RUNTIME}  agent=${agentId.slice(0, 12)}  session=${sessionIdToUse?.slice(0, 12) ?? "new"}  history=${messages?.length ?? 0}`,
+  );
 
   const body = {
     agentId,
@@ -1103,6 +1111,7 @@ async function runViaNative(
   let output = "";
   let finalText: string | null = null;
   let observedSessionId: string | null = sessionIdToUse ?? null;
+  let toolRequestCount = 0;
 
   async function handleEvent(raw: string): Promise<void> {
     const line = raw.trim();
@@ -1126,6 +1135,7 @@ async function runViaNative(
     }
 
     if (event.type === "cli_tool_request") {
+      toolRequestCount += 1;
       const requestId = typeof event.requestId === "string" ? event.requestId : "";
       const requestedTool = String(event.tool ?? "");
       const args = (event.args && typeof event.args === "object" ? event.args : {}) as Record<string, unknown>;
@@ -1144,26 +1154,22 @@ async function runViaNative(
     }
   }
 
-  while (true) {
+  let streamDone = false;
+  while (!streamDone) {
     const { value, done } = await reader.read();
     if (value) buffer += decoder.decode(value, { stream: !done });
 
-    let idx: number;
-    while ((idx = buffer.indexOf("\n\n")) >= 0) {
-      const chunk = buffer.slice(0, idx);
-      buffer = buffer.slice(idx + 2);
-      for (const line of chunk.split("\n").filter((l) => l.startsWith("data:"))) {
-        await handleEvent(line);
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.startsWith("data:")) continue;
+      await handleEvent(line);
+      if (/^\s*data:\s*(?:\[DONE\]|{"type":"(?:final|completed)")/.test(line)) {
+        streamDone = true;
+        break;
       }
     }
-
     if (done) break;
-  }
-
-  if (buffer.trim()) {
-    for (const line of buffer.split("\n").filter((l) => l.trim())) {
-      await handleEvent(line);
-    }
   }
 
   if (observedSessionId && observedSessionId !== agentSessionId) {
@@ -1176,7 +1182,9 @@ async function runViaNative(
   }
 
   const response = cleanAgcOutput(finalText ?? output);
-  console.log(`[daemon] agc stream done  length=${response.length}  session=${observedSessionId?.slice(0, 12) ?? "none"}`);
+  console.log(
+    `[daemon] agc stream done  runtime=${DAEMON_RUNTIME}  length=${response.length}  tools=${toolRequestCount}  session=${observedSessionId?.slice(0, 12) ?? "none"}`,
+  );
   return { response: response || "done", ...(observedSessionId ? { agcSessionId: observedSessionId } : {}) };
 }
 

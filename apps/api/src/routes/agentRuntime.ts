@@ -219,10 +219,12 @@ router.get('/:agentId/messages/next', async (c) => {
       if (!agcSessionId) {
         console.warn(`[runtime] message ${claimed._id} has no Agent Commons sessionId; daemon will fall back to its boot session`)
       }
+      const messages = await buildMessageHistory(agentId, claimed.sessionId, claimed._id, claimed.content)
+      console.log(`[runtime] dispatch message ${claimed._id} agcSession=${agcSessionId ?? 'none'} history=${messages.length}`)
       return c.json({
         id: claimed._id,
         content: claimed.content,
-        messages: await buildMessageHistory(agentId, claimed.sessionId, claimed._id, claimed.content),
+        messages,
         sessionId: claimed.sessionId ?? null,
         agcSessionId,
         source: claimed.source ?? 'human',
@@ -246,10 +248,12 @@ router.get('/:agentId/messages/next', async (c) => {
     if (!agcSessionId) {
       console.warn(`[runtime] message ${msg._id} has no Agent Commons sessionId; daemon will fall back to its boot session`)
     }
+    const messages = await buildMessageHistory(agentId, msg.sessionId, msg._id, msg.content)
+    console.log(`[runtime] dispatch message ${msg._id} agcSession=${agcSessionId ?? 'none'} history=${messages.length}`)
     return c.json({
       id: msg._id,
       content: msg.content,
-      messages: await buildMessageHistory(agentId, msg.sessionId, msg._id, msg.content),
+      messages,
       sessionId: msg.sessionId ?? null,
       agcSessionId,
       source: msg.source ?? 'human',

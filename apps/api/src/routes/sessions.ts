@@ -13,7 +13,12 @@ async function createAgcSession(commonsAgentId: string, title: string): Promise<
   try {
     const res = await fetch(`${AGC_BASE_URL}/v1/sessions`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}`, 'x-api-key': apiKey },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+        'x-api-key': apiKey,
+        ...(AGC_INITIATOR ? { 'x-initiator': AGC_INITIATOR } : {}),
+      },
       body: JSON.stringify({
         agentId: commonsAgentId,
         title,
