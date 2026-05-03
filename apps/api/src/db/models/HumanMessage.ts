@@ -14,6 +14,8 @@ const HumanMessageSchema = new Schema<HumanMessageDoc>(
     respondedAt: Date,
     source: { type: String, default: 'human' },
     axlDirection: { type: String, default: null },
+    axlTargetAgentId: { type: String, default: null },
+    axlTargetPeerId: { type: String, default: null },
     fromAgentId: { type: String, default: null },
     toAgentId: { type: String, default: null },
     axlPeerId: { type: String, default: null },

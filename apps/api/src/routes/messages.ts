@@ -71,7 +71,7 @@ const router = new Hono<Env>()
 
 // POST /fleets/:id/agents/:agentId/human-message — human sends a message to an agent
 router.post('/:id/agents/:agentId/human-message', async (c) => {
-  const body = await c.req.json<{ content: string; sessionId?: string }>().catch(() => ({ content: '', sessionId: undefined }))
+  const body = await c.req.json<{ content: string; sessionId?: string; axlTargetAgentId?: string | null }>().catch((): { content: string; sessionId?: string; axlTargetAgentId?: string | null } => ({ content: '', sessionId: undefined }))
   if (!body.content) return c.json({ error: 'content is required' }, 400)
 
   const agentId = c.req.param('agentId')
@@ -81,6 +81,20 @@ router.post('/:id/agents/:agentId/human-message', async (c) => {
   try {
     const agent = await (await agents()).findOne({ _id: agentId, fleetId, tenantId }).lean()
     if (!agent) return c.json({ error: 'agent not found' }, 404)
+
+    let axlTargetAgentId: string | null = null
+    let axlTargetPeerId: string | null = null
+    if (body.axlTargetAgentId) {
+      if (body.axlTargetAgentId === agentId) return c.json({ error: 'AXL target must be another agent' }, 400)
+      const target = await (await agents()).findOne(
+        { _id: body.axlTargetAgentId, fleetId, tenantId },
+        { _id: 1, axl: 1 },
+      ).lean()
+      if (!target) return c.json({ error: 'AXL target agent not found' }, 404)
+      if (!target.axl?.peerId) return c.json({ error: 'AXL target agent has no peer ID yet' }, 409)
+      axlTargetAgentId = target._id
+      axlTargetPeerId = target.axl.peerId
+    }
 
     // Resolve or find the target session — auto-create if none exists
     let sessionId: string | null = body.sessionId ?? null
@@ -111,7 +125,11 @@ router.post('/:id/agents/:agentId/human-message', async (c) => {
       response: null,
       respondedAt: null,
       source: 'human',
+      axlDirection: null,
+      axlTargetAgentId,
+      axlTargetPeerId,
       fromAgentId: null,
+      toAgentId: axlTargetAgentId,
       axlPeerId: null,
       axlMessageId: null,
       createdAt: now,
@@ -125,6 +143,7 @@ router.post('/:id/agents/:agentId/human-message', async (c) => {
       msgId,
       sessionId,
       content: body.content,
+      axlTargetAgentId,
       ts: now.toISOString(),
     })
 

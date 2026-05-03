@@ -199,6 +199,8 @@ export interface HumanMessageDoc {
   respondedAt: Date | null
   source?: 'human' | 'axl'
   axlDirection?: 'inbound' | 'outbound' | null
+  axlTargetAgentId?: string | null
+  axlTargetPeerId?: string | null
   fromAgentId?: string | null
   toAgentId?: string | null
   axlPeerId?: string | null
