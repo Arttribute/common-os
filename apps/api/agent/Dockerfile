@@ -17,7 +17,7 @@ LABEL org.opencontainers.image.created=$COMMONOS_BUILD_DATE
 ENV COMMONOS_COMMIT_SHA=$COMMONOS_COMMIT_SHA
 ENV COMMONOS_BUILD_DATE=$COMMONOS_BUILD_DATE
 
-RUN apk add --no-cache curl git jq bash ca-certificates openssl
+RUN apk add --no-cache curl git jq bash ca-certificates openssl nodejs npm
 
 # AXL — P2P inter-agent communication binary (built from source above)
 COPY --from=axl-builder /axl-node /usr/local/bin/axl-node

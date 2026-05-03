@@ -296,7 +296,7 @@ function defaultGcpAgentImageUrl(_projectId: string, _region: string): string {
 export async function launchAgentPod(
 	opts: LaunchOptions,
 ): Promise<LaunchedService> {
-	const projectId = process.env.GCP_PROJECT_ID ?? "arttribute-424420";
+	const projectId = process.env.GCP_PROJECT_ID ?? "common-os-prod";
 	const region = process.env.GCP_REGION ?? "europe-west1";
 	const clusterName = process.env.GKE_CLUSTER ?? "common-os-agents";
 	const imageUrl =
@@ -417,7 +417,7 @@ export async function launchAgentPod(
 export async function terminateAgentPod(
 	namespace: string,
 ): Promise<void> {
-	const projectId = process.env.GCP_PROJECT_ID ?? "arttribute-424420";
+	const projectId = process.env.GCP_PROJECT_ID ?? "common-os-prod";
 	const region    = process.env.GCP_REGION    ?? "europe-west1";
 	const clusterName = process.env.GKE_CLUSTER ?? "common-os-agents";
 
