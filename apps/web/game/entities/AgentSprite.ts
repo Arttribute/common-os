@@ -59,13 +59,14 @@ export class AgentSprite {
     originX: number,
     originY: number,
     style: AgentStyle = "person",
+    overrideColor?: number,
   ) {
     this.scene = scene;
     this.agentId = agentId;
     this.role = role;
     this.tier = tier;
     this.style = style;
-    this.bodyColor = roleToColor(role, tier);
+    this.bodyColor = overrideColor ?? roleToColor(role, tier);
     this.lastTileX = tileX;
     this.lastTileY = tileY;
 

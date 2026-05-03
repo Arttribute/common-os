@@ -140,6 +140,7 @@ export class WorldScene extends Phaser.Scene {
           this.originX,
           this.originY,
           agent.style ?? agentStyle,
+          agent.shirtColor,
         )
         sprite.enableInteraction((id) => agentState.selectAgent(id))
         this.sprites.set(agent.agentId, sprite)
@@ -310,6 +311,7 @@ export class WorldScene extends Phaser.Scene {
           this.originX,
           this.originY,
           agent.style ?? agentStyle,
+          agent.shirtColor,
         )
         sprite.enableInteraction((id) => useAgentStore.getState().selectAgent(id))
         this.sprites.set(agent.agentId, sprite)

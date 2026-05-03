@@ -125,6 +125,7 @@ export function useWorldConnection(fleetId?: string, getToken?: () => Promise<st
           const raw = await agentsRes.json() as Array<{
             _id: string
             role?: string
+            config?: { role?: string }
             permissionTier?: 'manager' | 'worker'
             status?: string
             world?: { room: string; x: number; y: number; facing: string }
@@ -148,7 +149,7 @@ export function useWorldConnection(fleetId?: string, getToken?: () => Promise<st
             const sw = spread.find(s => s.agentId === a._id)
             upsertAgent({
               agentId:        a._id,
-              role:           a.role ?? 'unknown',
+              role:           a.role ?? a.config?.role ?? 'unknown',
               permissionTier: a.permissionTier ?? 'worker',
               status:         toUiStatus(a.status ?? 'idle'),
               world:          (sw?.world as AgentWorld | undefined) ?? {

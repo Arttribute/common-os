@@ -4,9 +4,18 @@ import type { AgentStyle } from '@/game/systems/worldThemes'
 
 export type AgentStatus = 'online' | 'idle' | 'working' | 'error' | 'offline' | 'provisioning'
 
-const AGENT_STYLES: AgentStyle[] = ['person', 'sketch-cube', 'robot', 'blob', 'minimal']
-function randomStyle(): AgentStyle {
-  return AGENT_STYLES[Math.floor(Math.random() * AGENT_STYLES.length)]!
+const SHIRT_COLORS: number[] = [
+  0x3b82f6, // blue
+  0x22c55e, // green
+  0xeab308, // yellow
+  0xef4444, // red
+  0xa855f7, // purple
+  0xf97316, // orange
+  0x14b8a6, // teal
+  0xec4899, // pink
+]
+function randomShirtColor(): number {
+  return SHIRT_COLORS[Math.floor(Math.random() * SHIRT_COLORS.length)]!
 }
 
 export interface AgentWorld {
@@ -41,7 +50,8 @@ export interface Agent {
   currentTask?: { taskId: string; description: string }
   speechBubble?: { text: string; expiresAt: number }
   recentActions: string[]
-  style?: AgentStyle  // per-agent avatar style; randomly assigned on creation
+  style?: AgentStyle
+  shirtColor?: number  // hex color for person shirt; randomly assigned on creation
 }
 
 interface AgentStore {
@@ -99,14 +109,15 @@ export const useAgentStore = create<AgentStore>((set) => ({
   upsertAgent: (agent) =>
     set((state) => {
       const existing = state.agents[agent.agentId]
-      const style = agent.style ?? existing?.style ?? randomStyle()
+      const shirtColor = agent.shirtColor ?? existing?.shirtColor ?? randomShirtColor()
       return {
         agents: {
           ...state.agents,
           [agent.agentId]: {
             ...existing,
             ...agent,
-            style,
+            style: 'person' as AgentStyle,
+            shirtColor,
             pod: agent.pod ?? existing?.pod,
             commons: agent.commons ?? existing?.commons,
             createdAt: agent.createdAt ?? existing?.createdAt,
