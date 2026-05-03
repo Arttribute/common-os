@@ -281,8 +281,8 @@ async function ensurePodWithRetry(
 
 // ─── Per-agent GKE pod ────────────────────────────────────────────────────
 
-function defaultGcpAgentImageUrl(projectId: string, region: string): string {
-	return `${region}-docker.pkg.dev/${projectId}/common-os/agent:latest`;
+function defaultGcpAgentImageUrl(_projectId: string, _region: string): string {
+	return "ghcr.io/arttribute/common-os/agent:latest";
 }
 
 /**

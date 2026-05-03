@@ -35,7 +35,7 @@ steps:
       - --memory=512Mi
       - --no-cpu-throttling
       - --service-account=common-os-api@$PROJECT_ID.iam.gserviceaccount.com
-      - --set-env-vars=AGENT_IMAGE_URL=europe-west1-docker.pkg.dev/$PROJECT_ID/common-os/agent:latest
+      - --set-env-vars=AGENT_IMAGE_URL=ghcr.io/arttribute/common-os/agent:latest
 
 timeout: 1800s
 
