@@ -415,6 +415,7 @@ async function discoverFleetPeers(): Promise<void> {
     for (const peer of peers) {
       if (peer.peerId && peer.agentId !== config.agentId) {
         peerIdToAgentId.set(peer.peerId, peer.agentId);
+        agentIdToPeerId.set(peer.agentId, peer.peerId);
       }
     }
     console.log(`[daemon] fleet peer map updated  ${peerIdToAgentId.size} peer(s)`);
@@ -438,6 +439,7 @@ async function discoverFleetPeers(): Promise<void> {
 // ─── AXL inbox loop ────────────────────────────────────────────────────────
 
 const peerIdToAgentId = new Map<string, string>();
+const agentIdToPeerId = new Map<string, string>();
 
 function parseAxlPayload(raw: string): AxlEnvelope {
   try {
@@ -747,6 +749,46 @@ async function recordInboundAxlResponse(body: {
   if (!res.ok) throw new Error(`AXL response record failed: ${res.status}`);
 }
 
+async function resolveAxlTarget(target: string): Promise<{ agentId: string; peerId: string }> {
+  const normalized = target.trim();
+  if (!normalized) throw new Error("AXL target is required");
+
+  const wantsManager = /\b(manager|master|lead|fleet\s+(manager|master))\b/i.test(normalized);
+  if (wantsManager) {
+    if (!config.managerAgentId || !config.managerPeerId) await discoverFleetPeers();
+    if (config.managerAgentId && config.managerPeerId) {
+      return { agentId: config.managerAgentId, peerId: config.managerPeerId };
+    }
+  }
+
+  let peerId = agentIdToPeerId.get(normalized);
+  if (peerId) return { agentId: normalized, peerId };
+
+  // resolveAgentByName hits /agents/resolve — ENS-aware and cross-fleet.
+  // DB is checked first for fresh AXL routing, then ENS as fallback.
+  const resolved = await resolveAgentByName(normalized).catch(() => null);
+  if (resolved?.agentId && resolved.peerId) {
+    // Warm both caches so subsequent sends skip the API call
+    peerIdToAgentId.set(resolved.peerId, resolved.agentId);
+    agentIdToPeerId.set(resolved.agentId, resolved.peerId);
+    return { agentId: resolved.agentId, peerId: resolved.peerId };
+  }
+
+  if (resolved?.agentId) {
+    peerId = agentIdToPeerId.get(resolved.agentId);
+    if (peerId) return { agentId: resolved.agentId, peerId };
+  }
+
+  // Last resort: refresh fleet peer map and retry
+  await discoverFleetPeers();
+  peerId = agentIdToPeerId.get(normalized);
+  if (peerId) return { agentId: normalized, peerId };
+
+  const agentId = peerIdToAgentId.get(normalized);
+  if (agentId) return { agentId, peerId: normalized };
+
+  throw new Error(`Could not resolve AXL target: ${target}`);
+}
 
 // ─── Human message polling loop ───────────────────────────────────────────
 
@@ -1026,16 +1068,22 @@ ${buildWorkspaceSnapshot(WORKSPACE_DIR)}
 | cli_list_directory | path? | List directory contents |
 | cli_run_command | command, cwd? | Execute any shell command |
 | cli_search_files | pattern, path? | Find files matching a glob pattern |
-| resolve_agent | name | Resolve another CommonOS agent via DB/ENS |
-| send_axl_message | to_name, message | Record a message and attempt AXL delivery |
+| cli_resolve_agent | name | Resolve another CommonOS agent by agentId, ENS name, or peerId |
+| cli_send_axl_message | target, content | Send a message to another agent over AXL |
 
-**Rules:**
-1. All paths are relative to \`${WORKSPACE_DIR}\`
-2. Commands run with full pod environment (bun, node, python, git, curl, etc.)
-3. You own this pod — no confirmation needed for any operation
-4. cli_write_file and cli_run_command execute immediately — auto-approve is active
-5. Chain tool calls across turns to accomplish complex tasks`;
+Mandatory rules:
+1. When asked to create, edit, inspect, search, or run something in the pod, call the cli_* tools directly.
+2. Do not say you cannot access the filesystem. You can use cli_read_file, cli_write_file, cli_list_directory, cli_search_files, and cli_run_command.
+3. File operations are sandboxed to the session root. Return the actual path or command output after using a tool.
+4. For markdown file requests, write the .md file with cli_write_file and return its path.
+5. For agent-to-agent communication in CommonOS, use cli_send_axl_message by default. Do not use Agent Commons native A2A unless the user explicitly asks for Agent Commons/native A2A or cli_send_axl_message fails.
 
+CommonOS agent tools:
+- cli_resolve_agent({ "name": "<agentId, ENS name (agent-xyz.agents.commonos.eth), or peerId>" })
+  Returns agent identity, role, fleet, and current AXL routing info.
+- cli_send_axl_message({ "target": "<agentId, ENS name, peerId, fleet manager, or fleet master>", "content": "<message>" })
+  Resolves the target via ENS/DB, sends over AXL, and returns the recipient and delivery path.
+`.trim();
 }
 
 function agcHeaders(): Record<string, string> {
@@ -1142,6 +1190,30 @@ async function executeLocalTool(name: string, args: Record<string, unknown>): Pr
     ].filter(Boolean).join("\n") || "(no output)";
   }
 
+  if (tool === "resolve_agent") {
+    const name = String(args.name ?? args.target ?? args.agentId ?? "");
+    if (!name) throw new Error('resolve_agent requires "name"');
+    const resolved = await resolveAgentByName(name).catch(() => null);
+    if (!resolved) return `[agent not found: ${name}]`;
+    return JSON.stringify(resolved, null, 2);
+  }
+
+  if (tool === "send_axl_message") {
+    const target = String(args.target ?? args.toAgentId ?? args.agentId ?? args.peerId ?? "");
+    const content = String(args.content ?? args.message ?? "");
+    if (!target) throw new Error('send_axl_message requires "target"');
+    if (!content) throw new Error('send_axl_message requires "content"');
+
+    const resolved = await resolveAxlTarget(target);
+    await sendAxlMessage(resolved.peerId, resolved.agentId, content, { type: "request" });
+
+    return [
+      `Sent via AXL to ${resolved.agentId}.`,
+      `peerId=${resolved.peerId}`,
+      `content=${content}`,
+    ].join("\n");
+  }
+
   return `Unsupported local tool: ${name}`;
 }
 
@@ -1164,50 +1236,6 @@ function finalTextFromEvent(event: Record<string, unknown>): string | null {
   return typeof value === "string" ? value : null;
 }
 
-async function toolResolveAgent(args: { name: string }): Promise<string> {
-  if (!args.name) return '[error: name is required]';
-  const resolved = await resolveAgentByName(args.name);
-  if (!resolved) return `[agent not found: ${args.name}]`;
-  return JSON.stringify(resolved, null, 2);
-}
-
-async function toolSendAxlMessage(args: { to_name: string; message: string }): Promise<string> {
-  if (!args.to_name) return '[error: to_name is required]';
-  if (!args.message) return '[error: message is required]';
-
-  const resolved = await resolveAgentByName(args.to_name);
-  if (!resolved?.agentId) return `[agent not found: ${args.to_name}]`;
-
-  let recorded = false;
-  if (resolved.fleetId === config.fleetId) {
-    try {
-      await recordAgentMessage(resolved.agentId, args.message);
-      recorded = true;
-    } catch (err) {
-      console.warn("[daemon] message registry write failed:", err instanceof Error ? err.message : err);
-    }
-  }
-
-  if (!resolved.multiaddr) {
-    if (recorded) {
-      return `[message recorded for ${args.to_name}; target has no live AXL route yet]`;
-    }
-    return `[agent found but no AXL route for ${args.to_name}]`;
-  }
-
-  try {
-    await sendAxlMessage(resolved.multiaddr, resolved.agentId, args.message, { emitEvent: !recorded });
-    return recorded
-      ? `[message recorded and sent to ${args.to_name} via AXL]`
-      : `[message sent to ${args.to_name} via AXL]`;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (recorded) {
-      return `[message recorded for ${args.to_name}; AXL unavailable: ${message}]`;
-    }
-    return `[AXL send failed: ${message}]`;
-  }
-}
 
 function sessionIdFromEvent(event: Record<string, unknown>): string | null {
   const payload = (event.payload && typeof event.payload === "object" ? event.payload : event) as Record<string, unknown>;
