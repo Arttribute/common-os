@@ -97,6 +97,12 @@ export interface AgentDoc {
     updatedAt: Date
   } | null
   lastHeartbeatAt: Date | null
+  runtime: {
+    name: string | null
+    commitSha: string | null
+    agentImage: string | null
+    updatedAt: Date | null
+  } | null
   startedAt: Date | null
   createdAt: Date
   updatedAt: Date

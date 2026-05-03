@@ -281,6 +281,10 @@ async function ensurePodWithRetry(
 
 // ─── Per-agent GKE pod ────────────────────────────────────────────────────
 
+function defaultGcpAgentImageUrl(projectId: string, region: string): string {
+	return `${region}-docker.pkg.dev/${projectId}/common-os/agent:latest`;
+}
+
 /**
  * Provisions one Kubernetes namespace + pod per agent on the shared GKE cluster.
  * Pod contains:
@@ -297,7 +301,7 @@ export async function launchAgentPod(
 	const clusterName = process.env.GKE_CLUSTER ?? "common-os-agents";
 	const imageUrl =
 		process.env.AGENT_IMAGE_URL ??
-		"ghcr.io/arttribute/common-os/agent:latest";
+		defaultGcpAgentImageUrl(projectId, region);
 	const bucketName = process.env.GCS_BUCKET_NAME ?? "agent-session-state-bucket";
 	const useGcsFuse =
 		process.env.GCP_AGENT_STORAGE_MODE === "gcsfuse" ||
@@ -321,7 +325,7 @@ export async function launchAgentPod(
 		"fleet-id": opts.fleetId,
 		"tenant-id": opts.tenantId,
 	});
-	console.log(`[cloud-init] namespace ready, creating pod ${podName}...`);
+	console.log(`[cloud-init] namespace ready, creating pod ${podName} with image ${imageUrl}...`);
 
 	const envVars: k8s.V1EnvVar[] = [
 		{ name: "AGENT_ID",             value: opts.agentId },
@@ -337,6 +341,7 @@ export async function launchAgentPod(
 		{ name: "OPENCLAW_GATEWAY_URL", value: opts.openclawGatewayUrl ?? "http://localhost:18789" },
 		{ name: "WORKSPACE_DIR",        value: opts.workspaceDir ?? "/mnt/shared" },
 		{ name: "COMMONOS_WORKSPACE",   value: opts.workspaceDir ?? "/mnt/shared" },
+		{ name: "COMMONOS_AGENT_IMAGE", value: imageUrl },
 		{ name: "DOCKER_IMAGE",         value: opts.dockerImage ?? "" },
 		{ name: "RUNNER_URL",           value: opts.runnerUrl ?? process.env.RUNNER_URL ?? "" },
 		{ name: "AXL_PEERS",            value: process.env.AXL_PEERS ?? "" },
@@ -371,6 +376,9 @@ export async function launchAgentPod(
 				"managed-by": "common-os",
 				"agent-id": opts.agentId,
 			},
+			annotations: {
+				"common-os/agent-image": imageUrl,
+			},
 		},
 		spec: {
 			restartPolicy: "Always",
@@ -398,7 +406,7 @@ export async function launchAgentPod(
 
 	await ensurePodWithRetry(projectId, region, clusterName, namespace, podBody);
 
-	console.log(`[cloud-init] pod ${podName} created in namespace ${namespace}`);
+	console.log(`[cloud-init] pod ${podName} created in namespace ${namespace} using image ${imageUrl}`);
 	return { serviceId: namespace, sessionId };
 }
 
@@ -556,6 +564,7 @@ export async function launchAgentPodEks(opts: LaunchOptions): Promise<LaunchedSe
 		{ name: "OPENCLAW_GATEWAY_URL", value: opts.openclawGatewayUrl ?? "http://localhost:18789" },
 		{ name: "WORKSPACE_DIR",        value: opts.workspaceDir ?? "/mnt/shared" },
 		{ name: "COMMONOS_WORKSPACE",   value: opts.workspaceDir ?? "/mnt/shared" },
+		{ name: "COMMONOS_AGENT_IMAGE", value: imageUrl },
 		{ name: "DOCKER_IMAGE",         value: opts.dockerImage ?? "" },
 		{ name: "RUNNER_URL",           value: opts.runnerUrl ?? process.env.RUNNER_URL ?? "" },
 		{ name: "AXL_PEERS",            value: process.env.AXL_PEERS ?? "" },
@@ -586,6 +595,7 @@ export async function launchAgentPodEks(opts: LaunchOptions): Promise<LaunchedSe
 				name: podName,
 				namespace,
 				labels: { "managed-by": "common-os", "agent-id": opts.agentId },
+				annotations: { "common-os/agent-image": imageUrl },
 			},
 			spec: {
 				restartPolicy: "Always",
@@ -605,7 +615,7 @@ export async function launchAgentPodEks(opts: LaunchOptions): Promise<LaunchedSe
 		},
 	});
 
-	console.log(`[cloud-init] EKS pod ${podName} created in namespace ${namespace}`);
+	console.log(`[cloud-init] EKS pod ${podName} created in namespace ${namespace} using image ${imageUrl}`);
 	return { serviceId: namespace, sessionId };
 }
 

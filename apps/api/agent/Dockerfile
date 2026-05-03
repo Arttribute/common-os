@@ -9,6 +9,13 @@ RUN go build -o /axl-node ./cmd/node/
 
 # Stage 2: Agent runtime image
 FROM oven/bun:1.3.12-alpine
+ARG COMMONOS_COMMIT_SHA=unknown
+ARG COMMONOS_BUILD_DATE=unknown
+
+LABEL org.opencontainers.image.revision=$COMMONOS_COMMIT_SHA
+LABEL org.opencontainers.image.created=$COMMONOS_BUILD_DATE
+ENV COMMONOS_COMMIT_SHA=$COMMONOS_COMMIT_SHA
+ENV COMMONOS_BUILD_DATE=$COMMONOS_BUILD_DATE
 
 RUN apk add --no-cache curl git jq bash ca-certificates openssl
 

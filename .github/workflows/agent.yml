@@ -71,6 +71,9 @@ jobs:
           context: .
           file: ./apps/api/agent/Dockerfile
           push: true
+          build-args: |
+            COMMONOS_COMMIT_SHA=${{ github.sha }}
+            COMMONOS_BUILD_DATE=${{ github.run_id }}
           tags: |
             ghcr.io/arttribute/common-os/agent:latest
             ghcr.io/arttribute/common-os/agent:${{ github.sha }}

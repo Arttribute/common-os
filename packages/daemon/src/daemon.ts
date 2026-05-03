@@ -29,6 +29,8 @@ const WORKSPACE_DIR  = process.env.COMMONOS_WORKSPACE ?? config.workspaceDir;
 const AXL_API_URL    = process.env.AXL_API_URL ?? "http://localhost:9002";
 const ETH_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 const DAEMON_RUNTIME = "common-os-daemon/agc-direct-stream-v4-axl-hard-route";
+const AGENT_IMAGE    = process.env.COMMONOS_AGENT_IMAGE ?? "";
+const COMMIT_SHA     = process.env.COMMONOS_COMMIT_SHA ?? "";
 
 type AgcMessage = { role: "user" | "assistant"; content: string };
 
@@ -252,11 +254,25 @@ async function registerSessionWithApi(): Promise<void> {
 
 // ─── Main ──────────────────────────────────────────────────────────────────
 
+function emitHeartbeat(): void {
+  agent.emit({
+    type: "heartbeat",
+    payload: {
+      runtime: DAEMON_RUNTIME,
+      commitSha: COMMIT_SHA,
+      agentImage: AGENT_IMAGE,
+    },
+  }).catch((err) => {
+    console.error("[daemon] heartbeat error:", err);
+  });
+}
+
 async function main() {
-  console.log(`[daemon] starting  ${DAEMON_RUNTIME}  agent=${config.agentId}  role=${config.role}  fleet=${config.fleetId}`);
+  console.log(`[daemon] starting  ${DAEMON_RUNTIME}  agent=${config.agentId}  role=${config.role}  fleet=${config.fleetId}  image=${AGENT_IMAGE || "unknown"}  commit=${COMMIT_SHA || "unknown"}`);
 
   await firstTimeSetup();
   await agent.emit({ type: "state_change", payload: { status: "online" } });
+  emitHeartbeat();
   console.log("[daemon] online");
 
   // Push initial workspace snapshot so the UI can show the pod filesystem immediately
@@ -266,9 +282,7 @@ async function main() {
   void discoverFleetPeers();
 
   setInterval(() => {
-    agent.emit({ type: "heartbeat" }).catch((err) => {
-      console.error("[daemon] heartbeat error:", err);
-    });
+    emitHeartbeat();
   }, HEARTBEAT_MS);
 
   startFileWatcher();

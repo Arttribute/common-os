@@ -36,6 +36,12 @@ const AgentSchema = new Schema<AgentDoc>(
       updatedAt: Date,
     },
     lastHeartbeatAt: Date,
+    runtime: {
+      name: { type: String, default: null },
+      commitSha: { type: String, default: null },
+      agentImage: { type: String, default: null },
+      updatedAt: { type: Date, default: null },
+    },
     startedAt: Date,
     createdAt: { type: Date, required: true },
     updatedAt: { type: Date, required: true },

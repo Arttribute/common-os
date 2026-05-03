@@ -17,6 +17,10 @@ steps:
   - name: "gcr.io/cloud-builders/docker"
     args:
       - build
+      - --build-arg
+      - "COMMONOS_COMMIT_SHA=$COMMIT_SHA"
+      - --build-arg
+      - "COMMONOS_BUILD_DATE=$BUILD_ID"
       - -t
       - "europe-west1-docker.pkg.dev/$PROJECT_ID/common-os/agent:$SHORT_SHA"
       - -f
