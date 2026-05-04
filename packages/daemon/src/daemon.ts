@@ -29,7 +29,7 @@ const WORKSPACE_DIR  = process.env.COMMONOS_WORKSPACE ?? config.workspaceDir;
 const AXL_API_URL    = process.env.AXL_API_URL ?? "http://localhost:9002";
 const AXL_LISTEN_PORT = process.env.AXL_LISTEN_PORT ?? "9001";
 const ETH_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
-const DAEMON_RUNTIME = "common-os-daemon/agc-direct-stream-v5-axl-agent-routed";
+const DAEMON_RUNTIME = "common-os-daemon/agc-direct-stream-v6-axl-tool-only";
 const AGENT_IMAGE    = process.env.COMMONOS_AGENT_IMAGE ?? "";
 const COMMIT_SHA     = process.env.COMMONOS_COMMIT_SHA ?? "";
 
@@ -1052,71 +1052,10 @@ async function executeTask(
   messages?: AgcMessage[],
   routing?: AxlRoutingContext,
 ): Promise<string | { response: string; agcSessionId?: string }> {
-  const axlRequest = routing?.axlTargetAgentId || routing?.axlTargetPeerId ? null : parseDirectAxlRequest(description);
-  if (axlRequest) {
-    try {
-      const resolved = await resolveAxlTarget(axlRequest.target);
-      await sendAxlMessage(resolved.peerId, resolved.agentId, axlRequest.content, { type: "request" });
-      return [
-        `Sent via AXL to ${resolved.agentId}.`,
-        `Target: ${axlRequest.target}`,
-        `Content: ${axlRequest.content}`,
-      ].join("\n");
-    } catch (err) {
-      return [
-        `AXL send failed before invoking Agent Commons native A2A.`,
-        `Target: ${axlRequest.target}`,
-        `Reason: ${err instanceof Error ? err.message : String(err)}`,
-        "",
-        "Known AXL peers:",
-        axlPeerDirectory(),
-      ].join("\n");
-    }
-  }
-
   if (config.integrationPath === "openclaw") return await runViaOpenClaw(description);
   if (config.integrationPath === "native") return await runViaNative(description, agcSessionId, messages, routing);
   await sleep(2_000);
   return `completed: ${description}`;
-}
-
-function parseDirectAxlRequest(description: string): { target: string; content: string } | null {
-  const text = description.trim();
-  if (!/\b(axl|agent|fleet\s+(manager|master)|manager|master)\b/i.test(text)) return null;
-  if (!/\b(send|message|say|tell|ask|ping)\b/i.test(text)) return null;
-
-  const viaTarget =
-    text.match(/\bto\s+(.+?)\s+via\s+axl\b/i) ??
-    text.match(/\bvia\s+axl\s+to\s+(.+?)(?:$|[.?!,])/i);
-  const simpleTarget =
-    text.match(/\b(?:to|with)\s+(.+?)(?:\s+in\s+(?:your\s+)?fleet|\s+on\s+axl|\s+over\s+axl|$|[.?!,])/i) ??
-    text.match(/\b(fleet\s+manager|fleet\s+master|manager|master)\b/i);
-  const rawTarget = cleanAxlTarget((viaTarget?.[1] ?? simpleTarget?.[1] ?? "").trim());
-  if (!rawTarget) return null;
-
-  const quoted = text.match(/["“]([^"”]+)["”]/);
-  if (quoted?.[1]) return { target: rawTarget, content: quoted[1].trim() };
-
-  if (/\bsay\s+hi\b/i.test(text) || /\bping\b/i.test(text)) {
-    return { target: rawTarget, content: `Hi from ${config.role || config.agentId}.` };
-  }
-
-  const askMatch = text.match(/\bask\s+.+?\s+(?:if|whether|to)\s+(.+)$/i);
-  if (askMatch?.[1]) return { target: rawTarget, content: askMatch[1].trim() };
-
-  const tellMatch = text.match(/\btell\s+.+?\s+(?:that\s+)?(.+)$/i);
-  if (tellMatch?.[1] && !/\bvia\s+axl\s+to\b/i.test(tellMatch[1])) {
-    return { target: rawTarget, content: tellMatch[1].trim() };
-  }
-
-  return { target: rawTarget, content: `Hi from ${config.role || config.agentId}.` };
-}
-
-function cleanAxlTarget(target: string): string {
-  return target
-    .replace(/^(?:the\s+)?/i, "")
-    .replace(/\s+(?:in\s+(?:your\s+)?fleet|via\s+axl|over\s+axl|using\s+axl)$/i, "")
-    .trim();
 }
 
 // ─── Workspace snapshot & filesystem manifest ──────────────────────────────
@@ -1194,7 +1133,8 @@ function buildAxlRoutingPromptContext(routing?: AxlRoutingContext): string {
   if (!routing?.axlTargetAgentId && !routing?.axlTargetPeerId) return "";
   return [
     "### Mentioned CommonOS Agent",
-    "The latest user message mentions another agent. Treat this as routing context only: understand the user's request, compose the message you intend to send, then call `cli_send_axl_message` if a fleet message is appropriate.",
+    "The latest user message mentions another agent. Treat this as routing context only: understand the user's request, use the conversation/workspace context as needed, compose a complete message in your own words, then call `cli_send_axl_message` if a fleet message is appropriate.",
+    "Do not forward the user's raw routing phrase or a fragment like \"about the thing we are building\".",
     `Resolved target agentId: ${routing.axlTargetAgentId ?? "(unknown)"}`,
     `Resolved target AXL peerId: ${routing.axlTargetPeerId ?? "(unknown)"}`,
   ].join("\n");
