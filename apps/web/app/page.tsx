@@ -133,27 +133,15 @@ export default function HomePage() {
             ))}
           </div>
 
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "center" }}>
-            <Link href="/auth" className="cta-primary" style={{
-              display: "inline-flex", alignItems: "center", gap: 8,
-              padding: "13px 32px",
-              background: "rgba(245,158,11,0.12)", border: `1px solid rgba(245,158,11,0.35)`,
-              borderRadius: 8, color: C.amber, fontSize: 12, textDecoration: "none",
-              letterSpacing: 0.5, transition: "all 0.2s",
-            }}>
-              launch your fleet →
-            </Link>
-            <Link href="/world" className="cta-secondary" style={{
-              display: "inline-flex", alignItems: "center", gap: 8,
-              padding: "13px 32px",
-              background: "transparent", border: `1px solid ${C.border}`,
-              borderRadius: 8, color: C.muted, fontSize: 12, textDecoration: "none",
-              letterSpacing: 0.5, transition: "all 0.2s",
-            }}>
-              <span className="live-dot" style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: C.green }} />
-              open world UI
-            </Link>
-          </div>
+          <Link href="/auth" className="cta-primary" style={{
+            display: "inline-flex", alignItems: "center", gap: 8,
+            padding: "13px 48px",
+            background: "rgba(245,158,11,0.12)", border: `1px solid rgba(245,158,11,0.35)`,
+            borderRadius: 8, color: C.amber, fontSize: 12, textDecoration: "none",
+            letterSpacing: 0.5, transition: "all 0.2s",
+          }}>
+            launch your fleet →
+          </Link>
 
           <div style={{ position: "absolute", bottom: 36, fontSize: 9, color: C.faint, letterSpacing: 2 }}>↓ scroll</div>
         </section>
