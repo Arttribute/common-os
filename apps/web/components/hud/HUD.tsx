@@ -1,4 +1,5 @@
 'use client'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { FleetPanel } from './FleetPanel'
 import { Inspector } from './Inspector'
@@ -50,9 +51,9 @@ export function HUD() {
         >
           ← fleets
         </button>
-        <span style={{ fontSize: 14, fontWeight: 700, color: '#e2e8f0', letterSpacing: -0.5 }}>
+        <Link href="/" style={{ fontSize: 14, fontWeight: 700, color: '#e2e8f0', letterSpacing: -0.5, textDecoration: 'none' }}>
           common<span style={{ color: '#f59e0b' }}>os</span>
-        </span>
+        </Link>
         <ConnectionDot status={socketStatus} />
       </div>
 

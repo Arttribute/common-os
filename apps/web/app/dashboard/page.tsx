@@ -1,5 +1,6 @@
 'use client'
 import React, { useEffect, useState, useCallback } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { usePrivy } from '@privy-io/react-auth'
 import { useAuth } from '@/hooks/useAuth'
@@ -260,9 +261,9 @@ export default function DashboardPage() {
           gap: 12,
         }}
       >
-        <span style={{ fontSize: 16, fontWeight: 700, letterSpacing: -0.5 }}>
+        <Link href="/" style={{ fontSize: 16, fontWeight: 700, letterSpacing: -0.5, color: 'inherit', textDecoration: 'none' }}>
           common<span style={{ color: '#f59e0b' }}>os</span>
-        </span>
+        </Link>
         <span style={{ marginLeft: 'auto' }} />
         <UserEmail />
         <button onClick={() => router.push('/settings')} style={ghostBtn}>settings</button>

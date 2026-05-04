@@ -1,5 +1,6 @@
 'use client'
 import { useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { usePrivy } from '@privy-io/react-auth'
 import { useAuthStore } from '@/store/authStore'
@@ -66,9 +67,9 @@ export default function SettingsPage() {
         borderBottom: '1px solid rgba(255,255,255,0.06)',
         gap: 12,
       }}>
-        <span style={{ fontSize: 16, fontWeight: 700, letterSpacing: -0.5 }}>
+        <Link href="/" style={{ fontSize: 16, fontWeight: 700, letterSpacing: -0.5, color: 'inherit', textDecoration: 'none' }}>
           common<span style={{ color: '#f59e0b' }}>os</span>
-        </span>
+        </Link>
         <span style={{ fontSize: 12, color: '#64748b' }}>/ settings</span>
         <span style={{ marginLeft: 'auto' }} />
         <button

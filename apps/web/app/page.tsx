@@ -56,9 +56,9 @@ export default function HomePage() {
           backdropFilter: "blur(14px)",
           borderBottom: `1px solid ${C.border}`,
         }}>
-          <span style={{ fontSize: 14, fontWeight: 700, letterSpacing: -0.5 }}>
+          <Link href="/" style={{ fontSize: 14, fontWeight: 700, letterSpacing: -0.5, color: 'inherit', textDecoration: 'none' }}>
             common<span style={{ color: C.amber }}>os</span>
-          </span>
+          </Link>
           <div className="nav-links" style={{ display: "flex", gap: 28, alignItems: "center" }}>
             {[
               { label: "How it works", href: "#how-it-works" },
