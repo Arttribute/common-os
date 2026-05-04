@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { agents, fleets, messages } from "../db/mongo.js";
 import { broadcastToFleet } from "../db/memory.js";
 import { provisionAgent } from "../services/provisioner.js";
-import { terminateAgentPod, terminateAgentPodEks } from "../services/cloud-init.js";
+import { readAgentWorkspaceFile, terminateAgentPod, terminateAgentPodEks, WorkspaceReadError } from "../services/cloud-init.js";
 import { removeAgentFromWorldState } from "../services/world.js";
 import type { Env, MessageDoc } from "../types.js";
 
@@ -94,6 +94,38 @@ router.get("/:id/agents/:agentId", async (c) => {
 		return c.json(agent);
 	} catch {
 		return c.json({ error: "database error" }, 503);
+	}
+});
+
+// GET /fleets/:id/agents/:agentId/workspace/read?path=/file.txt
+router.get("/:id/agents/:agentId/workspace/read", async (c) => {
+	try {
+		const agent = await (await agents()).findOne({
+			_id: c.req.param("agentId"),
+			fleetId: c.req.param("id"),
+			tenantId: c.get("tenantId"),
+		}).lean();
+		if (!agent) return c.json({ error: "agent not found" }, 404);
+		if (!agent.pod.namespaceId) {
+			return c.json({ error: "agent pod is not ready" }, 409);
+		}
+
+		const content = await readAgentWorkspaceFile({
+			agentId: agent._id,
+			namespace: agent.pod.namespaceId,
+			provider: agent.pod.provider,
+			region: agent.pod.region,
+			rootDir: agent.workspace?.rootDir,
+			path: c.req.query("path") ?? "",
+		});
+
+		return c.json({ content });
+	} catch (err) {
+		if (err instanceof WorkspaceReadError) {
+			return c.json({ error: err.message }, err.status as 400 | 404 | 409 | 413 | 502);
+		}
+		console.error("[agents] workspace read failed:", err);
+		return c.json({ error: "could not read workspace file" }, 502);
 	}
 });
 

@@ -561,7 +561,8 @@ function ComputerView({ agentRole, pod, snapshot, loading, error, apiUrl, fleetI
         const content = typeof data === 'string' ? data : (data as { content?: string }).content ?? ''
         setFileContent(content)
       } else {
-        setFileError(`Could not read file (${res.status})`)
+        const data = await res.json().catch(() => null)
+        setFileError(errorText(data, `Could not read file (${res.status})`))
       }
     } catch {
       setFileError('Could not connect to workspace API')

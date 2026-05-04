@@ -7,6 +7,7 @@ import { EKSClient, DescribeClusterCommand } from "@aws-sdk/client-eks";
 import { defaultProvider } from "@aws-sdk/credential-provider-node";
 import { SignatureV4 } from "@smithy/signature-v4";
 import { createHash, createHmac } from "crypto";
+import { PassThrough } from "stream";
 
 // ─── Options ───────────────────────────────────────────────────────────────
 
@@ -34,6 +35,26 @@ export interface LaunchedService {
 	/** Kubernetes namespace name — stored as namespaceId in agent.pod */
 	serviceId: string;
 	sessionId: string;
+}
+
+export interface WorkspaceReadOptions {
+	agentId: string;
+	namespace: string;
+	provider: "gcp" | "aws";
+	region?: string | null;
+	rootDir?: string | null;
+	path: string;
+	maxBytes?: number;
+}
+
+export class WorkspaceReadError extends Error {
+	constructor(
+		message: string,
+		public readonly status: number,
+	) {
+		super(message);
+		this.name = "WorkspaceReadError";
+	}
 }
 
 // ─── GCS storage bootstrap ────────────────────────────────────────────────
@@ -226,6 +247,122 @@ async function getKubeConfig(
 
 	kubeConfigCache.set(cacheKey, { kc, expiresAt: Date.now() + 55 * 60 * 1000 });
 	return kc;
+}
+
+async function kubeConfigForProvider(provider: "gcp" | "aws", region?: string | null): Promise<k8s.KubeConfig> {
+	if (provider === "aws") {
+		return getEksKubeConfig(region ?? process.env.AWS_REGION ?? "us-east-1", process.env.EKS_CLUSTER ?? "common-os-agents");
+	}
+	return getKubeConfig(
+		process.env.GCP_PROJECT_ID ?? "common-os-prod",
+		region ?? process.env.GCP_REGION ?? "europe-west1",
+		process.env.GKE_CLUSTER ?? "common-os-agents",
+	);
+}
+
+function normalizeWorkspaceReadPath(rawPath: string): string {
+	if (!rawPath || rawPath.includes("\0")) {
+		throw new WorkspaceReadError("path is required", 400);
+	}
+
+	const parts = rawPath
+		.replace(/\\/g, "/")
+		.split("/")
+		.filter((part) => part.length > 0);
+
+	if (parts.some((part) => part === "." || part === "..")) {
+		throw new WorkspaceReadError("path escapes workspace", 400);
+	}
+
+	return parts.join("/");
+}
+
+async function agentPodName(kc: k8s.KubeConfig, namespace: string, agentId: string): Promise<string> {
+	const coreApi = kc.makeApiClient(k8s.CoreV1Api);
+	const pods = await coreApi.listNamespacedPod({
+		namespace,
+		labelSelector: `agent-id=${agentId}`,
+	});
+	const pod = pods.items.find((item) => item.status?.phase !== "Succeeded" && item.status?.phase !== "Failed")
+		?? pods.items[0];
+	if (!pod?.metadata?.name) {
+		throw new WorkspaceReadError("agent pod not found", 404);
+	}
+	return pod.metadata.name;
+}
+
+export async function readAgentWorkspaceFile(opts: WorkspaceReadOptions): Promise<string> {
+	const relPath = normalizeWorkspaceReadPath(opts.path);
+	const rootDir = opts.rootDir?.trim() || "/mnt/shared";
+	const maxBytes = opts.maxBytes ?? 500_000;
+	const kc = await kubeConfigForProvider(opts.provider, opts.region);
+	const podName = await agentPodName(kc, opts.namespace, opts.agentId);
+
+	const stdout = new PassThrough();
+	const stderr = new PassThrough();
+	const stdoutChunks: Buffer[] = [];
+	const stderrChunks: Buffer[] = [];
+	let stdoutBytes = 0;
+	let execStatus: unknown;
+
+	stdout.on("data", (chunk: Buffer | string) => {
+		const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+		stdoutBytes += buf.length;
+		if (stdoutBytes <= maxBytes + 1024) stdoutChunks.push(buf);
+	});
+	stderr.on("data", (chunk: Buffer | string) => {
+		stderrChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+	});
+
+	const script = [
+		"set -eu",
+		'root="$(readlink -f "$1")"',
+		'file="$(readlink -f "$1/$2" 2>/dev/null || true)"',
+		'if [ -z "$file" ]; then echo "__COMMONOS_NOT_FOUND__" >&2; exit 44; fi',
+		'case "$file" in "$root"/*) ;; *) echo "__COMMONOS_ESCAPE__" >&2; exit 47 ;; esac',
+		'if [ ! -e "$file" ]; then echo "__COMMONOS_NOT_FOUND__" >&2; exit 44; fi',
+		'if [ ! -f "$file" ]; then echo "__COMMONOS_NOT_FILE__" >&2; exit 45; fi',
+		`bytes="$(wc -c < "$file" | tr -d ' ')"`,
+		`if [ "$bytes" -gt "${maxBytes}" ]; then echo "__COMMONOS_TOO_LARGE__:$bytes" >&2; exit 46; fi`,
+		'cat "$file"',
+	].join("\n");
+
+	const exec = new k8s.Exec(kc);
+	await exec.exec(
+		opts.namespace,
+		podName,
+		"agent",
+		["/bin/sh", "-c", script, "commonos-read", rootDir, relPath],
+		stdout,
+		stderr,
+		null,
+		false,
+		(status) => { execStatus = status; },
+	);
+
+	const stderrText = Buffer.concat(stderrChunks).toString("utf-8").trim();
+	if (stderrText.includes("__COMMONOS_NOT_FOUND__")) {
+		throw new WorkspaceReadError("file not found", 404);
+	}
+	if (stderrText.includes("__COMMONOS_NOT_FILE__")) {
+		throw new WorkspaceReadError("path is not a file", 400);
+	}
+	if (stderrText.includes("__COMMONOS_ESCAPE__")) {
+		throw new WorkspaceReadError("path escapes workspace", 400);
+	}
+	const tooLarge = stderrText.match(/__COMMONOS_TOO_LARGE__:(\d+)/);
+	if (tooLarge) {
+		throw new WorkspaceReadError(`file is too large to preview (${tooLarge[1]} bytes)`, 413);
+	}
+	if (stdoutBytes > maxBytes + 1024) {
+		throw new WorkspaceReadError("file is too large to preview", 413);
+	}
+	const status = execStatus as { status?: string; message?: string; code?: number } | undefined;
+	if (status?.status === "Failure" || status?.code) {
+		throw new WorkspaceReadError(stderrText || status.message || "could not read file", 502);
+	}
+
+	return Buffer.concat(stdoutChunks).toString("utf-8");
 }
 
 // ─── Retry helpers ────────────────────────────────────────────────────────
