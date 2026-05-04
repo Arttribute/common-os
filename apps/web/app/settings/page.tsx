@@ -53,8 +53,8 @@ export default function SettingsPage() {
   }
 
   const loginCmd = apiKey
-    ? `commonos auth login --key ${apiKey} --url ${apiUrl}`
-    : `commonos auth login --key <your-api-key> --url ${apiUrl}`
+    ? `cos auth login --key ${apiKey} --url ${apiUrl}`
+    : `cos auth login --key <your-api-key> --url ${apiUrl}`
 
   return (
     <div style={{ minHeight: '100vh', background: '#060b14', color: '#e2e8f0', ...mono }}>
@@ -163,11 +163,11 @@ export default function SettingsPage() {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {[
-                ['fleet create', 'commonos fleet create --name my-fleet'],
-                ['agent deploy', 'commonos agent deploy --fleet <id> --role engineer'],
-                ['task send', 'commonos task send <agent-id> "build the auth module" --fleet <id>'],
-                ['agent logs', 'commonos agent logs <agent-id> --fleet <id>'],
-                ['world view', 'commonos world snapshot <fleet-id>'],
+                ['fleet create', 'cos fleet create --name my-fleet'],
+                ['agent deploy', 'cos agent deploy --fleet <id> --role engineer'],
+                ['task send', 'cos task send <agent-id> "build the auth module" --fleet <id>'],
+                ['agent logs', 'cos agent logs <agent-id> --fleet <id>'],
+                ['world view', 'cos world snapshot <fleet-id>'],
               ].map(([name, cmd]) => (
                 <div key={name} style={{ display: 'flex', gap: 12, alignItems: 'baseline' }}>
                   <span style={{ fontSize: 11, color: '#64748b', minWidth: 88, flexShrink: 0 }}>{name}</span>
