@@ -7,7 +7,7 @@ import { EKSClient, DescribeClusterCommand } from "@aws-sdk/client-eks";
 import { defaultProvider } from "@aws-sdk/credential-provider-node";
 import { SignatureV4 } from "@smithy/signature-v4";
 import { createHash, createHmac } from "crypto";
-import { PassThrough } from "stream";
+import { Writable } from "stream";
 
 // ─── Options ───────────────────────────────────────────────────────────────
 
@@ -298,20 +298,24 @@ export async function readAgentWorkspaceFile(opts: WorkspaceReadOptions): Promis
 	const kc = await kubeConfigForProvider(opts.provider, opts.region);
 	const podName = await agentPodName(kc, opts.namespace, opts.agentId);
 
-	const stdout = new PassThrough();
-	const stderr = new PassThrough();
 	const stdoutChunks: Buffer[] = [];
 	const stderrChunks: Buffer[] = [];
 	let stdoutBytes = 0;
-	let execStatus: unknown;
 
-	stdout.on("data", (chunk: Buffer | string) => {
-		const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-		stdoutBytes += buf.length;
-		if (stdoutBytes <= maxBytes + 1024) stdoutChunks.push(buf);
+	const stdout = new Writable({
+		write(chunk: Buffer | string, encoding, callback) {
+			const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding);
+			stdoutBytes += buf.length;
+			if (stdoutBytes <= maxBytes + 1024) stdoutChunks.push(buf);
+			callback();
+		},
 	});
-	stderr.on("data", (chunk: Buffer | string) => {
-		stderrChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+
+	const stderr = new Writable({
+		write(chunk: Buffer | string, encoding, callback) {
+			stderrChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding));
+			callback();
+		},
 	});
 
 	const script = [
@@ -328,7 +332,26 @@ export async function readAgentWorkspaceFile(opts: WorkspaceReadOptions): Promis
 	].join("\n");
 
 	const exec = new k8s.Exec(kc);
-	await exec.exec(
+	let settleExec!: (status: unknown) => void;
+	let rejectExec!: (err: Error) => void;
+	let settled = false;
+	const execDone = new Promise<unknown>((resolve, reject) => {
+		settleExec = (status) => {
+			if (settled) return;
+			settled = true;
+			resolve(status);
+		};
+		rejectExec = (err) => {
+			if (settled) return;
+			settled = true;
+			reject(err);
+		};
+	});
+	const timeout = setTimeout(() => {
+		rejectExec(new WorkspaceReadError("workspace read timed out", 504));
+	}, 15_000);
+
+	const ws = await exec.exec(
 		opts.namespace,
 		podName,
 		"agent",
@@ -337,8 +360,16 @@ export async function readAgentWorkspaceFile(opts: WorkspaceReadOptions): Promis
 		stderr,
 		null,
 		false,
-		(status) => { execStatus = status; },
+		(status) => { settleExec(status); },
 	);
+	ws.on("error", (err) => {
+		rejectExec(err instanceof Error ? err : new Error(String(err)));
+	});
+	ws.on("close", () => {
+		settleExec(undefined);
+	});
+
+	const execStatus = await execDone.finally(() => clearTimeout(timeout));
 
 	const stderrText = Buffer.concat(stderrChunks).toString("utf-8").trim();
 	if (stderrText.includes("__COMMONOS_NOT_FOUND__")) {
