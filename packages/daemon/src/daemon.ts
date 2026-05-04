@@ -29,7 +29,7 @@ const WORKSPACE_DIR  = process.env.COMMONOS_WORKSPACE ?? config.workspaceDir;
 const AXL_API_URL    = process.env.AXL_API_URL ?? "http://localhost:9002";
 const AXL_LISTEN_PORT = process.env.AXL_LISTEN_PORT ?? "9001";
 const ETH_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
-const DAEMON_RUNTIME = "common-os-daemon/agc-direct-stream-v6-axl-tool-only";
+const DAEMON_RUNTIME = "common-os-daemon/agc-direct-stream-v7-empty-output-fallback";
 const AGENT_IMAGE    = process.env.COMMONOS_AGENT_IMAGE ?? "";
 const COMMIT_SHA     = process.env.COMMONOS_COMMIT_SHA ?? "";
 
@@ -1053,9 +1053,72 @@ async function executeTask(
   routing?: AxlRoutingContext,
 ): Promise<string | { response: string; agcSessionId?: string }> {
   if (config.integrationPath === "openclaw") return await runViaOpenClaw(description);
-  if (config.integrationPath === "native") return await runViaNative(description, agcSessionId, messages, routing);
+  if (config.integrationPath === "native") {
+    const result = await runViaNative(description, agcSessionId, messages, routing);
+    if (result.response.trim()) return result;
+
+    const axlFallback = await maybeSendAxlFallback(description, messages, routing);
+    if (axlFallback) return { response: axlFallback, ...(result.agcSessionId ? { agcSessionId: result.agcSessionId } : {}) };
+
+    const markdownFallback = await maybeWriteMarkdownFallback(description, messages);
+    if (markdownFallback) return { response: markdownFallback, ...(result.agcSessionId ? { agcSessionId: result.agcSessionId } : {}) };
+
+    return {
+      response: "I could not complete that request because the agent runtime returned no output.",
+      ...(result.agcSessionId ? { agcSessionId: result.agcSessionId } : {}),
+    };
+  }
   await sleep(2_000);
   return `completed: ${description}`;
+}
+
+async function maybeSendAxlFallback(
+  description: string,
+  messages?: AgcMessage[],
+  routing?: AxlRoutingContext,
+): Promise<string | null> {
+  if (!routing?.axlTargetAgentId && !routing?.axlTargetPeerId) return null;
+  const target = routing.axlTargetAgentId ?? routing.axlTargetPeerId ?? "";
+  const resolved = routing.axlTargetAgentId && routing.axlTargetPeerId
+    ? { agentId: routing.axlTargetAgentId, peerId: routing.axlTargetPeerId }
+    : await resolveAxlTarget(target);
+  const content = composeAxlFallbackMessage(description, messages, resolved.agentId);
+  await sendAxlMessage(resolved.peerId, resolved.agentId, content, { type: "request" });
+  return [
+    `Sent via AXL to ${resolved.agentId}.`,
+    `Content: ${content}`,
+  ].join("\n");
+}
+
+function composeAxlFallbackMessage(description: string, messages: AgcMessage[] | undefined, targetAgentId: string): string {
+  const lastAssistant = [...(messages ?? [])].reverse().find((msg) => msg.role === "assistant" && msg.content.trim());
+  const sender = config.role || config.agentId;
+  if (lastAssistant?.content) {
+    return [
+      `Hi ${targetAgentId}, ${sender} asked me to share this with you.`,
+      "",
+      lastAssistant.content.trim().slice(0, 8_000),
+    ].join("\n");
+  }
+  return `${sender} asked me to share this request with you: ${description.trim()}`;
+}
+
+async function maybeWriteMarkdownFallback(description: string, messages?: AgcMessage[]): Promise<string | null> {
+  if (!/\b(?:create|save|write|store)\b/i.test(description) || !/\b(?:md|markdown|file)\b/i.test(description)) return null;
+  const lastAssistant = [...(messages ?? [])].reverse().find((msg) => msg.role === "assistant" && msg.content.trim());
+  if (!lastAssistant?.content) return null;
+
+  const title = lastAssistant.content.match(/^#{1,3}\s+(.+)$/m)?.[1] ?? "agent response";
+  const slug = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 80) || "agent_response";
+  const fileName = `${slug}.md`;
+  const abs = workspacePath(fileName);
+  writeFileSync(abs, lastAssistant.content.trim() + "\n", "utf-8");
+  await emitWorkspaceSnapshot().catch(() => {});
+  return `Saved markdown file to ${abs}`;
 }
 
 // ─── Workspace snapshot & filesystem manifest ──────────────────────────────
@@ -1453,7 +1516,7 @@ async function runViaNative(
   console.log(
     `[daemon] agc stream done  runtime=${DAEMON_RUNTIME}  length=${response.length}  tools=${toolRequestCount}  session=${observedSessionId?.slice(0, 12) ?? "none"}`,
   );
-  return { response: response || "done", ...(observedSessionId ? { agcSessionId: observedSessionId } : {}) };
+  return { response, ...(observedSessionId ? { agcSessionId: observedSessionId } : {}) };
 }
 
 async function runViaOpenClaw(description: string): Promise<string> {
