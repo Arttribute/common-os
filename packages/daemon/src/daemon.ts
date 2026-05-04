@@ -29,11 +29,12 @@ const WORKSPACE_DIR  = process.env.COMMONOS_WORKSPACE ?? config.workspaceDir;
 const AXL_API_URL    = process.env.AXL_API_URL ?? "http://localhost:9002";
 const AXL_LISTEN_PORT = process.env.AXL_LISTEN_PORT ?? "9001";
 const ETH_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
-const DAEMON_RUNTIME = "common-os-daemon/agc-direct-stream-v4-axl-hard-route";
+const DAEMON_RUNTIME = "common-os-daemon/agc-direct-stream-v5-axl-agent-routed";
 const AGENT_IMAGE    = process.env.COMMONOS_AGENT_IMAGE ?? "";
 const COMMIT_SHA     = process.env.COMMONOS_COMMIT_SHA ?? "";
 
 type AgcMessage = { role: "user" | "assistant"; content: string };
+type AxlRoutingContext = { axlTargetAgentId?: string | null; axlTargetPeerId?: string | null };
 
 type AxlEnvelope = {
   type?: "request" | "response";
@@ -1049,33 +1050,9 @@ async function executeTask(
   description: string,
   agcSessionId?: string,
   messages?: AgcMessage[],
-  routing?: { axlTargetAgentId?: string | null; axlTargetPeerId?: string | null },
+  routing?: AxlRoutingContext,
 ): Promise<string | { response: string; agcSessionId?: string }> {
-  if (routing?.axlTargetAgentId || routing?.axlTargetPeerId) {
-    const target = routing.axlTargetAgentId ?? routing.axlTargetPeerId ?? "";
-    try {
-      const resolved = routing.axlTargetAgentId && routing.axlTargetPeerId
-        ? { agentId: routing.axlTargetAgentId, peerId: routing.axlTargetPeerId }
-        : await resolveAxlTarget(target);
-      const content = messageContentForMention(description, resolved.agentId);
-      await sendAxlMessage(resolved.peerId, resolved.agentId, content, { type: "request" });
-      return [
-        `Sent via AXL to ${resolved.agentId}.`,
-        `Content: ${content}`,
-      ].join("\n");
-    } catch (err) {
-      return [
-        `AXL send failed before invoking Agent Commons native A2A.`,
-        `Target: ${target}`,
-        `Reason: ${err instanceof Error ? err.message : String(err)}`,
-        "",
-        "Known AXL peers:",
-        axlPeerDirectory(),
-      ].join("\n");
-    }
-  }
-
-  const axlRequest = parseDirectAxlRequest(description);
+  const axlRequest = routing?.axlTargetAgentId || routing?.axlTargetPeerId ? null : parseDirectAxlRequest(description);
   if (axlRequest) {
     try {
       const resolved = await resolveAxlTarget(axlRequest.target);
@@ -1098,24 +1075,9 @@ async function executeTask(
   }
 
   if (config.integrationPath === "openclaw") return await runViaOpenClaw(description);
-  if (config.integrationPath === "native") return await runViaNative(description, agcSessionId, messages);
+  if (config.integrationPath === "native") return await runViaNative(description, agcSessionId, messages, routing);
   await sleep(2_000);
   return `completed: ${description}`;
-}
-
-function messageContentForMention(description: string, targetAgentId: string): string {
-  const withoutMention = description
-    .replace(/@\[[^\]]+\]\([^)]+\)/g, "")
-    .replace(/@\S+/g, "")
-    .replace(new RegExp(targetAgentId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"), "")
-    .trim();
-
-  const cleaned = withoutMention
-    .replace(/^(?:please\s+)?(?:send|message|tell|ask|ping)\b(?:\s+(?:a\s+)?message)?(?:\s+to)?\s*/i, "")
-    .replace(/\bvia\s+axl\b/ig, "")
-    .trim();
-
-  return cleaned || `Hi from ${config.role || config.agentId}.`;
 }
 
 function parseDirectAxlRequest(description: string): { target: string; content: string } | null {
@@ -1207,9 +1169,10 @@ function cleanAgcOutput(raw: string): string {
     .trim();
 }
 
-function buildRunPrompt(description: string, messages?: AgcMessage[]): string {
+function buildRunPrompt(description: string, messages?: AgcMessage[], routing?: AxlRoutingContext): string {
+  const routingContext = buildAxlRoutingPromptContext(routing);
   if (!messages || messages.length <= 1) {
-    return [buildCliContext(), "", description].join("\n");
+    return [buildCliContext(), routingContext, description].filter(Boolean).join("\n\n");
   }
 
   const transcript = messages
@@ -1219,10 +1182,21 @@ function buildRunPrompt(description: string, messages?: AgcMessage[]): string {
 
   return [
     buildCliContext(),
+    routingContext,
     "",
     "Continue this CommonOS conversation. Use the prior turns as context, but answer only the latest user request.",
     "",
     transcript,
+  ].join("\n");
+}
+
+function buildAxlRoutingPromptContext(routing?: AxlRoutingContext): string {
+  if (!routing?.axlTargetAgentId && !routing?.axlTargetPeerId) return "";
+  return [
+    "### Mentioned CommonOS Agent",
+    "The latest user message mentions another agent. Treat this as routing context only: understand the user's request, compose the message you intend to send, then call `cli_send_axl_message` if a fleet message is appropriate.",
+    `Resolved target agentId: ${routing.axlTargetAgentId ?? "(unknown)"}`,
+    `Resolved target AXL peerId: ${routing.axlTargetPeerId ?? "(unknown)"}`,
   ].join("\n");
 }
 
@@ -1429,10 +1403,11 @@ async function runViaNative(
   description: string,
   agcSessionId?: string,
   messages?: AgcMessage[],
+  routing?: AxlRoutingContext,
 ): Promise<{ response: string; agcSessionId?: string }> {
   const sessionIdToUse = agcSessionId ?? agentSessionId;
   const agentId = config.commonsAgentId || config.agentId;
-  const prompt = buildRunPrompt(description, messages);
+  const prompt = buildRunPrompt(description, messages, routing);
 
   console.log(
     `[daemon] agc stream  runtime=${DAEMON_RUNTIME}  agent=${agentId.slice(0, 12)}  session=${sessionIdToUse?.slice(0, 12) ?? "new"}  history=${messages?.length ?? 0}`,
