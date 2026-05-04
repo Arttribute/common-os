@@ -77,12 +77,6 @@ export default function SettingsPage() {
         >
           ← dashboard
         </button>
-        <button
-          onClick={() => router.push('/world')}
-          style={{ ...ghostBtn, fontSize: 10 }}
-        >
-          world →
-        </button>
       </header>
 
       <main style={{ maxWidth: 660, margin: '0 auto', padding: '36px 24px', display: 'flex', flexDirection: 'column', gap: 20 }}>

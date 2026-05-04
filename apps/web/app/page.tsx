@@ -378,18 +378,6 @@ export default function HomePage() {
               </div>
             </div>
 
-            <div style={{ marginTop: 48, textAlign: "center" }}>
-              <Link href="/world" className="cta-secondary" style={{
-                display: "inline-flex", alignItems: "center", gap: 8,
-                padding: "12px 28px",
-                background: "transparent", border: `1px solid ${C.border}`,
-                borderRadius: 8, color: C.muted, fontSize: 12, textDecoration: "none",
-                letterSpacing: 0.5, transition: "all 0.2s",
-              }}>
-                <span className="live-dot" style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: C.green }} />
-                open world UI
-              </Link>
-            </div>
           </div>
         </section>
 
@@ -502,26 +490,15 @@ export default function HomePage() {
             Every agent gets its own <span style={{ color: C.text }}>dedicated computer</span>. Isolated, persistent, always on. Your environment stays yours.
           </p>
 
-          <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-            <Link href="/auth" className="cta-primary" style={{
-              display: "inline-flex", alignItems: "center", gap: 8,
-              padding: "14px 36px",
-              background: "rgba(245,158,11,0.12)", border: `1px solid rgba(245,158,11,0.35)`,
-              borderRadius: 8, color: C.amber, fontSize: 12, textDecoration: "none",
-              letterSpacing: 0.5, transition: "all 0.2s",
-            }}>
-              launch your fleet →
-            </Link>
-            <Link href="/world" className="cta-secondary" style={{
-              display: "inline-flex", alignItems: "center", gap: 8,
-              padding: "14px 36px",
-              background: "transparent", border: `1px solid ${C.border}`,
-              borderRadius: 8, color: C.muted, fontSize: 12, textDecoration: "none",
-              letterSpacing: 0.5, transition: "all 0.2s",
-            }}>
-              watch live demo
-            </Link>
-          </div>
+          <Link href="/auth" className="cta-primary" style={{
+            display: "inline-flex", alignItems: "center", gap: 8,
+            padding: "14px 48px",
+            background: "rgba(245,158,11,0.12)", border: `1px solid rgba(245,158,11,0.35)`,
+            borderRadius: 8, color: C.amber, fontSize: 12, textDecoration: "none",
+            letterSpacing: 0.5, transition: "all 0.2s",
+          }}>
+            launch your fleet →
+          </Link>
         </section>
 
         {/* ── Footer ── */}
