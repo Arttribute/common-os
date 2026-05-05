@@ -459,6 +459,8 @@ async function discoverFleetPeers(): Promise<void> {
       peerId: string | null;
       multiaddr: string | null;
       permissionTier: string;
+      walletAddress?: string | null;
+      chainIds?: number[];
     }>;
 
     for (const peer of peers) {
@@ -471,6 +473,7 @@ async function discoverFleetPeers(): Promise<void> {
             peerAliasToAgentId.set(alias, peer.agentId);
           }
         }
+        if (peer.walletAddress) agentIdToWalletAddress.set(peer.agentId, peer.walletAddress);
       }
     }
     console.log(`[daemon] fleet peer map updated  ${peerIdToAgentId.size} peer(s)`);
@@ -497,6 +500,7 @@ const peerIdToAgentId = new Map<string, string>();
 const agentIdToPeerId = new Map<string, string>();
 const agentIdToRole = new Map<string, string>();
 const peerAliasToAgentId = new Map<string, string>();
+const agentIdToWalletAddress = new Map<string, string>();
 
 function parseAxlPayload(raw: string): AxlEnvelope {
   try {
@@ -539,6 +543,24 @@ function axlPeerDirectory(): string {
   return [
     "| Role | Agent ID | AXL peer ID |",
     "|------|----------|-------------|",
+    ...rows,
+  ].join("\n");
+}
+
+function walletDirectory(): string {
+  const rows = Array.from(agentIdToWalletAddress.entries())
+    .map(([agentId, address]) => {
+      const role = agentIdToRole.get(agentId) ?? "unknown role";
+      return `| ${role} | ${agentId} | ${address} |`;
+    });
+
+  if (rows.length === 0) {
+    return "No peer wallets are cached yet. Wallet sends resolve recipients through the CommonOS API at signing time.";
+  }
+
+  return [
+    "| Role | Agent ID | Wallet |",
+    "|------|----------|--------|",
     ...rows,
   ].join("\n");
 }
@@ -1213,6 +1235,8 @@ function buildCliContext(): string {
 You are running inside a CommonOS agent pod with DIRECT access to this pod's workspace and CommonOS AXL messaging. The following cli_* tools are in your tool list and execute inside the pod in real time.
 
 **Session root:** ${WORKSPACE_DIR}
+**Agent wallet:** ${config.walletAddress || "(not provisioned yet)"}
+**Default chain:** Base Sepolia (${config.walletChainId || 84532})
 
 ### Current file system (live snapshot)
 
@@ -1239,6 +1263,9 @@ ${buildWorkspaceSnapshot(WORKSPACE_DIR)}
 | \`cli_search_files\` | Find files matching a pattern |
 | \`cli_run_command\` | Run a short command and return its output |
 | \`cli_send_axl_message\` | Send a CommonOS fleet message over AXL and record it for observability |
+| \`cli_wallet_address\` | Return this agent's wallet address |
+| \`cli_wallet_balance\` | Return this agent's Base Sepolia wallet balance |
+| \`cli_wallet_send_transaction\` | Request a policy-checked wallet transaction signed by CommonOS/Privy |
 
 ### cli_send_axl_message schema
 
@@ -1246,9 +1273,21 @@ ${buildWorkspaceSnapshot(WORKSPACE_DIR)}
 {"target":"<agent id, AXL peer id, role/name like Pumba, fleet manager, or fleet master>","content":"<message to send>"}
 \`\`\`
 
+### cli_wallet_send_transaction schema
+
+\`\`\`json
+{"recipient":"<agent role/name like Sammy, @Sammy, agent id, or 0x address>","valueEth":"0.001","chainId":84532}
+\`\`\`
+
+Always pass the recipient alias to \`cli_wallet_send_transaction\` when the user names another CommonOS agent. The CommonOS API resolves the wallet again at signing time.
+
 ### Cached AXL peers in this fleet
 
 ${axlPeerDirectory()}
+
+### Cached fleet wallets
+
+${walletDirectory()}
 `.trim();
 }
 
@@ -1370,6 +1409,66 @@ async function executeLocalTool(name: string, args: Record<string, unknown>): Pr
       `peerId=${resolved.peerId}`,
       `content=${content}`,
     ].join("\n");
+  }
+
+  if (tool === "wallet_address") {
+    return config.walletAddress || "Wallet not provisioned yet";
+  }
+
+  if (tool === "wallet_balance") {
+    const res = await fetch(`${config.apiUrl}/fleets/${config.fleetId}/agents/${config.agentId}/wallet`, {
+      headers: { Authorization: `Bearer ${config.agentToken}` },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) throw new Error(`wallet balance lookup failed: ${res.status}`);
+    const data = await res.json() as {
+      address?: string;
+      balances?: Array<{ chainId: number; formatted?: string | null; balanceWei?: string | null; symbol?: string; rpcConfigured?: boolean; error?: string }>;
+    };
+    const balances = data.balances ?? [];
+    if (balances.length === 0) return `${data.address ?? config.walletAddress}: no balances available`;
+    return balances.map((b) => {
+      const amount = b.formatted ?? (b.balanceWei ? `${b.balanceWei} wei` : "unavailable");
+      const suffix = b.error ? ` (${b.error})` : (b.rpcConfigured === false ? " (RPC not configured)" : "");
+      return `chain ${b.chainId}: ${amount} ${b.symbol ?? "ETH"}${suffix}`;
+    }).join("\n");
+  }
+
+  if (tool === "wallet_send_transaction") {
+    const recipient = String(args.recipient ?? args.to ?? args.target ?? "");
+    const valueEth = args.valueEth !== undefined ? String(args.valueEth) : undefined;
+    const valueWei = args.valueWei !== undefined ? String(args.valueWei) : undefined;
+    const chainId = Number(args.chainId ?? config.walletChainId ?? 84532);
+    const data = args.data !== undefined ? String(args.data) : undefined;
+    if (!recipient) throw new Error('wallet_send_transaction requires "recipient"');
+    if (!valueEth && !valueWei) throw new Error('wallet_send_transaction requires "valueEth" or "valueWei"');
+
+    const res = await fetch(`${config.apiUrl}/agents/${config.agentId}/wallet/send-transaction`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.agentToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ recipient, valueEth, valueWei, chainId, data }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    const response = await res.json().catch(() => null) as {
+      txHash?: string | null;
+      status?: string;
+      toAddress?: string;
+      toAgentId?: string | null;
+      valueWei?: string;
+      error?: string;
+    } | null;
+    if (!res.ok) throw new Error(response?.error ?? `wallet transaction failed: ${res.status}`);
+    return [
+      `Wallet transaction ${response?.status ?? "submitted"}.`,
+      response?.txHash ? `txHash=${response.txHash}` : "",
+      response?.toAgentId ? `toAgentId=${response.toAgentId}` : "",
+      response?.toAddress ? `to=${response.toAddress}` : "",
+      response?.valueWei ? `valueWei=${response.valueWei}` : "",
+      response?.error ? `error=${response.error}` : "",
+    ].filter(Boolean).join("\n");
   }
 
   return `Unsupported local tool: ${name}`;

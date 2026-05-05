@@ -59,6 +59,19 @@ export interface AgentDoc {
     walletAddress: string | null
     registryAgentId?: string | null
   }
+  wallet?: {
+    address: string | null
+    provider: 'privy' | 'dev' | null
+    signerRef: string | null
+    chainIds: number[]
+    policy: {
+      dailyLimitWei: string
+      requireApprovalAboveWei: string
+      allowedContracts: string[]
+    }
+    createdAt: Date | null
+    updatedAt: Date | null
+  } | null
   pod: {
     namespaceId: string | null
     provider: 'gcp' | 'aws'
@@ -175,6 +188,26 @@ export interface MessageDoc {
   axlMessageId: string | null
   deliveredAt: Date | null
   createdAt: Date
+}
+
+export interface WalletTransactionDoc {
+  _id: string
+  agentId: string
+  fleetId: string
+  tenantId: string
+  walletAddress: string
+  direction: 'inbound' | 'outbound'
+  status: 'requested' | 'signed' | 'submitted' | 'confirmed' | 'failed' | 'simulated'
+  chainId: number
+  txHash: string | null
+  toAddress: string
+  toAgentId: string | null
+  valueWei: string
+  data: string | null
+  error: string | null
+  requestedBy: 'agent' | 'tenant'
+  createdAt: Date
+  updatedAt: Date
 }
 
 export interface AgentSessionDoc {

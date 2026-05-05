@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "crypto";
 import { agents, fleets, worldStates } from "../db/mongo.js";
 import type { AgentDoc, FleetDoc } from "../types.js";
 import { launchAgentPod, launchAgentPodEks } from "./cloud-init.js";
+import { ensureAgentWallet } from "./agentWallet.js";
 
 const AGC_BASE_URL = (process.env.AGC_API_URL ?? "https://api.agentcommons.io").replace(/\/$/, "");
 const DEFAULT_API_URL = "https://common-os-api-prod-7it3eyacta-ew.a.run.app";
@@ -74,6 +75,21 @@ export async function provisionAgent(
 	};
 
 	await (await agents()).create(agentDoc as never);
+	const wallet = await ensureAgentWallet(agentDoc);
+	agentDoc.commons.walletAddress = wallet.address;
+	agentDoc.wallet = {
+		address: wallet.address,
+		provider: wallet.provider,
+		signerRef: wallet.signerRef,
+		chainIds: wallet.chainIds,
+		policy: {
+			dailyLimitWei: process.env.AGENT_WALLET_DAILY_LIMIT_WEI ?? "100000000000000000",
+			requireApprovalAboveWei: process.env.AGENT_WALLET_APPROVAL_ABOVE_WEI ?? "10000000000000000",
+			allowedContracts: [],
+		},
+		createdAt: now,
+		updatedAt: now,
+	};
 
 	await (await fleets()).updateOne(
 		{ _id: opts.fleetId },
@@ -183,6 +199,7 @@ async function launchCloudInstance(
 		dockerImage: opts.dockerImage,
 		commonsApiKey: commonsApiKey ?? "",
 		commonsAgentId: agentDoc.commons.agentId ?? "",
+		walletAddress: agentDoc.wallet?.address ?? agentDoc.commons.walletAddress ?? "",
 		runnerUrl: process.env.RUNNER_URL,
 		axlPeers,
 		worldRoom: agentDoc.world.room,

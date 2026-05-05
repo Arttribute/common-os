@@ -15,6 +15,7 @@ import { eventsRouter } from './routes/events.js'
 import { agentRuntimeRouter } from './routes/agentRuntime.js'
 import { streamRouter } from './routes/stream.js'
 import { sessionsRouter } from './routes/sessions.js'
+import { walletsRouter } from './routes/wallets.js'
 import { worldStates, ensureIndexes } from './db/mongo.js'
 import { subscribeToFleet, unsubscribeFromFleet } from './db/memory.js'
 import type { Env } from './types.js'
@@ -42,6 +43,7 @@ app.route('/fleets', tasksRouter)
 app.route('/fleets', messagesRouter)
 app.route('/fleets', streamRouter)
 app.route('/fleets', sessionsRouter)
+app.route('/fleets', walletsRouter)
 app.route('/agents', agentRuntimeRouter)
 app.route('/events', eventsRouter)
 

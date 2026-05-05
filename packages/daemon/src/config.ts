@@ -9,6 +9,8 @@ export interface DaemonConfig {
   // native path
   commonsApiKey: string;
   commonsAgentId: string;
+  walletAddress: string;
+  walletChainId: number;
   // native path — runner service
   runnerUrl: string;           // URL of the shared runner Cloud Run service
   // openclaw path
@@ -41,5 +43,7 @@ export function loadConfig(path = "/etc/common-os/config.json"): DaemonConfig {
   }
   cfg.openclawGatewayUrl ??= "http://localhost:18789";
   cfg.workspaceDir ??= "/mnt/shared";
+  cfg.walletAddress ??= "";
+  cfg.walletChainId ??= 84532;
   return cfg;
 }

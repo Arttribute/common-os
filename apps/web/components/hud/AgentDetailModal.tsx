@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback, useRef } from 'react'
+import type { CSSProperties } from 'react'
 import { useAgentStore } from '@/store/agentStore'
 import type { AgentCommonsIdentity } from '@/store/agentStore'
 import { useWorldStore } from '@/store/worldStore'
@@ -51,6 +52,43 @@ interface FsNode {
   isDir: boolean
   children: FsNode[]
   depth: number
+}
+
+interface WalletBalance {
+  chainId: number
+  symbol: string
+  balanceWei: string | null
+  formatted: string | null
+  rpcConfigured: boolean
+  error?: string
+}
+
+interface WalletTransaction {
+  _id: string
+  direction: 'inbound' | 'outbound'
+  status: string
+  chainId: number
+  txHash: string | null
+  toAddress: string
+  toAgentId: string | null
+  valueWei: string
+  error: string | null
+  createdAt: string
+}
+
+interface WalletInfo {
+  address: string
+  provider: 'privy' | 'dev'
+  signerRef: string
+  chainIds: number[]
+  chains: Array<{ chainId: number; name: string }>
+  balances: WalletBalance[]
+  transactions: WalletTransaction[]
+  policy: {
+    dailyLimitWei: string
+    requireApprovalAboveWei: string
+    allowedContracts: string[]
+  } | null
 }
 
 // ─── Filesystem snapshot parser ────────────────────────────────────────────
@@ -138,6 +176,19 @@ function errorText(data: unknown, fallback: string): string {
 
 function isWalletAddress(value: string | null | undefined): boolean {
   return Boolean(value && /^0x[a-fA-F0-9]{40}$/.test(value))
+}
+
+function formatWeiEth(value: string | null | undefined): string {
+  if (!value) return '0'
+  try {
+    const wei = BigInt(value)
+    const base = 10n ** 18n
+    const whole = wei / base
+    const frac = (wei % base).toString().padStart(18, '0').replace(/0+$/, '').slice(0, 6)
+    return frac ? `${whole}.${frac}` : whole.toString()
+  } catch {
+    return value
+  }
 }
 
 // ─── Sessions view ──────────────────────────────────────────────────────────
@@ -973,6 +1024,205 @@ function NoSnapshot({ agentRole, pod, error }: {
   )
 }
 
+// ─── Wallet view ────────────────────────────────────────────────────────────
+
+function WalletView({
+  wallet,
+  loading,
+  error,
+  onRefresh,
+}: {
+  wallet: WalletInfo | null
+  loading: boolean
+  error: string | null
+  onRefresh: () => void
+}) {
+  return (
+    <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: '#080c14' }}>
+      <div style={{
+        height: 38,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        padding: '0 14px',
+        borderBottom: '1px solid rgba(255,255,255,0.04)',
+        background: '#0a0e1a',
+        flexShrink: 0,
+      }}>
+        <span style={{ fontSize: 10, color: '#94a3b8', fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: 1 }}>
+          Wallet
+        </span>
+        <span style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace' }}>
+          Base Sepolia
+        </span>
+        <button onClick={onRefresh} style={{
+          marginLeft: 'auto',
+          background: 'rgba(255,255,255,0.04)',
+          border: '1px solid rgba(255,255,255,0.08)',
+          color: '#94a3b8',
+          fontSize: 10,
+          fontFamily: 'monospace',
+          borderRadius: 4,
+          padding: '4px 8px',
+          cursor: 'pointer',
+        }}>
+          refresh
+        </button>
+      </div>
+
+      {error && (
+        <div style={{
+          margin: 12,
+          padding: '8px 10px',
+          border: '1px solid rgba(239,68,68,0.25)',
+          background: 'rgba(239,68,68,0.08)',
+          color: '#fca5a5',
+          borderRadius: 4,
+          fontSize: 11,
+          fontFamily: 'monospace',
+        }}>
+          {error}
+        </div>
+      )}
+
+      {loading ? (
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace' }}>loading wallet…</div>
+        </div>
+      ) : !wallet ? (
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ fontSize: 11, color: '#64748b', fontFamily: 'monospace' }}>wallet not provisioned</div>
+        </div>
+      ) : (
+        <div style={{ flex: 1, overflowY: 'auto', padding: 14, display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: '1.4fr 0.8fr 0.8fr',
+            gap: 10,
+          }}>
+            <WalletMetric label="address" value={wallet.address} title={wallet.address} mono />
+            <WalletMetric label="provider" value={wallet.provider} mono />
+            <WalletMetric label="signer" value={shortId(wallet.signerRef, 12, 6)} title={wallet.signerRef} mono />
+          </div>
+
+          <div>
+            <SectionLabel label="balances" />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {wallet.balances.map((balance) => {
+                const chain = wallet.chains.find(c => c.chainId === balance.chainId)
+                const amount = balance.formatted ?? 'unavailable'
+                return (
+                  <div key={balance.chainId} style={walletRowStyle}>
+                    <div style={{ minWidth: 130 }}>
+                      <div style={{ fontSize: 11, color: '#cbd5e1', fontFamily: 'monospace' }}>{chain?.name ?? `Chain ${balance.chainId}`}</div>
+                      <div style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace' }}>eip155:{balance.chainId}</div>
+                    </div>
+                    <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
+                      <div style={{ fontSize: 13, color: balance.error ? '#fca5a5' : '#86efac', fontFamily: 'monospace' }}>
+                        {amount} {balance.symbol}
+                      </div>
+                      <div style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace' }}>
+                        {balance.error ?? (balance.rpcConfigured ? `${shortId(balance.balanceWei, 12, 4)} wei` : 'RPC not configured')}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          <div>
+            <SectionLabel label="policy" />
+            <div style={walletRowStyle}>
+              <WalletPolicyField label="daily limit" value={`${formatWeiEth(wallet.policy?.dailyLimitWei)} ETH`} />
+              <WalletPolicyField label="approval above" value={`${formatWeiEth(wallet.policy?.requireApprovalAboveWei)} ETH`} />
+              <WalletPolicyField label="allowlist" value={wallet.policy?.allowedContracts.length ? `${wallet.policy.allowedContracts.length} contracts` : 'open'} />
+            </div>
+          </div>
+
+          <div>
+            <SectionLabel label="transactions" />
+            {wallet.transactions.length === 0 ? (
+              <div style={{ fontSize: 11, color: '#64748b', fontFamily: 'monospace', padding: '8px 2px' }}>no transactions yet</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {wallet.transactions.map((tx) => (
+                  <div key={tx._id} style={walletRowStyle}>
+                    <div style={{ minWidth: 86 }}>
+                      <div style={{ fontSize: 11, color: statusColor(tx.status), fontFamily: 'monospace' }}>{tx.status}</div>
+                      <div style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace' }}>{relativeTime(tx.createdAt)}</div>
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 11, color: '#cbd5e1', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {formatWeiEth(tx.valueWei)} ETH → {tx.toAgentId ?? shortId(tx.toAddress, 12, 6)}
+                      </div>
+                      <div style={{ fontSize: 10, color: tx.error ? '#fca5a5' : '#475569', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {tx.error ?? (tx.txHash ? shortId(tx.txHash, 16, 8) : tx._id)}
+                      </div>
+                    </div>
+                    <span style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace' }}>{tx.chainId}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+const walletRowStyle: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 12,
+  padding: '8px 10px',
+  background: 'rgba(255,255,255,0.03)',
+  border: '1px solid rgba(255,255,255,0.05)',
+  borderRadius: 6,
+}
+
+function SectionLabel({ label }: { label: string }) {
+  return (
+    <div style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>
+      {label}
+    </div>
+  )
+}
+
+function WalletMetric({ label, value, title, mono }: { label: string; value: string; title?: string; mono?: boolean }) {
+  return (
+    <div style={{
+      padding: '9px 10px',
+      background: 'rgba(255,255,255,0.03)',
+      border: '1px solid rgba(255,255,255,0.05)',
+      borderRadius: 6,
+      minWidth: 0,
+    }}>
+      <div style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace', marginBottom: 4 }}>{label}</div>
+      <div title={title} style={{
+        fontSize: 12,
+        color: '#cbd5e1',
+        fontFamily: mono ? 'monospace' : undefined,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+      }}>
+        {value}
+      </div>
+    </div>
+  )
+}
+
+function WalletPolicyField({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace' }}>{label}</div>
+      <div style={{ fontSize: 12, color: '#cbd5e1', fontFamily: 'monospace', marginTop: 2 }}>{value}</div>
+    </div>
+  )
+}
+
 // ─── Main modal ─────────────────────────────────────────────────────────────
 
 export function AgentDetailModal() {
@@ -985,7 +1235,7 @@ export function AgentDetailModal() {
   const searchParams = useSearchParams()
   const { getAccessToken, authenticated } = usePrivy()
 
-  const [tab, setTab] = useState<'sessions' | 'computer'>('sessions')
+  const [tab, setTab] = useState<'sessions' | 'computer' | 'wallet'>('sessions')
   const [sessions, setSessions]   = useState<AgentSession[]>([])
   const [snapshot, setSnapshot]   = useState<string | null>(null)
   const [sessLoading, setSessLoading] = useState(false)
@@ -997,6 +1247,9 @@ export function AgentDetailModal() {
   const [allMessages, setAllMessages] = useState<SessionEntry[]>([])
   const [sessionError, setSessionError] = useState<string | null>(null)
   const [workspaceError, setWorkspaceError] = useState<string | null>(null)
+  const [walletInfo, setWalletInfo] = useState<WalletInfo | null>(null)
+  const [walletLoading, setWalletLoading] = useState(false)
+  const [walletError, setWalletError] = useState<string | null>(null)
 
   const agent = selectedId ? agents[selectedId] : null
   const setActiveSession = useAgentStore((s) => s.setActiveSession)
@@ -1128,13 +1381,38 @@ export function AgentDetailModal() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLive, selectedId, fleetId])
 
+  const fetchWallet = useCallback(async () => {
+    if (!isLive || !selectedId || !fleetId) return
+    setWalletLoading(true)
+    setWalletError(null)
+    try {
+      const token = await resolveToken()
+      const res = await fetch(`${apiUrl}/fleets/${fleetId}/agents/${selectedId}/wallet`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (res.ok) {
+        setWalletInfo(await res.json() as WalletInfo)
+      } else {
+        const data = await res.json().catch(() => null)
+        setWalletError(errorText(data, `could not load wallet (${res.status})`))
+      }
+    } catch {
+      setWalletError('could not connect to wallet API')
+    } finally {
+      setWalletLoading(false)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLive, selectedId, fleetId])
+
   useEffect(() => {
     if (!isOpen || !selectedId) return
     setSessions([])
     setAllMessages([])
     setSessionError(null)
     setWorkspaceError(null)
+    setWalletError(null)
     setSnapshot(null)
+    setWalletInfo(null)
     setTab('sessions')
     setActiveSessionId(null)
     setSessionMessages([])
@@ -1156,12 +1434,22 @@ export function AgentDetailModal() {
     if (isOpen && tab === 'computer') void fetchWorkspace()
   }, [isOpen, tab, fetchWorkspace])
 
+  useEffect(() => {
+    if (isOpen && tab === 'wallet') void fetchWallet()
+  }, [isOpen, tab, fetchWallet])
+
   // Auto-refresh workspace every 10 s while the computer tab is active
   useEffect(() => {
     if (!isOpen || tab !== 'computer') return
     const id = setInterval(() => { void fetchWorkspace() }, 10_000)
     return () => clearInterval(id)
   }, [isOpen, tab, fetchWorkspace])
+
+  useEffect(() => {
+    if (!isOpen || tab !== 'wallet') return
+    const id = setInterval(() => { void fetchWallet() }, 15_000)
+    return () => clearInterval(id)
+  }, [isOpen, tab, fetchWallet])
 
   // Close on Escape
   useEffect(() => {
@@ -1267,6 +1555,9 @@ export function AgentDetailModal() {
           <TabButton active={tab === 'computer'} onClick={() => setTab('computer')}>
             🖥️ Computer
           </TabButton>
+          <TabButton active={tab === 'wallet'} onClick={() => setTab('wallet')}>
+            ◇ Wallet
+          </TabButton>
         </div>
 
         {/* Content */}
@@ -1289,7 +1580,7 @@ export function AgentDetailModal() {
               onNewSession={() => void createSession()}
               creating={creating}
             />
-          ) : (
+          ) : tab === 'computer' ? (
             <ComputerView
               agentRole={shortRole}
               pod={agent.pod}
@@ -1300,6 +1591,13 @@ export function AgentDetailModal() {
               fleetId={fleetId}
               agentId={selectedId ?? undefined}
               resolveToken={resolveToken}
+            />
+          ) : (
+            <WalletView
+              wallet={walletInfo}
+              loading={walletLoading}
+              error={walletError}
+              onRefresh={() => void fetchWallet()}
             />
           )}
         </div>
@@ -1322,8 +1620,8 @@ function AgentIdentityStrip({
   commonOsAgentId: string
   commons?: AgentCommonsIdentity
 }) {
-  const runtimeId = commons?.agentId ?? commons?.walletAddress ?? null
-  const validWallet = isWalletAddress(runtimeId)
+  const wallet = commons?.walletAddress ?? null
+  const validWallet = isWalletAddress(wallet)
 
   return (
     <div style={{
@@ -1337,11 +1635,12 @@ function AgentIdentityStrip({
       overflow: 'hidden',
     }}>
       <IdentityField label="commonos" value={commonOsAgentId} />
+      <IdentityField label="agent commons" value={commons?.agentId ?? null} />
       <IdentityField
-        label="agent commons"
-        value={runtimeId}
+        label="wallet"
+        value={wallet}
         color={validWallet ? '#86efac' : '#fca5a5'}
-        badge={validWallet ? 'wallet' : 'not resolved'}
+        badge={validWallet ? 'base sepolia' : 'not resolved'}
       />
       {commons?.registryAgentId && (
         <IdentityField label="registry" value={commons.registryAgentId} />

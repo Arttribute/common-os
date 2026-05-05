@@ -198,7 +198,7 @@ router.get("/:id/peers", async (c) => {
 		const list = await (await agents())
 			.find(
 				{ fleetId: c.req.param("id"), tenantId: c.get("tenantId") },
-				{ _id: 1, permissionTier: 1, config: 1, axl: 1 },
+				{ _id: 1, permissionTier: 1, config: 1, axl: 1, commons: 1, wallet: 1 },
 			)
 			.lean();
 
@@ -206,10 +206,12 @@ router.get("/:id/peers", async (c) => {
 			list.map((a) => ({
 				agentId: a._id,
 				role: a.config?.role ?? null,
-				permissionTier: a.permissionTier,
-				peerId: a.axl.peerId,
-				multiaddr: a.axl.multiaddr,
-			})),
+					permissionTier: a.permissionTier,
+					peerId: a.axl.peerId,
+					multiaddr: a.axl.multiaddr,
+					walletAddress: a.wallet?.address ?? a.commons?.walletAddress ?? null,
+					chainIds: a.wallet?.chainIds ?? [84532],
+				})),
 		);
 	} catch {
 		return c.json({ error: "database error" }, 503);

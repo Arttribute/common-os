@@ -476,8 +476,8 @@ function FleetCard({
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12, maxHeight: 280, overflowY: 'auto' }}>
               {agents.map((agent) => {
-                const agcId = agent.commons?.agentId ?? agent.commons?.walletAddress ?? null
-                const agcOk = hasWalletIdentity(agcId)
+                const walletAddress = agent.commons?.walletAddress ?? null
+                const agcOk = hasWalletIdentity(walletAddress)
                 return (
                   <div
                     key={agent._id}
@@ -488,8 +488,8 @@ function FleetCard({
                     <span style={badge(agent.permissionTier === 'manager' ? '#f59e0b' : '#6366f1')}>{agent.permissionTier}</span>
                     <span style={badge('#4b5563')}>{agent.config.integrationPath}</span>
                     {agent.config.integrationPath === 'native' && (
-                      <span style={badge(agcOk ? '#10b981' : '#ef4444')} title={agcId ?? 'Agent Commons wallet not resolved'}>
-                        agc {shortId(agcId)}
+                      <span style={badge(agcOk ? '#10b981' : '#ef4444')} title={walletAddress ?? 'Agent wallet not resolved'}>
+                        wallet {shortId(walletAddress)}
                       </span>
                     )}
                     <span style={{ marginLeft: 'auto', fontSize: 10, color: '#64748b' }}>{agent.status}</span>

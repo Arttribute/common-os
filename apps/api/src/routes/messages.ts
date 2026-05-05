@@ -126,7 +126,11 @@ const router = new Hono<Env>()
 
 // POST /fleets/:id/agents/:agentId/human-message — human sends a message to an agent
 router.post('/:id/agents/:agentId/human-message', async (c) => {
-  const body = await c.req.json<{ content: string; sessionId?: string; axlTargetAgentId?: string | null }>().catch(() => ({ content: '', sessionId: undefined }))
+  const body = await c.req.json<{ content: string; sessionId?: string; axlTargetAgentId?: string | null }>().catch(() => ({ content: '', sessionId: undefined })) as {
+    content: string
+    sessionId?: string
+    axlTargetAgentId?: string | null
+  }
   if (!body.content) return c.json({ error: 'content is required' }, 400)
 
   const agentId = c.req.param('agentId')

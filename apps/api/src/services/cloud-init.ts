@@ -22,6 +22,7 @@ export interface LaunchOptions {
 	dockerImage: string | null;
 	commonsApiKey: string;
 	commonsAgentId: string;
+	walletAddress?: string;
 	openclawGatewayUrl?: string;
 	workspaceDir?: string;
 		runnerUrl?: string;
@@ -506,6 +507,8 @@ export async function launchAgentPod(
 		{ name: "INTEGRATION_PATH",     value: opts.integrationPath },
 		{ name: "COMMONS_API_KEY",      value: opts.commonsApiKey },
 		{ name: "COMMONS_AGENT_ID",     value: opts.commonsAgentId },
+		{ name: "WALLET_ADDRESS",       value: opts.walletAddress ?? "" },
+		{ name: "AGENT_WALLET_CHAIN_ID", value: process.env.AGENT_WALLET_DEFAULT_CHAIN_ID ?? "84532" },
 		{ name: "AGC_INITIATOR",        value: process.env.AGC_INITIATOR ?? process.env.AGENTCOMMONS_INITIATOR ?? "" },
 		{ name: "OPENCLAW_GATEWAY_URL", value: opts.openclawGatewayUrl ?? "http://localhost:18789" },
 		{ name: "WORKSPACE_DIR",        value: opts.workspaceDir ?? "/mnt/shared" },
@@ -730,6 +733,8 @@ export async function launchAgentPodEks(opts: LaunchOptions): Promise<LaunchedSe
 		{ name: "INTEGRATION_PATH",     value: opts.integrationPath },
 		{ name: "COMMONS_API_KEY",      value: opts.commonsApiKey },
 		{ name: "COMMONS_AGENT_ID",     value: opts.commonsAgentId },
+		{ name: "WALLET_ADDRESS",       value: opts.walletAddress ?? "" },
+		{ name: "AGENT_WALLET_CHAIN_ID", value: process.env.AGENT_WALLET_DEFAULT_CHAIN_ID ?? "84532" },
 		{ name: "AGC_INITIATOR",        value: process.env.AGC_INITIATOR ?? process.env.AGENTCOMMONS_INITIATOR ?? "" },
 		{ name: "OPENCLAW_GATEWAY_URL", value: opts.openclawGatewayUrl ?? "http://localhost:18789" },
 		{ name: "WORKSPACE_DIR",        value: opts.workspaceDir ?? "/mnt/shared" },

@@ -35,7 +35,7 @@ steps:
       - --memory=512Mi
       - --no-cpu-throttling
       - --service-account=common-os-api@$PROJECT_ID.iam.gserviceaccount.com
-      - --update-env-vars=API_URL=https://common-os-api-prod-7it3eyacta-ew.a.run.app,AGENT_IMAGE_URL=ghcr.io/arttribute/common-os/agent:latest,GCP_PROJECT_ID=$PROJECT_ID,GCP_REGION=europe-west1,CLOUD_PROVIDER=gcp
+      - --update-env-vars=API_URL=https://common-os-api-prod-7it3eyacta-ew.a.run.app,AGENT_IMAGE_URL=europe-west1-docker.pkg.dev/$PROJECT_ID/common-os/agent:latest,GCP_PROJECT_ID=$PROJECT_ID,GCP_REGION=europe-west1,CLOUD_PROVIDER=gcp,PRIVY_APP_ID=cmomokxzr00510clcmgb57b3l,AGENT_WALLET_CHAIN_IDS=84532,AGENT_WALLET_DEFAULT_CHAIN_ID=84532,AGENT_WALLET_RPC_URL=https://sepolia.base.org
 
 timeout: 1800s
 

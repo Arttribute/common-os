@@ -11,6 +11,8 @@ cat > /etc/common-os/config.json << CONFIGEOF
   "tenantId":           "${TENANT_ID:-}",
   "commonsApiKey":      "${COMMONS_API_KEY:-}",
   "commonsAgentId":     "${COMMONS_AGENT_ID:-}",
+  "walletAddress":      "${WALLET_ADDRESS:-}",
+  "walletChainId":      ${AGENT_WALLET_CHAIN_ID:-84532},
   "openclawGatewayUrl": "${OPENCLAW_GATEWAY_URL:-http://localhost:18789}",
   "workspaceDir":       "${WORKSPACE_DIR:-/workspace}",
   "integrationPath":    "${INTEGRATION_PATH:-native}",

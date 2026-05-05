@@ -4,6 +4,7 @@ import { agents, tasks, humanMessages, agentSessions, worldStates } from '../db/
 import { dequeueTask, dequeueHumanMessage, enqueueHumanMessage, broadcastToFleet } from '../db/memory.js'
 import { registerWithAgentCommons } from '../services/provisioner.js'
 import { persistNormalizedCommonsIdentity } from '../services/agentCommonsIdentity.js'
+import { sendAgentTransaction } from '../services/agentWallet.js'
 import type { AgentDoc, Env, HumanMessageDoc } from '../types.js'
 
 const AGC_BASE_URL = (process.env.AGC_API_URL ?? 'https://api.agentcommons.io').replace(/\/$/, '')
@@ -158,13 +159,13 @@ router.get('/resolve/:name', async (c) => {
     if (looksLikePeerId) {
       agent = await col.findOne(
         { 'axl.peerId': name },
-        { _id: 1, axl: 1, config: 1, fleetId: 1 },
+        { _id: 1, axl: 1, config: 1, fleetId: 1, commons: 1, wallet: 1 },
       ).lean()
     } else {
       // agentId lookup (e.g. agt_abc123)
       agent = await col.findOne(
         { _id: name },
-        { _id: 1, axl: 1, config: 1, fleetId: 1 },
+        { _id: 1, axl: 1, config: 1, fleetId: 1, commons: 1, wallet: 1 },
       ).lean()
     }
 
@@ -176,10 +177,30 @@ router.get('/resolve/:name', async (c) => {
       peerId: agent.axl?.peerId ?? null,
       role: agent.config?.role ?? null,
       fleetId: agent.fleetId,
+      walletAddress: agent.wallet?.address ?? agent.commons?.walletAddress ?? null,
+      chainIds: agent.wallet?.chainIds ?? [84532],
       source: 'db',
     })
   } catch {
     return c.json({ error: 'database error' }, 503)
+  }
+})
+
+// POST /agents/:agentId/wallet/send-transaction
+router.post('/:agentId/wallet/send-transaction', async (c) => {
+  if (c.get('authType') !== 'agent') {
+    return c.json({ error: 'agent authorization required' }, 403)
+  }
+  const agentId = c.req.param('agentId')
+  if (c.get('agentId') !== agentId) return c.json({ error: 'forbidden' }, 403)
+
+  try {
+    const agent = await (await agents()).findOne({ _id: agentId }).lean()
+    if (!agent) return c.json({ error: 'agent not found' }, 404)
+    const tx = await sendAgentTransaction(agent, await c.req.json().catch(() => ({})), 'agent')
+    return c.json(tx, tx.status === 'failed' ? 422 : 200)
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : 'transaction failed' }, 400)
   }
 })
 
@@ -428,12 +449,17 @@ router.post('/:agentId/messages/axl/outbound', async (c) => {
     return c.json({ error: 'forbidden' }, 403)
   }
 
-  const body = await c.req.json<{
-    content: string
-    toAgentId?: string | null
-    axlPeerId?: string | null
-    axlMessageId?: string | null
-  }>().catch(() => ({ content: '' }))
+	  const body = await c.req.json<{
+	    content: string
+	    toAgentId?: string | null
+	    axlPeerId?: string | null
+	    axlMessageId?: string | null
+	  }>().catch(() => ({ content: '' })) as {
+	    content: string
+	    toAgentId?: string | null
+	    axlPeerId?: string | null
+	    axlMessageId?: string | null
+	  }
   if (!body.content) return c.json({ error: 'content is required' }, 400)
 
   try {
@@ -498,13 +524,19 @@ router.post('/:agentId/messages/axl/response', async (c) => {
     return c.json({ error: 'forbidden' }, 403)
   }
 
-  const body = await c.req.json<{
-    content: string
-    fromAgentId?: string | null
-    axlPeerId?: string | null
-    axlMessageId?: string | null
-    inReplyTo?: string | null
-  }>().catch(() => ({ content: '' }))
+	  const body = await c.req.json<{
+	    content: string
+	    fromAgentId?: string | null
+	    axlPeerId?: string | null
+	    axlMessageId?: string | null
+	    inReplyTo?: string | null
+	  }>().catch(() => ({ content: '' })) as {
+	    content: string
+	    fromAgentId?: string | null
+	    axlPeerId?: string | null
+	    axlMessageId?: string | null
+	    inReplyTo?: string | null
+	  }
   if (!body.content) return c.json({ error: 'content is required' }, 400)
 
   try {

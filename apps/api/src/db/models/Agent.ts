@@ -12,6 +12,19 @@ const AgentSchema = new Schema<AgentDoc>(
       walletAddress: { type: String, default: null },
       registryAgentId: { type: String, default: null },
     },
+    wallet: {
+      address: { type: String, default: null },
+      provider: { type: String, enum: ['privy', 'dev', null], default: null },
+      signerRef: { type: String, default: null },
+      chainIds: { type: [Number], default: [] },
+      policy: {
+        dailyLimitWei: { type: String, default: '100000000000000000' },
+        requireApprovalAboveWei: { type: String, default: '10000000000000000' },
+        allowedContracts: { type: [String], default: [] },
+      },
+      createdAt: { type: Date, default: null },
+      updatedAt: { type: Date, default: null },
+    },
     pod: {
       namespaceId: String,
       provider: String,
@@ -56,5 +69,6 @@ AgentSchema.index({ 'pod.namespaceId': 1 }, { sparse: true })
 AgentSchema.index({ 'axl.peerId': 1 }, { sparse: true })
 AgentSchema.index({ 'commons.agentId': 1 }, { sparse: true })
 AgentSchema.index({ 'commons.registryAgentId': 1 }, { sparse: true })
+AgentSchema.index({ 'wallet.address': 1 }, { sparse: true })
 
 export default mongoose.models.Agent || mongoose.model<AgentDoc>('Agent', AgentSchema)
