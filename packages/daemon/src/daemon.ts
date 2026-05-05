@@ -1077,9 +1077,17 @@ async function executeTask(
   if (config.integrationPath === "openclaw") return await runViaOpenClaw(description);
   if (config.integrationPath === "native") {
     const result = await runViaNative(description, agcSessionId, messages, routing);
+
+    // Safety net: if AXL routing was requested but the agent didn't call the tool, send via fallback
+    if ((routing?.axlTargetAgentId || routing?.axlTargetPeerId) && !result.axlToolCalled) {
+      await maybeSendAxlFallback(description, messages, routing).catch((err) => {
+        console.warn("[daemon] AXL safety-net send failed:", err instanceof Error ? err.message : err);
+      });
+    }
+
     if (result.response.trim()) return result;
 
-    const axlFallback = await maybeSendAxlFallback(description, messages, routing);
+    const axlFallback = result.axlToolCalled ? null : await maybeSendAxlFallback(description, messages, routing);
     if (axlFallback) return { response: axlFallback, ...(result.agcSessionId ? { agcSessionId: result.agcSessionId } : {}) };
 
     const markdownFallback = await maybeWriteMarkdownFallback(description, messages);
@@ -1220,11 +1228,11 @@ function buildRunPrompt(description: string, messages?: AgcMessage[], routing?: 
 function buildAxlRoutingPromptContext(routing?: AxlRoutingContext): string {
   if (!routing?.axlTargetAgentId && !routing?.axlTargetPeerId) return "";
   return [
-    "### Mentioned CommonOS Agent",
-    "The latest user message mentions another agent. Treat this as routing context only: understand the user's request, use the conversation/workspace context as needed, compose a complete message in your own words, then call `cli_send_axl_message` if a fleet message is appropriate.",
-    "Do not forward the user's raw routing phrase or a fragment like \"about the thing we are building\".",
-    `Resolved target agentId: ${routing.axlTargetAgentId ?? "(unknown)"}`,
-    `Resolved target AXL peerId: ${routing.axlTargetPeerId ?? "(unknown)"}`,
+    "### AXL Routing Required",
+    "The user's message targets another agent in this fleet. You MUST call `cli_send_axl_message` to deliver the message — do NOT just respond in text. The message will not reach the target agent unless you call the tool.",
+    "Compose the message content in your own words based on the user's request, then call `cli_send_axl_message` immediately.",
+    `Target agentId: ${routing.axlTargetAgentId ?? "(unknown)"}`,
+    `Target AXL peerId: ${routing.axlTargetPeerId ?? "(unknown)"}`,
   ].join("\n");
 }
 
@@ -1509,7 +1517,7 @@ async function runViaNative(
   agcSessionId?: string,
   messages?: AgcMessage[],
   routing?: AxlRoutingContext,
-): Promise<{ response: string; agcSessionId?: string }> {
+): Promise<{ response: string; agcSessionId?: string; axlToolCalled: boolean }> {
   const sessionIdToUse = agcSessionId ?? agentSessionId;
   const agentId = config.commonsAgentId || config.agentId;
   const prompt = buildRunPrompt(description, messages, routing);
@@ -1545,6 +1553,7 @@ async function runViaNative(
   let finalText: string | null = null;
   let observedSessionId: string | null = sessionIdToUse ?? null;
   let toolRequestCount = 0;
+  let axlToolCalled = false;
 
   async function handleEvent(raw: string): Promise<void> {
     const line = raw.trim();
@@ -1571,6 +1580,7 @@ async function runViaNative(
       toolRequestCount += 1;
       const requestId = typeof event.requestId === "string" ? event.requestId : "";
       const requestedTool = String(event.tool ?? "");
+      if (toolName(requestedTool) === "send_axl_message") axlToolCalled = true;
       const args = (event.args && typeof event.args === "object" ? event.args : {}) as Record<string, unknown>;
       let result: string;
       try {
@@ -1616,9 +1626,9 @@ async function runViaNative(
 
   const response = cleanAgcOutput(finalText ?? output);
   console.log(
-    `[daemon] agc stream done  runtime=${DAEMON_RUNTIME}  length=${response.length}  tools=${toolRequestCount}  session=${observedSessionId?.slice(0, 12) ?? "none"}`,
+    `[daemon] agc stream done  runtime=${DAEMON_RUNTIME}  length=${response.length}  tools=${toolRequestCount}  axl=${axlToolCalled}  session=${observedSessionId?.slice(0, 12) ?? "none"}`,
   );
-  return { response, ...(observedSessionId ? { agcSessionId: observedSessionId } : {}) };
+  return { response, axlToolCalled, ...(observedSessionId ? { agcSessionId: observedSessionId } : {}) };
 }
 
 async function runViaOpenClaw(description: string): Promise<string> {
