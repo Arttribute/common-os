@@ -288,6 +288,10 @@ export function useWorldConnection(fleetId?: string, getToken?: () => Promise<st
             const response = data['response'] as string
             updateStatus(agentId, 'idle')
             scheduleSpeechBubble(agentId, response)
+          } else if (data['type'] === 'axl_response') {
+            // A remote AXL response arrived for this agent's chat. Do not show it
+            // as this local agent speaking in the world.
+            updateStatus(data['agentId'] as string, 'idle')
           }
         })
       } catch {

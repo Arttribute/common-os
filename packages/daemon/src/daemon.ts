@@ -29,7 +29,7 @@ const WORKSPACE_DIR  = process.env.COMMONOS_WORKSPACE ?? config.workspaceDir;
 const AXL_API_URL    = process.env.AXL_API_URL ?? "http://localhost:9002";
 const AXL_LISTEN_PORT = process.env.AXL_LISTEN_PORT ?? "9001";
 const ETH_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
-const DAEMON_RUNTIME = "common-os-daemon/agc-direct-stream-v7-empty-output-fallback";
+const DAEMON_RUNTIME = "common-os-daemon/agc-direct-stream-v8-axl-response-routing";
 const AGENT_IMAGE    = process.env.COMMONOS_AGENT_IMAGE ?? "";
 const COMMIT_SHA     = process.env.COMMONOS_COMMIT_SHA ?? "";
 
@@ -1093,6 +1093,9 @@ async function maybeSendAxlFallback(
 function composeAxlFallbackMessage(description: string, messages: AgcMessage[] | undefined, targetAgentId: string): string {
   const lastAssistant = [...(messages ?? [])].reverse().find((msg) => msg.role === "assistant" && msg.content.trim());
   const sender = config.role || config.agentId;
+  if (/\b(?:say\s+)?hi\b|\bhello\b|\bhey\b/i.test(description)) {
+    return `Hi, ${sender} says hi.`;
+  }
   if (lastAssistant?.content) {
     return [
       `Hi ${targetAgentId}, ${sender} asked me to share this with you.`,

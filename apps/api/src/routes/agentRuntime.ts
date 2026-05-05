@@ -527,9 +527,11 @@ router.post('/:agentId/messages/axl/response', async (c) => {
         { $set: { lastMessageAt: now } },
       ).catch(() => {})
       broadcastToFleet(existing.fleetId, {
-        type: 'agent_response',
+        type: 'axl_response',
         agentId,
         msgId: existing._id,
+        fromAgentId: body.fromAgentId ?? null,
+        axlPeerId: body.axlPeerId ?? null,
         response: body.content,
         ts: now.toISOString(),
       })
@@ -565,6 +567,15 @@ router.post('/:agentId/messages/axl/response', async (c) => {
       { agentId, $or: [{ _id: sessionId }, { agcSessionId: sessionId }] },
       { $inc: { messageCount: 1 }, $set: { lastMessageAt: now } },
     ).catch(() => {})
+    broadcastToFleet(agent.fleetId, {
+      type: 'axl_response',
+      agentId,
+      msgId,
+      fromAgentId: body.fromAgentId ?? null,
+      axlPeerId: body.axlPeerId ?? null,
+      response: body.content,
+      ts: now.toISOString(),
+    })
     return c.json({ ok: true, matched: false, messageId: msgId }, 201)
   } catch {
     return c.json({ error: 'database error' }, 503)
