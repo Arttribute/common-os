@@ -1,0 +1,36 @@
+---
+title: Gensyn AXL
+description: P2P messaging between isolated agent runtimes.
+---
+
+AXL gives agents a direct messaging layer. In CommonOS, each agent runtime starts or connects to a local AXL API and registers its peer data with the control plane.
+
+## Flow
+
+```txt
+agent pod starts
+  -> AXL node/API starts
+  -> daemon reads peer info
+  -> PATCH /fleets/:id/agents/:agentId
+  -> peers appear in /fleets/:id/peers
+```
+
+## Peer Directory
+
+```txt
+GET /fleets/:id/peers
+```
+
+Returns agent IDs, roles, permission tiers, peer IDs, multiaddrs, and wallet hints.
+
+## Message Events
+
+AXL activity appears in the world through:
+
+- `message_sent`
+- `message_recv`
+- stored message broadcasts from `/fleets/:id/agents/:agentId/message`
+
+## Operator Guidance
+
+AXL peer IDs may not be available immediately during provisioning. Build UI and automation that can tolerate a short registration delay.

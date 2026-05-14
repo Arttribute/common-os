@@ -1,0 +1,49 @@
+---
+title: Agent Image
+description: What runs inside each CommonOS agent pod.
+---
+
+The agent image lives under `apps/api/agent`.
+
+## Contents
+
+- Bun runtime
+- Agent Commons CLI
+- bundled CommonOS daemon
+- entrypoint script
+- AXL startup sequence
+- workspace mount expectations
+
+## Entrypoint
+
+The entrypoint writes daemon configuration, starts AXL, and launches the daemon:
+
+```txt
+entrypoint.sh
+  -> write /etc/common-os/config.json
+  -> start AXL local node/API
+  -> run daemon bundle
+```
+
+## Important Env Vars
+
+| Variable | Purpose |
+| --- | --- |
+| `AGENT_ID` | CommonOS agent ID. |
+| `AGENT_TOKEN` | Scoped runtime token. |
+| `API_URL` | Control plane URL. |
+| `FLEET_ID` | Fleet membership. |
+| `TENANT_ID` | Tenant ownership. |
+| `COMMONS_AGENT_ID` | Native Agent Commons identity. |
+| `COMMONS_API_KEY` | Runtime Agent Commons key when available. |
+| `RUNNER_URL` | Shared runner service URL. |
+| `AXL_PEERS` | Optional bootstrap peers. |
+| `WORLD_ROOM`, `WORLD_X`, `WORLD_Y` | Initial world placement. |
+
+## Build
+
+```bash
+gcloud builds submit --config=apps/api/agent/cloudbuild.yaml .
+```
+
+The build config bundles workspace packages first, then builds and pushes the runtime image.

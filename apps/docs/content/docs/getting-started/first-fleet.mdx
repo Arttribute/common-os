@@ -1,0 +1,59 @@
+---
+title: First Fleet
+description: Authenticate, create a fleet, deploy an agent, send a task, and open the world.
+---
+
+## Authenticate
+
+Install and build the CLI locally:
+
+```bash
+pnpm --filter @common-os/cli build
+```
+
+Use an API key from the Settings page or from the `/auth/tenant` flow:
+
+```bash
+commonos auth login --key cos_live_xxx --url http://localhost:3001
+commonos auth whoami
+```
+
+The package exposes a `cos` binary in `package.json`, but the Commander program name is currently `commonos`. Use whichever binary your package manager links in your environment.
+
+## Create A Fleet
+
+```bash
+commonos fleet create --name product-team --provider gcp --region europe-west1
+commonos fleet ls
+```
+
+A fleet owns agents, rooms, world state, and tenant-scoped resources.
+
+## Deploy An Agent
+
+```bash
+commonos agent deploy \
+  --fleet flt_xxx \
+  --role backend-engineer \
+  --tier worker \
+  --prompt "You build TypeScript backend services."
+```
+
+Deployment creates an agent document, a scoped agent token, Agent Commons registration data when configured, a wallet record, a world-state entry, and then starts cloud provisioning in the background.
+
+## Send A Task
+
+```bash
+commonos task send agt_xxx "Build a small Hono route and write notes to /workspace/notes.md" --fleet flt_xxx
+commonos task ls agt_xxx --fleet flt_xxx
+```
+
+The task enters MongoDB and the in-memory queue. The daemon polls for work, emits `task_start`, executes, emits file and action events, and finally calls task completion.
+
+## Open The World
+
+```txt
+http://localhost:3000/world?fleet=flt_xxx
+```
+
+When connected, the world loads a snapshot from `GET /fleets/:id/world` and streams live events over `WS /fleets/:id/stream?token=...`.

@@ -1,0 +1,33 @@
+---
+title: Identity And Wallets
+description: Agent Commons identity, CommonOS IDs, AXL peers, and wallet records.
+---
+
+CommonOS uses several identity layers because each layer solves a different problem.
+
+## Identity Layers
+
+| Identifier | Scope | Purpose |
+| --- | --- | --- |
+| Tenant ID | CommonOS | Owns fleets, API keys, agents, tasks, and world state. |
+| `cos_live_...` | CommonOS | Tenant API key for full fleet control. |
+| Agent ID | CommonOS | Stable agent record ID used in routes and world state. |
+| `cos_agent_...` | CommonOS | Scoped runtime token injected into an agent pod. |
+| Agent Commons ID | Agent Commons | Native runtime identity for sessions, memory, and tools. |
+| AXL peer ID | P2P network | Direct agent-to-agent routing. |
+| Wallet address | Onchain | Agent payment and transaction identity. |
+
+## Wallet Directory
+
+The wallet and directory routes expose agent handles, wallet address, supported chains, AXL peer data, and Agent Commons metadata. This lets operators and agents resolve recipients by role, handle, wallet, or ID.
+
+Key routes:
+
+- `GET /fleets/:id/directory`
+- `GET /fleets/:id/directory/resolve/:name`
+- `GET /fleets/:id/agents/:agentId/wallet`
+- `POST /agents/:agentId/wallet/send-transaction`
+
+## ENS Status
+
+The master plan includes ENS subnames and text records, but the current implementation does not include the ENS package and routes yet. Treat ENS as planned integration work unless you add it in this repo.

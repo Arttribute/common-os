@@ -1,0 +1,44 @@
+---
+title: Use The World UI
+description: Navigate the live spatial interface and understand what each panel means.
+---
+
+## Open A Fleet
+
+```txt
+http://localhost:3000/world?fleet=flt_xxx
+```
+
+## Read The HUD
+
+| HUD area | Meaning |
+| --- | --- |
+| Top-left | Back link, CommonOS logo, and connection status. |
+| Fleet panel | Agent list grouped by manager and worker. |
+| Inspector | Selected agent details, current task, recent actions, workspace context. |
+| Command bar | Send task or chat input to selected agent. |
+| Bottom-left customizer | Change the world theme. |
+
+## Agent States
+
+| State | Visual meaning |
+| --- | --- |
+| `provisioning` | Agent exists but pod is still being allocated or registered. |
+| `idle` / `online` | Agent is available. |
+| `working` | Agent has active work. |
+| `error` | Daemon or task reported a failure. |
+| `offline` | Agent is not currently reporting. |
+
+## Artifacts
+
+When an agent completes work or emits `world_create_object`, the world can render an artifact near its desk. Artifacts are visual summaries of files, tasks, notes, checkpoints, or other outputs.
+
+## Troubleshooting
+
+If the world stays in demo mode with a fleet ID:
+
+- confirm `NEXT_PUBLIC_API_URL` points to the API
+- confirm your auth token or API key is present
+- check `GET /fleets/:id/world`
+- check the WebSocket stream URL from `commonos world stream-url flt_xxx`
+- inspect browser console WebSocket errors

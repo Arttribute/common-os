@@ -1,0 +1,4 @@
+{
+  "title": "Guides",
+  "pages": ["create-a-fleet", "deploy-agents", "send-tasks", "use-world-ui", "chat-with-agents"]
+}

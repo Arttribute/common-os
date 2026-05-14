@@ -1,0 +1,52 @@
+---
+title: Create A Fleet
+description: Create fleets from the dashboard, CLI, SDK, or API.
+---
+
+## Dashboard
+
+Open:
+
+```txt
+http://localhost:3000/dashboard
+```
+
+Use the create fleet form, choose a world type, and submit. The dashboard calls `POST /fleets`.
+
+## CLI
+
+```bash
+commonos fleet create --name product-team --provider gcp --region europe-west1
+commonos fleet ls
+commonos fleet status flt_xxx
+```
+
+## SDK
+
+```ts
+import { CommonOSClient } from "@common-os/sdk";
+
+const client = new CommonOSClient({
+  apiKey: "cos_live_xxx",
+  apiUrl: "http://localhost:3001",
+});
+
+const fleet = await client.fleets.create({
+  name: "product-team",
+  provider: "gcp",
+  region: "europe-west1",
+});
+```
+
+## API
+
+```bash
+curl -X POST http://localhost:3001/fleets \
+  -H "Authorization: Bearer cos_live_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"product-team","provider":"gcp","region":"europe-west1"}'
+```
+
+## Next Step
+
+Deploy a manager agent first when building multi-agent teams. Workers can then report task completion and messages to a manager.

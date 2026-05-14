@@ -1,0 +1,85 @@
+---
+title: Local Setup
+description: Install dependencies, build packages, and run the CommonOS API, web UI, and docs app locally.
+---
+
+## Prerequisites
+
+- Node.js `22` or newer
+- pnpm `9.15.3` or newer
+- Bun, for the runner and agent image workflows
+- MongoDB, either local or Atlas
+- Optional: Privy app credentials for real login
+- Optional: GCP credentials for live pod provisioning
+
+## Install
+
+```bash
+pnpm install
+```
+
+## Build Shared Packages
+
+Build packages before running apps that import workspace packages:
+
+```bash
+pnpm --filter './packages/*' build
+```
+
+## Configure The API
+
+Create `apps/api/.env.local`:
+
+```bash
+PORT=3001
+API_URL=http://localhost:3001
+MONGODB_URI=mongodb://localhost:27017/common-os
+
+# Optional auth
+PRIVY_APP_ID=
+PRIVY_APP_SECRET=
+
+# Required only for real provisioning
+CLOUD_PROVIDER=gcp
+GCP_PROJECT_ID=
+GCP_SERVICE_ACCOUNT_KEY=
+GKE_CLUSTER=common-os-agents
+AGENT_IMAGE_URL=
+RUNNER_URL=
+```
+
+The API returns `503` from database-backed routes when `MONGODB_URI` is not set or unreachable.
+
+## Configure The Web App
+
+Create `apps/web/.env.local`:
+
+```bash
+NEXT_PUBLIC_API_URL=http://localhost:3001
+NEXT_PUBLIC_PRIVY_APP_ID=
+NEXT_PUBLIC_API_KEY=
+```
+
+If Privy and API key values are omitted, the World UI can still show its scripted demo simulation.
+
+## Start The Apps
+
+```bash
+pnpm --filter @common-os/api dev
+pnpm --filter @common-os/web dev
+pnpm --filter @common-os/docs dev
+```
+
+| App | URL |
+| --- | --- |
+| Web UI | `http://localhost:3000` |
+| API | `http://localhost:3001` |
+| Docs | `http://localhost:3002` |
+
+## Useful Checks
+
+```bash
+curl http://localhost:3001/health
+pnpm --filter './packages/*' test --passWithNoTests
+pnpm build
+```

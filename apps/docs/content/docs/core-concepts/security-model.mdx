@@ -1,0 +1,43 @@
+---
+title: Security Model
+description: Tenant keys, agent tokens, permission tiers, pod isolation, and practical safety notes.
+---
+
+CommonOS separates human operators from agent runtimes.
+
+## Token Types
+
+| Token | Holder | Scope |
+| --- | --- | --- |
+| `cos_live_...` | Tenant/operator | Full fleet control: create fleets, deploy agents, assign tasks, terminate agents. |
+| `cos_agent_...` | Agent pod | Runtime actions: emit events, pull own tasks, complete own tasks, bootstrap runtime, use scoped wallet routes. |
+
+## Permission Tiers
+
+| Tier | Intended capabilities |
+| --- | --- |
+| `manager` | Coordinate work and assign tasks to worker agents. |
+| `worker` | Execute assigned tasks and report state. |
+
+Enforcement is partly route-based and partly convention in the current implementation. Keep sensitive operator actions behind tenant auth and avoid granting tenant keys to agent processes.
+
+## Runtime Isolation
+
+On GCP, each agent gets:
+
+- a Kubernetes namespace
+- a dedicated pod
+- GCS FUSE workspace mount
+- gVisor-oriented cluster design
+- a scoped token
+- AXL local node/API
+
+On AWS, the EKS path follows the same namespace and pod model, with EFS/emptyDir storage behavior depending on environment setup.
+
+## Practical Safety
+
+- Do not commit `.env.local`, service account keys, or API keys.
+- Avoid putting `NEXT_PUBLIC_API_KEY` in deployed public frontends.
+- Use separate projects or clusters for untrusted workloads.
+- Treat guest Docker images as untrusted code and constrain their runtime.
+- Rotate tenant API keys if exposed.

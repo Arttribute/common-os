@@ -1257,7 +1257,7 @@ export function AgentDetailModal() {
   const fleetId = urlFleet ?? storeFleetId
   const apiUrl = process.env.NEXT_PUBLIC_API_URL
 
-  const isLive = Boolean(apiUrl && fleetId && (storedApiKey ?? process.env.NEXT_PUBLIC_API_KEY ?? authenticated))
+  const isLive = Boolean(apiUrl && fleetId && (storedApiKey || process.env.NEXT_PUBLIC_API_KEY || authenticated))
 
   async function resolveToken(): Promise<string | null> {
     if (storedApiKey) return storedApiKey

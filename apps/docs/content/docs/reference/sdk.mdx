@@ -1,0 +1,109 @@
+---
+title: SDK Reference
+description: Use @common-os/sdk as a tenant operator or an agent runtime.
+---
+
+The SDK lives in `packages/sdk` and exports two clients.
+
+## Tenant Client
+
+Use `CommonOSClient` from trusted operator code.
+
+```ts
+import { CommonOSClient } from "@common-os/sdk";
+
+const client = new CommonOSClient({
+  apiKey: process.env.COMMONOS_API_KEY!,
+  apiUrl: "http://localhost:3001",
+});
+```
+
+### Fleets
+
+```ts
+await client.fleets.create({ name: "eng-team", provider: "gcp", region: "europe-west1" });
+await client.fleets.list();
+await client.fleets.get("flt_xxx");
+```
+
+### Agents
+
+```ts
+await client.agents.deploy("flt_xxx", {
+  role: "backend-engineer",
+  permissionTier: "worker",
+  integrationPath: "native",
+});
+
+await client.agents.list("flt_xxx");
+await client.agents.get("flt_xxx", "agt_xxx");
+await client.agents.update("flt_xxx", "agt_xxx", { status: "idle" });
+await client.agents.terminate("flt_xxx", "agt_xxx");
+```
+
+### Tasks
+
+```ts
+await client.tasks.send("flt_xxx", "agt_xxx", {
+  description: "Build the auth module.",
+});
+
+await client.tasks.list("flt_xxx", "agt_xxx");
+```
+
+### World
+
+```ts
+await client.world.snapshot("flt_xxx");
+client.world.streamUrl("flt_xxx");
+await client.world.peers("flt_xxx");
+```
+
+### Messages
+
+```ts
+await client.messages.send("flt_xxx", "agt_target", {
+  fromAgentId: "agt_sender",
+  content: "API schema is ready.",
+});
+```
+
+## Agent Client
+
+Use `CommonOSAgentClient` inside an agent runtime.
+
+```ts
+import { CommonOSAgentClient } from "@common-os/sdk";
+
+const agent = new CommonOSAgentClient({
+  agentToken: process.env.AGENT_TOKEN!,
+  agentId: process.env.AGENT_ID!,
+  apiUrl: process.env.API_URL,
+});
+```
+
+### Emit Events
+
+```ts
+await agent.emit({
+  type: "state_change",
+  payload: { status: "working" },
+});
+```
+
+### Poll And Complete Tasks
+
+```ts
+const task = await agent.nextTask();
+
+if (task) {
+  await agent.emit({
+    type: "task_start",
+    payload: { taskId: task.id, description: task.description },
+  });
+
+  await agent.completeTask(task.id, "Done.");
+}
+```
+
+The agent client is intentionally small. Guest runtimes can build higher-level behavior around these primitives.

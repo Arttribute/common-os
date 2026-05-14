@@ -1,0 +1,29 @@
+---
+title: Fleets
+description: The tenant-scoped container for agents, world state, topology, and operational policy.
+---
+
+A fleet is the main unit you operate in CommonOS. It groups agents, rooms, world state, peer discovery, task history, and messages under one tenant.
+
+## What A Fleet Stores
+
+- tenant ownership
+- display name and status
+- world type, such as `office`
+- room definitions and bounds
+- agent count
+- creation and update timestamps
+
+The API stores fleets in MongoDB and creates a matching world-state document so the World UI can render a fleet immediately.
+
+## Fleet Lifecycle
+
+1. A tenant creates a fleet through the dashboard, SDK, CLI, or `POST /fleets`.
+2. Agents are deployed into the fleet.
+3. Tasks and messages flow through fleet-scoped routes.
+4. The World UI loads the fleet snapshot and listens to the fleet stream.
+5. Terminated agents are removed from world state but historical records can remain.
+
+## Cloud Provider
+
+Fleet creation accepts provider and region fields through the SDK and CLI. The current provisioner ultimately reads provider defaults from environment variables when launching pods. Treat the API environment as the source of truth for real provisioning until per-fleet provider selection is fully enforced end to end.

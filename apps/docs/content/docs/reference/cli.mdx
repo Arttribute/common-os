@@ -1,0 +1,68 @@
+---
+title: CLI Reference
+description: Commands for authentication, fleets, agents, tasks, and world snapshots.
+---
+
+The CLI package is `@common-os/cli`. It declares the `cos` binary and sets the Commander program name to `commonos`.
+
+## Auth
+
+```bash
+commonos auth login --key cos_live_xxx --url http://localhost:3001
+commonos auth whoami
+commonos auth logout
+```
+
+Credentials are stored in:
+
+```txt
+~/.commonos/config.json
+```
+
+Environment variables override stored config:
+
+```bash
+COMMONOS_API_KEY=cos_live_xxx
+COMMONOS_API_URL=http://localhost:3001
+```
+
+## Fleets
+
+```bash
+commonos fleet create --name product-team --provider gcp --region europe-west1
+commonos fleet ls
+commonos fleet status flt_xxx
+```
+
+## Agents
+
+```bash
+commonos agent deploy --fleet flt_xxx --role backend-engineer
+commonos agent deploy --fleet flt_xxx --role manager --tier manager
+commonos agent deploy --fleet flt_xxx --role researcher --prompt "You research markets."
+commonos agent deploy --fleet flt_xxx --role guest --image ghcr.io/acme/agent:latest
+
+commonos agent ls --fleet flt_xxx
+commonos agent logs agt_xxx --fleet flt_xxx
+commonos agent terminate agt_xxx --fleet flt_xxx
+```
+
+## Tasks
+
+```bash
+commonos task send agt_xxx "Analyze the market" --fleet flt_xxx
+commonos task ls agt_xxx --fleet flt_xxx
+```
+
+## World
+
+```bash
+commonos world snapshot flt_xxx
+commonos world stream-url flt_xxx
+```
+
+## Notes
+
+- `agent logs` currently prints task history through the task list route.
+- CLI output is JSON for most commands.
+- The CLI exits if it cannot find an API key in env or config.

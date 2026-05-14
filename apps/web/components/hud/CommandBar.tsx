@@ -45,7 +45,7 @@ export function CommandBar() {
   const urlFleet = searchParams.get('fleet')
   const activeFleetId = urlFleet ?? storeFleetId
   // Live if we have an API URL + fleet + any auth (stored key, env key, or Privy session)
-  const isLive = Boolean(apiUrl && activeFleetId && (storedApiKey ?? process.env.NEXT_PUBLIC_API_KEY ?? authenticated))
+  const isLive = Boolean(apiUrl && activeFleetId && (storedApiKey || process.env.NEXT_PUBLIC_API_KEY || authenticated))
 
   async function resolveToken(): Promise<string | null> {
     if (storedApiKey) return storedApiKey

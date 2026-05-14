@@ -1,0 +1,114 @@
+@import "tailwindcss";
+@import "fumadocs-ui/css/neutral.css";
+@import "fumadocs-ui/css/preset.css";
+
+:root {
+  --background: var(--cos-bg);
+  --foreground: var(--cos-fg);
+  --card: var(--cos-card);
+  --card-foreground: 15 23 42;
+  --popover: 255 255 255;
+  --popover-foreground: 15 23 42;
+  --primary: var(--cos-amber);
+  --primary-foreground: 255 251 235;
+  --secondary: var(--cos-cyan);
+  --secondary-foreground: 236 254 255;
+  --muted: 241 245 249;
+  --muted-foreground: var(--cos-muted);
+  --accent: 254 243 199;
+  --accent-foreground: 120 53 15;
+  --border: var(--cos-border);
+  --input: var(--cos-border);
+  --ring: var(--cos-amber);
+}
+
+.dark {
+  --cos-bg: 6 11 20;
+  --cos-fg: 226 232 240;
+  --cos-card: 10 17 30;
+  --cos-muted: 148 163 184;
+  --cos-border: 51 65 85;
+  --cos-amber: 245 158 11;
+  --cos-cyan: 34 211 238;
+  --background: var(--cos-bg);
+  --foreground: var(--cos-fg);
+  --card: var(--cos-card);
+  --card-foreground: 226 232 240;
+  --popover: 10 17 30;
+  --popover-foreground: 226 232 240;
+  --primary: var(--cos-amber);
+  --primary-foreground: 24 24 27;
+  --secondary: var(--cos-cyan);
+  --secondary-foreground: 8 47 73;
+  --muted: 15 23 42;
+  --muted-foreground: var(--cos-muted);
+  --accent: 30 41 59;
+  --accent-foreground: 254 243 199;
+  --border: var(--cos-border);
+  --input: var(--cos-border);
+  --ring: var(--cos-amber);
+}
+
+html {
+  background: rgb(var(--background));
+  color: rgb(var(--foreground));
+  font-family: var(--font-sans), system-ui, sans-serif;
+  letter-spacing: 0;
+}
+
+body {
+  background:
+    linear-gradient(180deg, rgba(245, 158, 11, 0.08), transparent 280px),
+    rgb(var(--background));
+  color: rgb(var(--foreground));
+  font-size: 16px;
+  line-height: 1.75;
+  -webkit-font-smoothing: antialiased;
+}
+
+.dark body {
+  background:
+    linear-gradient(180deg, rgba(245, 158, 11, 0.08), transparent 320px),
+    radial-gradient(circle at 85% 4%, rgba(34, 211, 238, 0.08), transparent 260px),
+    rgb(var(--background));
+}
+
+.cos-logo {
+  font-family: var(--font-mono), monospace;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.cos-logo span {
+  color: rgb(var(--primary));
+}
+
+:is(article, [data-docs-body]) {
+  font-size: 1rem;
+  line-height: 1.85;
+}
+
+:is(article, [data-docs-body]) p,
+:is(article, [data-docs-body]) li {
+  color: rgb(var(--foreground));
+}
+
+:is(article, [data-docs-body]) h1,
+:is(article, [data-docs-body]) h2,
+:is(article, [data-docs-body]) h3 {
+  letter-spacing: 0;
+}
+
+code,
+pre,
+kbd {
+  font-family: var(--font-mono), ui-monospace, monospace;
+}
+
+pre {
+  border: 1px solid rgb(var(--border));
+}
+
+a {
+  text-underline-offset: 3px;
+}

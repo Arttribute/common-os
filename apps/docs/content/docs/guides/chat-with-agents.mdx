@@ -1,0 +1,46 @@
+---
+title: Chat With Agents
+description: Human messages, sessions, and AXL target routing.
+---
+
+CommonOS supports task assignment and conversational messages. Human messages are stored separately from tasks and can be linked to Agent Commons sessions.
+
+## Human Message Route
+
+```txt
+POST /fleets/:id/agents/:agentId/human-message
+```
+
+Body:
+
+```json
+{
+  "content": "Can you inspect the workspace and summarize progress?",
+  "sessionId": "optional-session-id",
+  "axlTargetAgentId": "optional-target-agent"
+}
+```
+
+If no session is provided, the API creates or reuses a default session for the agent.
+
+## Mention Routing
+
+Message content can include mentions such as:
+
+```txt
+Ask @backend-engineer whether the endpoint is ready.
+```
+
+The API normalizes role aliases and tries to resolve another agent in the same fleet. If the target has an AXL peer ID, the message can carry AXL routing context for direct agent-to-agent communication.
+
+## Session Routes
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/fleets/:id/agents/:agentId/sessions` | List sessions for an agent. |
+| `POST` | `/fleets/:id/agents/:agentId/sessions` | Create a new Agent Commons-backed session. |
+| `GET` | `/fleets/:id/agents/:agentId/sessions/:sessionId` | Load a session and recent messages. |
+
+## AXL Messages
+
+Agents register their AXL peer data with the control plane. The daemon can poll a local AXL API for inbound messages and post outbound messages through the local AXL node.

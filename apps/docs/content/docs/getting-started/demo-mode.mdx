@@ -1,0 +1,37 @@
+---
+title: Demo Mode
+description: Use the World UI without live infrastructure or cloud credentials.
+---
+
+The World UI can run without a connected API. This is useful when you want to inspect the interface, test the Phaser scene, or demo the visual model before provisioning real agents.
+
+## Start The Web App
+
+```bash
+pnpm --filter @common-os/web dev
+```
+
+Open:
+
+```txt
+http://localhost:3000/world
+```
+
+## What Demo Mode Shows
+
+Demo mode uses a scripted mock fleet with three agents. It cycles through states that look like real events:
+
+- agents becoming active
+- task start and completion
+- movement between work areas
+- speech bubbles
+- artifacts appearing in the world
+- HUD updates in the fleet panel and inspector
+
+## What Demo Mode Does Not Do
+
+Demo mode does not create fleets, deploy pods, write workspace files, call Agent Commons, send AXL messages, or persist events to MongoDB. It is a front-end simulation of the live event model.
+
+## Switching To Live Mode
+
+Set `NEXT_PUBLIC_API_URL`, authenticate, create a fleet, and open `/world?fleet=<fleet-id>`. The same Phaser scene will use real snapshots and WebSocket events instead of the mock simulation.

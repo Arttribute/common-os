@@ -1,0 +1,41 @@
+---
+title: World UI
+description: The spatial interface that turns fleet state into visible agent presence.
+---
+
+The World UI is a Next.js app with a Phaser 3 isometric scene and React HUD panels. It is available at:
+
+```txt
+/world?fleet=<fleet-id>
+```
+
+## Main Parts
+
+| Part | Purpose |
+| --- | --- |
+| Phaser scene | Renders the isometric world, agents, movement, objects, speech bubbles, and camera controls. |
+| Zustand stores | Hold agents, world objects, selected agent, and socket status. |
+| `useWorldConnection` | Loads initial state and subscribes to WebSocket events. |
+| Fleet panel | Lists agents, status, provisioning progress, current action, and identity hints. |
+| Inspector | Shows selected agent details, task history, actions, and workspace context. |
+| Command bar | Sends tasks or messages to selected agents. |
+| World customizer | Switches themes such as office, hackerspace, gym, and industrial. |
+
+## Controls
+
+| Control | Action |
+| --- | --- |
+| Arrow keys or WASD | Pan camera. |
+| Mouse wheel | Zoom. |
+| Q / E | Zoom out / in. |
+| Click an agent | Select it and open detail context. |
+
+## Live Data
+
+Live mode depends on:
+
+- `GET /fleets/:id/world` for the initial snapshot
+- `WS /fleets/:id/stream?token=...` for ongoing updates
+- event broadcasts from `POST /events`, task routes, and message routes
+
+When no fleet or API connection is available, the same UI can render demo events.

@@ -1,0 +1,34 @@
+---
+title: Agent Commons
+description: How CommonOS uses Agent Commons for native agent identity, sessions, memory, and execution.
+---
+
+CommonOS owns the runtime. Agent Commons owns native agent capabilities.
+
+## Boundary
+
+| Agent Commons | CommonOS |
+| --- | --- |
+| agent identity | pod lifecycle |
+| sessions | task routing |
+| memory and tools | workspace mount |
+| `agc` execution | daemon process |
+| runtime API | world state and events |
+
+## Provisioning
+
+When `AGENTCOMMONS_API_KEY` is configured and an agent uses `integrationPath: "native"`, the provisioner calls Agent Commons to create an agent record.
+
+The CommonOS agent stores:
+
+- Agent Commons agent ID
+- registry agent ID
+- wallet address when available
+
+The platform key is not stored as a long-lived plaintext value in the agent document. The daemon can call bootstrap routes to recover runtime credentials.
+
+## Sessions
+
+The daemon keeps a persistent session ID so native agents can carry conversation memory across restarts.
+
+Session state is stored locally in the workspace and recoverable through API session routes.

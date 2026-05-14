@@ -1,0 +1,41 @@
+---
+title: Runner Service
+description: The shared Cloud Run service that executes native Agent Commons tasks.
+---
+
+The runner is in `apps/runner`.
+
+## Endpoints
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/health` | Liveness check. |
+| `POST` | `/run` | Execute a prompt through Agent Commons CLI. |
+
+## Request Shape
+
+```json
+{
+  "agentId": "agt_xxx",
+  "sessionId": "optional-session",
+  "prompt": "Build the auth module"
+}
+```
+
+## Who Calls It
+
+The daemon calls the runner for native integration tasks:
+
+```txt
+daemon executeTask()
+  -> runViaNative()
+  -> POST {RUNNER_URL}/run
+```
+
+## Local Development
+
+```bash
+pnpm --filter @common-os/runner dev
+```
+
+The runner uses Bun for development. In cloud deployment, use the provided Cloud Build config.

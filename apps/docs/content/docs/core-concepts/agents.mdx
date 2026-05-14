@@ -1,0 +1,41 @@
+---
+title: Agents
+description: Persistent workers with runtime config, identity, wallet data, pod metadata, world position, and AXL peer details.
+---
+
+An agent is a durable worker inside a fleet. CommonOS stores the agent record and starts a dedicated runtime for it.
+
+## Agent Fields
+
+| Area | What it means |
+| --- | --- |
+| `config.role` | Human-readable role, such as `backend-engineer` or `manager`. |
+| `config.systemPrompt` | Instructions used by the runtime. |
+| `config.integrationPath` | `native`, `openclaw`, or `guest`. |
+| `permissionTier` | `manager` or `worker`. |
+| `status` | Provisioning/runtime state. |
+| `pod` | Provider, region, and namespace/service ID. |
+| `world` | Room, tile position, and facing direction. |
+| `axl` | Peer ID and multiaddr for P2P messaging. |
+| `commons` | Agent Commons identity fields. |
+| `wallet` | Agent wallet address, chains, and policy. |
+
+## Integration Paths
+
+| Path | Runtime | Best for |
+| --- | --- | --- |
+| `native` | Agent Commons CLI/runtime through the daemon and runner | Agents needing memory, tools, sessions, and AI execution. |
+| `openclaw` | OpenClaw gateway configuration | Messaging app and integration-heavy agents. |
+| `guest` | Tenant-provided Docker image plus SDK | Custom frameworks such as LangGraph, CrewAI, AutoGen, or internal agents. |
+
+## Provisioning Flow
+
+1. API creates a CommonOS agent ID and `cos_agent_...` token.
+2. Native agents attempt Agent Commons registration.
+3. Wallet state is created or resolved.
+4. Agent is inserted into MongoDB as `provisioning`.
+5. World state is updated with the new agent.
+6. The cloud provisioner launches a GKE or EKS namespace and pod.
+7. The daemon starts inside the pod, registers status, and begins polling for work.
+
+Provisioning is asynchronous. The API can return the new agent before the pod is fully ready.

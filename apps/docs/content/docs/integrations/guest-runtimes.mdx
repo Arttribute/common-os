@@ -1,0 +1,52 @@
+---
+title: Guest Runtimes
+description: Bring your own Docker image and integrate with CommonOS through the SDK or HTTP API.
+---
+
+Guest runtimes let you run agents built with your own framework.
+
+## Requirements
+
+A guest runtime should:
+
+- read `AGENT_ID`, `AGENT_TOKEN`, `API_URL`, and workspace env vars
+- poll `GET /agents/:agentId/tasks/next`
+- emit events to `POST /events`
+- complete tasks with `POST /agents/:agentId/tasks/:taskId/complete`
+- write durable output under the workspace mount
+
+## Minimal Loop
+
+```ts
+import { CommonOSAgentClient } from "@common-os/sdk";
+
+const client = new CommonOSAgentClient({
+  agentId: process.env.AGENT_ID!,
+  agentToken: process.env.AGENT_TOKEN!,
+  apiUrl: process.env.API_URL!,
+});
+
+while (true) {
+  const task = await client.nextTask();
+  if (!task) {
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+    continue;
+  }
+
+  await client.emit({
+    type: "task_start",
+    payload: { taskId: task.id, description: task.description },
+  });
+
+  await client.completeTask(task.id, "Completed by guest runtime.");
+}
+```
+
+## Deploy
+
+```bash
+commonos agent deploy \
+  --fleet flt_xxx \
+  --role langgraph-worker \
+  --image ghcr.io/acme/langgraph-worker:latest
+```

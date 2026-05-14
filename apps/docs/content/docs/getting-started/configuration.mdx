@@ -1,0 +1,67 @@
+---
+title: Configuration
+description: Environment variables used by the API, web app, runner, daemon, cloud provisioners, and integrations.
+---
+
+## API
+
+The API reads from `apps/api/.env.local` during local development.
+
+| Variable | Required | Description |
+| --- | --- | --- |
+| `PORT` | No | API port. Defaults to `3001`. |
+| `API_URL` | Yes | Public URL injected into agent pods. |
+| `MONGODB_URI` | Yes | MongoDB connection string. Most API routes fail without it. |
+| `PRIVY_APP_ID` | Optional | Privy app ID for JWT verification. |
+| `PRIVY_APP_SECRET` | Optional | Privy secret for server-side auth checks. |
+| `CLOUD_PROVIDER` | Provisioning | `gcp` or `aws`. Defaults toward the GCP path in provisioner code. |
+| `GCP_PROJECT_ID` | GCP | Google Cloud project ID. |
+| `GCP_REGION` | GCP | Region, defaulting to `europe-west1`. |
+| `GCP_SERVICE_ACCOUNT_KEY` | GCP | Service account key, raw JSON or base64 depending on deployment setup. |
+| `GKE_CLUSTER` | GCP | Cluster name, default `common-os-agents`. |
+| `AGENT_IMAGE_URL` | Provisioning | Container image used for agent pods. |
+| `RUNNER_URL` | Native runtime | Cloud Run runner URL used by native agents. |
+| `AGENTCOMMONS_API_KEY` | Native runtime | Platform key for Agent Commons registration and bootstrap. |
+| `AGC_API_URL` | Optional | Agent Commons API base URL. |
+| `AGC_INITIATOR` | Optional | Initiator header/value for Agent Commons calls. |
+| `AWS_REGION` | AWS | Region for EKS operations. |
+| `EKS_CLUSTER` | AWS | EKS cluster name. |
+
+## Web
+
+The web app reads from `apps/web/.env.local`.
+
+| Variable | Required | Description |
+| --- | --- | --- |
+| `NEXT_PUBLIC_API_URL` | Optional | API URL. Omit for demo-only world usage. |
+| `NEXT_PUBLIC_PRIVY_APP_ID` | Optional | Enables Privy login. |
+| `NEXT_PUBLIC_API_KEY` | Optional | Static tenant API key for local/demo authentication. |
+
+## Runner
+
+The runner exposes:
+
+- `GET /health`
+- `POST /run`
+
+Native agents call `POST {RUNNER_URL}/run` to execute Agent Commons CLI-backed work.
+
+## Daemon
+
+The pod entrypoint writes daemon config and injects values such as:
+
+| Variable | Purpose |
+| --- | --- |
+| `AGENT_ID` | CommonOS agent ID. |
+| `AGENT_TOKEN` | Scoped `cos_agent_...` token. |
+| `FLEET_ID` | Parent fleet ID. |
+| `TENANT_ID` | Tenant owner ID. |
+| `API_URL` | Control plane URL. |
+| `COMMONS_AGENT_ID` | Agent Commons runtime identity. |
+| `COMMONS_API_KEY` | Agent Commons key, when available. |
+| `COMMONOS_WORKSPACE` | Workspace path, usually `/mnt/shared`. |
+| `AXL_API_URL` | Local AXL API URL used by daemon messaging. |
+
+## Secrets
+
+Never expose `cos_live_...` tenant API keys or `cos_agent_...` tokens in client-side code unless deliberately running a local demo. Tenant API keys can create fleets, deploy agents, assign tasks, and terminate runtimes.

@@ -1,0 +1,58 @@
+---
+title: Workspace
+description: Persistent file storage for each agent and how to inspect it.
+---
+
+Each agent has a workspace mounted inside its runtime. On the GKE path, this is designed around GCS FUSE mounted at `/mnt/shared`.
+
+## Path
+
+The daemon uses:
+
+```txt
+COMMONOS_WORKSPACE || config.workspaceDir
+```
+
+In the standard agent image this resolves to:
+
+```txt
+/mnt/shared
+```
+
+## Session Storage
+
+The daemon stores a session marker so Agent Commons conversations can resume:
+
+```txt
+/mnt/shared/.common-os-session.json
+```
+
+## File Events
+
+The daemon watches the workspace and emits:
+
+```json
+{
+  "type": "file_changed",
+  "payload": {
+    "path": "/mnt/shared/backend/feed.ts",
+    "op": "modify"
+  }
+}
+```
+
+## Reading Files
+
+The API includes:
+
+```txt
+GET /fleets/:id/agents/:agentId/workspace/read?path=/backend/feed.ts
+```
+
+The route validates tenant ownership and reads through provider helpers. It can return errors for missing pods, invalid paths, large files, provider failures, or missing files.
+
+## Good Practices
+
+- Ask agents to write artifacts under clear folders such as `/workspace/backend`, `/workspace/design`, and `/workspace/reports`.
+- Prefer Markdown for summaries and TypeScript or JSON for structured outputs.
+- Keep generated files small enough to inspect through the API and UI.

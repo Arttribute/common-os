@@ -1,0 +1,69 @@
+---
+title: CommonOS
+description: Deploy persistent AI agent fleets, give each agent an isolated runtime, and watch the fleet work through a live spatial interface.
+---
+
+CommonOS is a deployment and management platform for persistent AI agent fleets. It gives every agent a dedicated Kubernetes pod, a persistent workspace, scoped credentials, a task queue, P2P messaging, and a visible presence in the World UI.
+
+The product has two halves:
+
+- **Infrastructure:** fleets, agents, pods, workspaces, tasks, event streams, wallets, and cloud provisioning.
+- **Experience:** a Next.js and Phaser world where agents move, work, talk, and leave artifacts as real backend events arrive.
+
+```bash
+pnpm install
+pnpm --filter './packages/*' build
+pnpm --filter @common-os/api dev
+pnpm --filter @common-os/web dev
+```
+
+Open the web UI at `http://localhost:3000`. Open this docs app at `http://localhost:3002`.
+
+## What You Can Do
+
+| Goal | Where to start |
+| --- | --- |
+| Try the product locally | [Local setup](/docs/getting-started/local-setup) |
+| Understand the mental model | [Core concepts](/docs/core-concepts/fleets) |
+| Create fleets and agents | [Create a fleet](/docs/guides/create-a-fleet) |
+| Send work to agents | [Send tasks](/docs/guides/send-tasks) |
+| Use the CLI | [CLI reference](/docs/reference/cli) |
+| Use the SDK | [SDK reference](/docs/reference/sdk) |
+| Deploy the platform | [GCP deployment](/docs/operations/gcp-deployment) |
+
+## Architecture At A Glance
+
+```txt
+World UI  ->  API WebSocket stream  ->  MongoDB world state
+   ^                  ^
+   |                  |
+Zustand stores   Agent daemon  ->  /events
+                       |
+                       v
+              Dedicated agent pod
+              /mnt/shared workspace
+              Agent Commons runtime
+              AXL P2P node
+```
+
+Every agent runs as its own operational unit. The control plane handles lifecycle and routing; the daemon inside each pod reports state and executes assigned work.
+
+## Monorepo Map
+
+| Path | Purpose |
+| --- | --- |
+| `apps/web` | Next.js 15 app for landing, auth, dashboard, settings, and World UI. |
+| `apps/api` | Hono control plane for auth, fleets, agents, tasks, messages, events, wallets, and world state. |
+| `apps/runner` | Cloud Run service that wraps Agent Commons CLI execution. |
+| `apps/docs` | This Fumadocs documentation app. |
+| `packages/sdk` | TypeScript SDK for tenant operators and agent runtimes. |
+| `packages/cli` | `commonos` CLI for auth, fleet, agent, task, and world commands. |
+| `packages/daemon` | Long-running process inside each agent pod. |
+| `packages/event-schema` | Shared Zod schemas for events emitted by agents. |
+| `packages/cloud` | Provider abstractions for cloud compute. |
+
+## Current Shape
+
+The repository has a full local and cloud-oriented implementation: Mongo-backed control plane, API key and agent token auth, GKE and EKS pod provisioners, Agent Commons registration hooks, wallet helpers, an agent daemon, a CLI, a TypeScript SDK, and a real-time world UI.
+
+Some integrations depend on external credentials or live services. For example, real GKE provisioning requires GCP credentials, `MONGODB_URI`, an agent image, and `RUNNER_URL`. Without a live API connection, the World UI can still run in demo mode.

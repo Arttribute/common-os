@@ -1,0 +1,49 @@
+---
+title: Send Tasks
+description: Queue work for an agent and inspect task history.
+---
+
+## Send With CLI
+
+```bash
+commonos task send agt_xxx "Write a design note to /workspace/design.md" --fleet flt_xxx
+```
+
+## Send With SDK
+
+```ts
+await client.tasks.send("flt_xxx", "agt_xxx", {
+  description: "Build the auth module and summarize the API.",
+});
+```
+
+## Send With API
+
+```bash
+curl -X POST http://localhost:3001/fleets/flt_xxx/agents/agt_xxx/task \
+  -H "Authorization: Bearer cos_live_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{"description":"Build the auth module"}'
+```
+
+## List Tasks
+
+```bash
+commonos task ls agt_xxx --fleet flt_xxx
+commonos agent logs agt_xxx --fleet flt_xxx
+```
+
+Both commands read task history. The `agent logs` command is currently task-history output, not a live pod log stream.
+
+## What Agents Emit
+
+A healthy task execution usually produces:
+
+- `task_start`
+- one or more `action` events
+- zero or more `file_changed` events
+- optional `message_sent` or `message_recv`
+- optional `world_create_object`
+- `task_complete`
+
+Those events drive both audit history and world animation.

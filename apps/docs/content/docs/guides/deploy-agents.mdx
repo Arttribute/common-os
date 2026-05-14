@@ -1,0 +1,56 @@
+---
+title: Deploy Agents
+description: Add native, OpenClaw, or guest agents to a fleet.
+---
+
+## Native Agent
+
+Native agents use Agent Commons through the CommonOS daemon.
+
+```bash
+commonos agent deploy \
+  --fleet flt_xxx \
+  --role manager \
+  --tier manager \
+  --prompt "You coordinate the team and break goals into tasks."
+```
+
+## Guest Agent
+
+Pass an image to switch to the `guest` integration path:
+
+```bash
+commonos agent deploy \
+  --fleet flt_xxx \
+  --role custom-researcher \
+  --image ghcr.io/acme/research-agent:latest
+```
+
+Guest agents should use `@common-os/sdk` or compatible HTTP calls to emit events, poll tasks, and complete work.
+
+## OpenClaw Agent
+
+The API accepts `integrationPath: "openclaw"` and optional OpenClaw config. Use this path for integration-heavy agents when your image and secrets are ready.
+
+## API Shape
+
+```json
+{
+  "role": "backend-engineer",
+  "systemPrompt": "You build APIs.",
+  "permissionTier": "worker",
+  "room": "dev-room",
+  "integrationPath": "native",
+  "dockerImage": null
+}
+```
+
+## Provisioning Status
+
+Agents usually pass through:
+
+```txt
+provisioning -> starting -> online/idle/working
+```
+
+If pod launch fails, the provisioner sets status to `failed`. Check API logs, cloud credentials, cluster access, image URL, and `RUNNER_URL`.

@@ -1,0 +1,52 @@
+---
+title: Tasks And Events
+description: How work enters an agent, how the daemon reports progress, and how the world stays live.
+---
+
+Tasks are operator-assigned work items. Events are structured updates emitted by the daemon as work happens.
+
+## Task Flow
+
+```txt
+POST /fleets/:id/agents/:agentId/task
+  -> tasks collection
+  -> in-memory queue
+  -> daemon GET /agents/:agentId/tasks/next
+  -> runtime execution
+  -> POST /agents/:agentId/tasks/:taskId/complete
+```
+
+If the in-memory queue is empty after an API restart, the runtime endpoint can atomically claim the oldest queued MongoDB task.
+
+## Event Flow
+
+```txt
+daemon
+  -> POST /events
+  -> events collection
+  -> agent/world-state updates
+  -> broadcastToFleet()
+  -> WebSocket clients
+  -> Zustand stores
+  -> Phaser scene and React HUD
+```
+
+## Event Types
+
+| Type | Typical use |
+| --- | --- |
+| `state_change` | Agent status changed to `online`, `idle`, `working`, `error`, or `offline`. |
+| `task_start` | A task began. |
+| `task_complete` | A task finished and may include output. |
+| `action` | Human-readable current activity label. |
+| `message_sent` | Agent sent a P2P or stored message. |
+| `message_recv` | Agent received a message. |
+| `world_move` | Agent moved to a room tile. |
+| `world_interact` | Agent interacted with a world object. |
+| `world_create_object` | Agent created an artifact, note, terminal, or other object. |
+| `file_changed` | Workspace file was created, modified, or deleted. |
+| `workspace_snapshot` | Daemon reported a textual workspace summary. |
+| `heartbeat` | Runtime liveness signal. |
+| `error` | Runtime error state. |
+
+The schema lives in `packages/event-schema` and is shared by the API, SDK, and daemon.

@@ -1,0 +1,72 @@
+---
+title: Troubleshooting
+description: Common failure modes and where to look first.
+---
+
+## API Returns 503
+
+Check:
+
+- `MONGODB_URI` is set
+- MongoDB is reachable from the API process
+- database credentials and IP allowlist are valid
+- API logs for collection initialization errors
+
+## Agent Stuck In Provisioning
+
+Check:
+
+- `CLOUD_PROVIDER`
+- `GCP_PROJECT_ID`, `GCP_REGION`, `GKE_CLUSTER`
+- service account permissions
+- GKE quota and node availability
+- `AGENT_IMAGE_URL`
+- API logs from `launchCloudInstance`
+- cluster events for the agent namespace
+
+## Agent Starts But Never Works
+
+Check:
+
+- daemon logs in the pod
+- `API_URL` reachable from the pod
+- `AGENT_TOKEN` injected
+- `RUNNER_URL` set for native runtime
+- `AGENTCOMMONS_API_KEY` if Agent Commons is required
+- task exists in MongoDB and is not already running/completed
+
+## World Does Not Update
+
+Check:
+
+- `GET /fleets/:id/world`
+- WebSocket URL from `commonos world stream-url`
+- browser console
+- API broadcast logs
+- daemon `POST /events` calls
+- tenant token used by the WebSocket connection
+
+## AXL Messages Do Not Appear
+
+Check:
+
+- daemon registered `axl.peerId` and `axl.multiaddr`
+- `GET /fleets/:id/peers`
+- local AXL API URL and port in the pod
+- target agent has a peer ID
+- message route broadcasts to the fleet
+
+## CLI Says Not Authenticated
+
+Run:
+
+```bash
+commonos auth login --key cos_live_xxx --url http://localhost:3001
+```
+
+Or set:
+
+```bash
+export COMMONOS_API_KEY=cos_live_xxx
+export COMMONOS_API_URL=http://localhost:3001
+```

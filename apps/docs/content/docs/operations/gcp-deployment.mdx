@@ -1,0 +1,64 @@
+---
+title: GCP Deployment
+description: Deploy the API dependencies, runner, agent image, and GKE-backed agent pods.
+---
+
+The primary cloud target is GCP with GKE, GCS FUSE, and Cloud Run.
+
+## Required Pieces
+
+| Piece | Why it matters |
+| --- | --- |
+| MongoDB | Stores tenants, fleets, agents, tasks, events, messages, sessions, wallets, and world state. |
+| API service | Control plane used by dashboard, CLI, SDK, and daemons. |
+| Runner service | Executes Agent Commons CLI calls for native agents. |
+| Agent image | Container started for each agent pod. |
+| GKE cluster | Runs isolated agent pods. |
+| GCS bucket | Backing storage for agent workspaces. |
+
+## Build Agent Image
+
+From the repository root:
+
+```bash
+gcloud builds submit --config=apps/api/agent/cloudbuild.yaml .
+```
+
+Set the resulting image as:
+
+```bash
+AGENT_IMAGE_URL=europe-west1-docker.pkg.dev/<project>/<repo>/common-os-agent:latest
+```
+
+## Deploy Runner
+
+```bash
+gcloud builds submit --config=apps/runner/cloudbuild.yaml .
+```
+
+Set:
+
+```bash
+RUNNER_URL=https://common-os-runner-prod-xxx.a.run.app
+```
+
+## Configure API
+
+```bash
+MONGODB_URI=
+API_URL=https://your-api.example.com
+CLOUD_PROVIDER=gcp
+GCP_PROJECT_ID=
+GCP_REGION=europe-west1
+GCP_SERVICE_ACCOUNT_KEY=
+GKE_CLUSTER=common-os-agents
+AGENT_IMAGE_URL=
+RUNNER_URL=
+AGENTCOMMONS_API_KEY=
+```
+
+## Cluster Behavior
+
+The provisioner can find or create a cluster named `common-os-agents`. The creation path enables node autoscaling, Workload Identity, and the GCS FUSE CSI driver.
+
+For production, review the generated cluster settings before relying on automatic creation. You may want tighter authorized networks, dedicated node pools, quota planning, and stricter workload policies.

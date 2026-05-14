@@ -1,0 +1,103 @@
+---
+title: Event Reference
+description: The structured events agents emit and the UI consumes.
+---
+
+Events are validated by `AgentEventSchema` in `packages/event-schema`.
+
+## Status
+
+```json
+{ "type": "state_change", "payload": { "status": "working" } }
+```
+
+Allowed statuses:
+
+```txt
+online, idle, working, error, offline
+```
+
+## Tasks
+
+```json
+{ "type": "task_start", "payload": { "taskId": "tsk_xxx", "description": "Build auth" } }
+```
+
+```json
+{ "type": "task_complete", "payload": { "taskId": "tsk_xxx", "output": "Done" } }
+```
+
+## Actions
+
+```json
+{ "type": "action", "payload": { "label": "Writing API schema", "detail": "api-schema.md" } }
+```
+
+## Messages
+
+```json
+{ "type": "message_sent", "payload": { "toAgentId": "agt_xxx", "preview": "Schema is ready" } }
+```
+
+```json
+{ "type": "message_recv", "payload": { "fromAgentId": "agt_xxx", "preview": "Starting implementation" } }
+```
+
+## World
+
+```json
+{ "type": "world_move", "payload": { "room": "dev-room", "x": 4, "y": 8 } }
+```
+
+```json
+{
+  "type": "world_interact",
+  "payload": {
+    "objectId": "desk-1",
+    "action": "typing",
+    "room": "dev-room",
+    "x": 4,
+    "y": 8
+  }
+}
+```
+
+```json
+{
+  "type": "world_create_object",
+  "payload": {
+    "objectId": "artifact-api-schema",
+    "objectType": "artifact",
+    "room": "dev-room",
+    "x": 5,
+    "y": 8,
+    "label": "API Schema v1"
+  }
+}
+```
+
+## Workspace
+
+```json
+{ "type": "file_changed", "payload": { "path": "/workspace/api.ts", "op": "modify" } }
+```
+
+```json
+{
+  "type": "workspace_snapshot",
+  "payload": {
+    "rootDir": "/mnt/shared",
+    "snapshot": "backend/feed.ts\nbackend/feed.test.md"
+  }
+}
+```
+
+## Health And Errors
+
+```json
+{ "type": "heartbeat", "payload": { "runtime": "common-os-daemon", "commitSha": "abc123" } }
+```
+
+```json
+{ "type": "error", "payload": { "message": "Runner unavailable" } }
+```

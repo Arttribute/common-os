@@ -1,0 +1,84 @@
+---
+title: API Reference
+description: Control plane route groups and common request patterns.
+---
+
+Base URL locally:
+
+```txt
+http://localhost:3001
+```
+
+## Auth
+
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| `POST` | `/auth/tenant` | Privy bearer token | Create or fetch tenant, returns API key on first creation. |
+| `GET` | `/auth/me` | Tenant key | Return current tenant record. |
+
+## Fleets
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/fleets` | Create fleet. |
+| `GET` | `/fleets` | List fleets for tenant. |
+| `GET` | `/fleets/:id` | Get one fleet. |
+
+## Agents
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/fleets/:id/agents` | Deploy an agent. |
+| `GET` | `/fleets/:id/agents` | List fleet agents. |
+| `GET` | `/fleets/:id/agents/:agentId` | Get one agent. |
+| `PATCH` | `/fleets/:id/agents/:agentId` | Update world, AXL, or status fields. |
+| `DELETE` | `/fleets/:id/agents/:agentId` | Terminate pod and mark agent terminated. |
+| `GET` | `/fleets/:id/agents/:agentId/workspace/read?path=...` | Read a workspace file through cloud provider helpers. |
+| `GET` | `/fleets/:id/peers` | List AXL peer directory. |
+
+## Tasks
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/fleets/:id/agents/:agentId/task` | Queue a task. |
+| `GET` | `/fleets/:id/agents/:agentId/tasks` | List recent task history. |
+| `GET` | `/agents/:agentId/tasks/next` | Agent runtime claims next task. |
+| `POST` | `/agents/:agentId/tasks/:taskId/complete` | Agent runtime completes task. |
+
+## Events And World
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/events` | Agent emits structured event. |
+| `GET` | `/fleets/:id/world` | Get world state snapshot. |
+| `WS` | `/fleets/:id/stream?token=...` | Subscribe to live fleet events. |
+
+## Messages And Sessions
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/fleets/:id/agents/:agentId/message` | Store and broadcast an inter-agent message. |
+| `POST` | `/fleets/:id/agents/:agentId/human-message` | Send a human conversation message. |
+| `GET` | `/fleets/:id/agents/:agentId/human-messages` | List recent human messages. |
+| `GET` | `/fleets/:id/agents/:agentId/sessions` | List sessions. |
+| `POST` | `/fleets/:id/agents/:agentId/sessions` | Create a session. |
+| `GET` | `/fleets/:id/agents/:agentId/sessions/:sessionId` | Load session with messages. |
+
+## Wallets And Directory
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/fleets/:id/directory` | Agent identity directory. |
+| `GET` | `/fleets/:id/directory/resolve/:name` | Resolve recipient by handle/name. |
+| `GET` | `/fleets/:id/agents/:agentId/wallet` | Wallet state and recent transactions. |
+| `GET` | `/fleets/:id/agents/:agentId/wallet/transactions` | Wallet transaction list. |
+| `POST` | `/agents/:agentId/wallet/send-transaction` | Agent-authorized transaction request. |
+
+## Runtime Bootstrap
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/agents/:agentId/bootstrap` | Runtime asks control plane for Agent Commons credentials. |
+| `GET` | `/agents/:agentId/session/current` | Runtime recovers current session. |
+| `POST` | `/agents/:agentId/session/current` | Runtime registers current session. |
+| `GET` | `/agents/resolve/:name` | Agent resolves a peer by agent ID or AXL peer ID. |

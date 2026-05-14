@@ -1,0 +1,26 @@
+---
+title: OpenClaw
+description: Integration path for agents that need external apps and messaging channels.
+---
+
+The `openclaw` integration path is intended for agents that need broad external integrations, messaging channels, or browser/app automation.
+
+## API Config
+
+```json
+{
+  "role": "support-agent",
+  "integrationPath": "openclaw",
+  "openclawConfig": {
+    "modelProvider": "openai",
+    "modelApiKey": "secret-ref",
+    "channels": {},
+    "plugins": ["gmail", "slack"],
+    "dmPolicy": "pairing"
+  }
+}
+```
+
+## Current Behavior
+
+The API accepts and stores OpenClaw configuration fields. Ensure your agent image and runtime path know how to consume those fields before relying on OpenClaw in production.

@@ -1,0 +1,4 @@
+{
+  "title": "Operations",
+  "pages": ["gcp-deployment", "runner", "agent-image", "troubleshooting"]
+}

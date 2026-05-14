@@ -1,0 +1,12 @@
+{
+  "title": "CommonOS",
+  "pages": [
+    "index",
+    "getting-started",
+    "core-concepts",
+    "guides",
+    "reference",
+    "operations",
+    "integrations"
+  ]
+}
