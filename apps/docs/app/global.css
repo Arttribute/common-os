@@ -45,29 +45,29 @@
 }
 
 .dark {
-  --cos-bg: 6 11 20;
-  --cos-fg: 226 232 240;
-  --cos-card: 10 17 30;
-  --cos-muted: 148 163 184;
-  --cos-border: 51 65 85;
-  --cos-amber: 245 158 11;
-  --cos-cyan: 34 211 238;
+  --cos-bg: 219 54% 5%;
+  --cos-fg: 214 32% 91%;
+  --cos-card: 221 45% 8%;
+  --cos-muted: 215 20% 55%;
+  --cos-border: 0 0% 100% / 0.08;
+  --cos-amber: 38 92% 50%;
+  --cos-cyan: 188 86% 53%;
   --background: var(--cos-bg);
   --foreground: var(--cos-fg);
   --card: var(--cos-card);
-  --card-foreground: 226 232 240;
-  --popover: 10 17 30;
-  --popover-foreground: 226 232 240;
+  --card-foreground: var(--cos-fg);
+  --popover: var(--cos-card);
+  --popover-foreground: var(--cos-fg);
   --primary: var(--cos-amber);
-  --primary-foreground: 24 24 27;
-  --secondary: var(--cos-cyan);
-  --secondary-foreground: 8 47 73;
-  --muted: 15 23 42;
+  --primary-foreground: 222 47% 7%;
+  --secondary: 220 35% 12%;
+  --secondary-foreground: var(--cos-fg);
+  --muted: 220 35% 11%;
   --muted-foreground: var(--cos-muted);
-  --accent: 30 41 59;
-  --accent-foreground: 254 243 199;
+  --accent: 220 35% 14%;
+  --accent-foreground: var(--cos-fg);
   --border: var(--cos-border);
-  --input: var(--cos-border);
+  --input: 0 0% 100% / 0.1;
   --ring: var(--cos-amber);
 }
 
@@ -97,8 +97,10 @@ body {
 
 .cos-logo {
   font-family: var(--font-space-grotesk), ui-sans-serif, system-ui, sans-serif;
-  font-weight: 800;
-  letter-spacing: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  color: hsl(var(--foreground));
 }
 
 .cos-logo span {
@@ -159,7 +161,7 @@ a {
 }
 
 #nd-sidebar {
-  background: hsl(var(--card) / 0.92);
+  background: hsl(var(--card) / 0.9);
   border-color: hsl(var(--border));
   backdrop-filter: blur(16px);
 }
@@ -171,4 +173,71 @@ a {
 
 #nd-page {
   color: hsl(var(--foreground));
+}
+
+#nd-page h1 {
+  color: hsl(var(--foreground));
+  font-size: clamp(2rem, 4vw, 3.25rem);
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.05;
+}
+
+#nd-page h2 {
+  color: hsl(var(--foreground));
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+#nd-page > p:first-of-type {
+  color: hsl(var(--muted-foreground));
+  font-size: 1.0625rem;
+  line-height: 1.75;
+}
+
+#nd-page table {
+  border-color: hsl(var(--border));
+}
+
+#nd-page th,
+#nd-page td {
+  border-color: hsl(var(--border));
+}
+
+#nd-page :not(pre) > code {
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  background: hsl(220 35% 12% / 0.75);
+  color: hsl(var(--foreground));
+}
+
+.shiki {
+  border-color: hsl(var(--border)) !important;
+  background: #060a12 !important;
+  box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.04);
+}
+
+.shiki::before {
+  display: flex;
+  height: 2.5rem;
+  align-items: center;
+  gap: 0.375rem;
+  border-bottom: 1px solid hsl(var(--border));
+  background: linear-gradient(to bottom, #141e30, #0e1525);
+  padding: 0 1rem;
+  color: hsl(var(--muted-foreground));
+  content: "";
+}
+
+.shiki::after {
+  position: absolute;
+  left: 1rem;
+  top: 0.875rem;
+  display: block;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 999px;
+  background: #ef4444;
+  box-shadow: 1.125rem 0 0 #f59e0b, 2.25rem 0 0 #10b981;
+  content: "";
 }

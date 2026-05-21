@@ -9,7 +9,7 @@ export function baseOptions(): BaseLayoutProps {
     nav: {
       title: (
         <span className="cos-logo">
-          common<span>os</span>
+          Common<span>OS</span>
         </span>
       ),
     },
