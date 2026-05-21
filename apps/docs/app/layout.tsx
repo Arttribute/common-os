@@ -1,19 +1,13 @@
 import type { Metadata } from "next";
-import { Inter, JetBrains_Mono } from "next/font/google";
+import { Space_Grotesk } from "next/font/google";
 import { RootProvider } from "fumadocs-ui/provider/next";
 import type { ReactNode } from "react";
 import { rootThemeVars } from "@/lib/theme";
 import "./global.css";
 
-const sans = Inter({
+const spaceGrotesk = Space_Grotesk({
   subsets: ["latin"],
-  variable: "--font-sans",
-  display: "swap",
-});
-
-const mono = JetBrains_Mono({
-  subsets: ["latin"],
-  variable: "--font-mono",
+  variable: "--font-space-grotesk",
   display: "swap",
 });
 
@@ -27,9 +21,11 @@ export const metadata: Metadata = {
 
 export default function Layout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className={`${sans.variable} ${mono.variable}`} suppressHydrationWarning>
+    <html lang="en" className={`${spaceGrotesk.variable} dark`} suppressHydrationWarning>
       <body className="flex min-h-screen flex-col" style={rootThemeVars}>
-        <RootProvider>{children}</RootProvider>
+        <RootProvider theme={{ defaultTheme: "dark", enableSystem: false }}>
+          {children}
+        </RootProvider>
       </body>
     </html>
   );

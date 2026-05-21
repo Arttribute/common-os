@@ -2,21 +2,43 @@
 @import "fumadocs-ui/css/neutral.css";
 @import "fumadocs-ui/css/preset.css";
 
+@theme inline {
+  --font-sans: var(--font-space-grotesk);
+  --font-mono: "SF Mono", "Fira Code", "Fira Mono", "Roboto Mono", monospace;
+
+  --color-fd-background: hsl(var(--cos-bg));
+  --color-fd-foreground: hsl(var(--cos-fg));
+  --color-fd-muted: hsl(220 35% 11%);
+  --color-fd-muted-foreground: hsl(var(--cos-muted));
+  --color-fd-popover: hsl(var(--cos-card));
+  --color-fd-popover-foreground: hsl(var(--cos-fg));
+  --color-fd-card: hsl(var(--cos-card));
+  --color-fd-card-foreground: hsl(var(--cos-fg));
+  --color-fd-border: hsl(var(--cos-border));
+  --color-fd-primary: hsl(var(--cos-amber));
+  --color-fd-primary-foreground: hsl(222 47% 7%);
+  --color-fd-secondary: hsl(220 35% 12%);
+  --color-fd-secondary-foreground: hsl(var(--cos-fg));
+  --color-fd-accent: hsl(220 35% 14%);
+  --color-fd-accent-foreground: hsl(var(--cos-fg));
+  --color-fd-ring: hsl(var(--cos-amber));
+}
+
 :root {
-  --background: var(--cos-bg);
-  --foreground: var(--cos-fg);
-  --card: var(--cos-card);
-  --card-foreground: 15 23 42;
-  --popover: 255 255 255;
-  --popover-foreground: 15 23 42;
-  --primary: var(--cos-amber);
-  --primary-foreground: 255 251 235;
-  --secondary: var(--cos-cyan);
-  --secondary-foreground: 236 254 255;
-  --muted: 241 245 249;
+  --background: 219 54% 5%;
+  --foreground: 214 32% 91%;
+  --card: 221 45% 8%;
+  --card-foreground: 214 32% 91%;
+  --popover: 221 45% 8%;
+  --popover-foreground: 214 32% 91%;
+  --primary: 38 92% 50%;
+  --primary-foreground: 222 47% 7%;
+  --secondary: 220 35% 12%;
+  --secondary-foreground: 214 32% 91%;
+  --muted: 220 35% 11%;
   --muted-foreground: var(--cos-muted);
-  --accent: 254 243 199;
-  --accent-foreground: 120 53 15;
+  --accent: 220 35% 14%;
+  --accent-foreground: 214 32% 91%;
   --border: var(--cos-border);
   --input: var(--cos-border);
   --ring: var(--cos-amber);
@@ -50,17 +72,18 @@
 }
 
 html {
-  background: rgb(var(--background));
-  color: rgb(var(--foreground));
-  font-family: var(--font-sans), system-ui, sans-serif;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: var(--font-space-grotesk), ui-sans-serif, system-ui, sans-serif;
   letter-spacing: 0;
+  text-rendering: geometricPrecision;
 }
 
 body {
   background:
-    linear-gradient(180deg, rgba(245, 158, 11, 0.08), transparent 280px),
-    rgb(var(--background));
-  color: rgb(var(--foreground));
+    radial-gradient(circle at top left, hsl(var(--primary) / 0.07), transparent 34rem),
+    hsl(var(--background));
+  color: hsl(var(--foreground));
   font-size: 16px;
   line-height: 1.75;
   -webkit-font-smoothing: antialiased;
@@ -68,19 +91,18 @@ body {
 
 .dark body {
   background:
-    linear-gradient(180deg, rgba(245, 158, 11, 0.08), transparent 320px),
-    radial-gradient(circle at 85% 4%, rgba(34, 211, 238, 0.08), transparent 260px),
-    rgb(var(--background));
+    radial-gradient(circle at top left, hsl(var(--primary) / 0.07), transparent 34rem),
+    hsl(var(--background));
 }
 
 .cos-logo {
-  font-family: var(--font-mono), monospace;
+  font-family: var(--font-space-grotesk), ui-sans-serif, system-ui, sans-serif;
   font-weight: 800;
   letter-spacing: 0;
 }
 
 .cos-logo span {
-  color: rgb(var(--primary));
+  color: hsl(var(--primary));
 }
 
 :is(article, [data-docs-body]) {
@@ -90,7 +112,7 @@ body {
 
 :is(article, [data-docs-body]) p,
 :is(article, [data-docs-body]) li {
-  color: rgb(var(--foreground));
+  color: hsl(var(--foreground));
 }
 
 :is(article, [data-docs-body]) h1,
@@ -106,9 +128,47 @@ kbd {
 }
 
 pre {
-  border: 1px solid rgb(var(--border));
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
 }
 
 a {
   text-underline-offset: 3px;
+}
+
+::selection {
+  background: hsl(var(--primary) / 0.16);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.22);
+  border-radius: 999px;
+}
+
+#nd-docs-layout {
+  background: transparent;
+}
+
+#nd-sidebar {
+  background: hsl(var(--card) / 0.92);
+  border-color: hsl(var(--border));
+  backdrop-filter: blur(16px);
+}
+
+#nd-subnav {
+  border-color: hsl(var(--border));
+  background: hsl(var(--background) / 0.9);
+}
+
+#nd-page {
+  color: hsl(var(--foreground));
 }
