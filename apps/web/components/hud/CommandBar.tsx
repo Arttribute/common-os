@@ -2,6 +2,10 @@
 import { useMemo, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { usePrivy } from '@privy-io/react-auth'
+import { Send } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { cn } from '@/lib/utils'
 import { useAgentStore } from '@/store/agentStore'
 import { useWorldStore } from '@/store/worldStore'
 import { useAuthStore } from '@/store/authStore'
@@ -134,70 +138,31 @@ export function CommandBar() {
     <>
     {mentionOpen && selectedId && mentionableAgents.length > 0 && (
       <div
-        style={{
-          position: 'absolute',
-          bottom: 68,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          width: 460,
-          background: 'rgba(6, 11, 20, 0.96)',
-          border: '1px solid rgba(255,255,255,0.08)',
-          borderRadius: 8,
-          overflow: 'hidden',
-          pointerEvents: 'auto',
-          zIndex: 12,
-          boxShadow: '0 16px 40px rgba(0,0,0,0.45)',
-        }}
+        className="pointer-events-auto absolute bottom-[76px] left-1/2 z-20 w-[min(560px,calc(100vw-32px))] -translate-x-1/2 overflow-hidden rounded-lg border border-white/10 bg-background/95 shadow-2xl shadow-black/40 backdrop-blur-xl"
       >
         {mentionableAgents.map((agent, idx) => (
           <button
             key={agent.agentId}
             type="button"
             onMouseDown={(e) => { e.preventDefault(); insertMention(agent.agentId) }}
-            style={{
-              width: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              padding: '8px 10px',
-              background: idx === mentionIndex ? 'rgba(245,158,11,0.12)' : 'transparent',
-              border: 0,
-              borderBottom: '1px solid rgba(255,255,255,0.04)',
-              color: '#cbd5e1',
-              cursor: 'pointer',
-              fontFamily: 'monospace',
-              textAlign: 'left',
-            }}
+            className={cn(
+              'flex w-full items-center gap-3 border-b border-white/10 px-3 py-2 text-left text-sm text-slate-200 last:border-b-0',
+              idx === mentionIndex ? 'bg-amber-400/10' : 'hover:bg-white/[0.04]',
+            )}
           >
-            <span style={{ color: '#f59e0b', fontSize: 10 }}>@</span>
-            <span style={{ flex: 1, fontSize: 10 }}>{agent.role.replace(/-/g, ' ')}</span>
-            <span style={{ color: '#64748b', fontSize: 10 }}>{agent.agentId.slice(0, 8)}</span>
+            <span className="text-primary">@</span>
+            <span className="min-w-0 flex-1 truncate capitalize">{agent.role.replace(/-/g, ' ')}</span>
+            <span className="font-mono text-xs text-muted-foreground">{agent.agentId.slice(0, 8)}</span>
           </button>
         ))}
       </div>
     )}
     <div
-      style={{
-        position: 'absolute',
-        bottom: 20,
-        left: '50%',
-        transform: 'translateX(-50%)',
-        width: 460,
-        background: 'rgba(6, 11, 20, 0.9)',
-        backdropFilter: 'blur(12px)',
-        border: '1px solid rgba(255,255,255,0.08)',
-        borderRadius: 10,
-        padding: '8px 10px',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        pointerEvents: 'auto',
-        zIndex: 10,
-      }}
+      className="pointer-events-auto absolute bottom-5 left-1/2 z-10 flex w-[min(560px,calc(100vw-32px))] -translate-x-1/2 items-center gap-2 rounded-lg border border-white/10 bg-background/90 p-2 shadow-2xl shadow-black/40 backdrop-blur-xl"
     >
-      <span style={{ fontSize: 11, color: '#64748b', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
-        {selected ? `→ ${shortRole}` : '→ select agent'}
-      </span>
+      <Badge variant="outline" className="hidden max-w-40 truncate sm:inline-flex">
+        {selected ? shortRole : 'Select agent'}
+      </Badge>
 
       <input
         value={input}
@@ -229,53 +194,21 @@ export function CommandBar() {
         }}
         placeholder={selected ? `Message ${shortRole}...` : 'Click an agent to select'}
         disabled={!selectedId}
-        style={{
-          flex: 1,
-          background: 'transparent',
-          border: 'none',
-          outline: 'none',
-          color: '#e2e8f0',
-          fontSize: 11,
-          fontFamily: 'monospace',
-          caretColor: '#f59e0b',
-        }}
+        className="h-10 min-w-0 flex-1 rounded-md border border-white/10 bg-white/[0.03] px-3 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-amber-400/40 focus:ring-2 focus:ring-amber-400/20 disabled:cursor-not-allowed disabled:opacity-60"
       />
 
-      <button
+      <Button
         onClick={() => void handleSend()}
         disabled={!selectedId || !input.trim() || sending}
-        style={{
-          background: selectedId && input.trim() ? 'rgba(245, 158, 11, 0.15)' : 'transparent',
-          border: `1px solid ${selectedId && input.trim() ? 'rgba(245, 158, 11, 0.3)' : 'rgba(255,255,255,0.05)'}`,
-          borderRadius: 5,
-          color: selectedId && input.trim() ? '#f59e0b' : '#475569',
-          fontSize: 11,
-          fontFamily: 'monospace',
-          padding: '4px 10px',
-          cursor: selectedId && input.trim() ? 'pointer' : 'default',
-          transition: 'all 0.15s',
-        }}
+        size="icon"
+        variant={selectedId && input.trim() ? 'default' : 'outline'}
+        title="Send message"
       >
-        {sending ? '…' : 'send'}
-      </button>
+        {sending ? <span className="text-sm">...</span> : <Send />}
+      </Button>
     </div>
     {error && (
-      <div style={{
-        position: 'absolute',
-        bottom: 68,
-        left: '50%',
-        transform: 'translateX(-50%)',
-        width: 460,
-        background: 'rgba(127, 29, 29, 0.9)',
-        border: '1px solid rgba(248,113,113,0.25)',
-        borderRadius: 6,
-        color: '#fecaca',
-        padding: '7px 10px',
-        fontSize: 10,
-        fontFamily: 'monospace',
-        pointerEvents: 'auto',
-        zIndex: 10,
-      }}>
+      <div className="pointer-events-auto absolute bottom-[76px] left-1/2 z-10 w-[min(560px,calc(100vw-32px))] -translate-x-1/2 rounded-md border border-red-400/25 bg-red-400/10 px-3 py-2 text-sm text-red-200 shadow-lg shadow-black/30 backdrop-blur-xl">
         {error}
       </div>
     )}

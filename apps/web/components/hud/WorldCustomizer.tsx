@@ -1,15 +1,20 @@
 'use client'
+
 import { useState } from 'react'
+import { Settings2 } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { cn } from '@/lib/utils'
 import { useWorldStore } from '@/store/worldStore'
 import { THEMES } from '@/game/systems/worldThemes'
 import type { ThemeId, AgentStyle } from '@/game/systems/worldThemes'
 
 const AGENT_STYLES: { id: AgentStyle; label: string; emoji: string }[] = [
-  { id: 'person',      label: 'Person',  emoji: '🧑' },
-  { id: 'sketch-cube', label: 'Sketch',  emoji: '🎲' },
-  { id: 'robot',       label: 'Robot',   emoji: '🤖' },
-  { id: 'blob',        label: 'Blob',    emoji: '👾' },
-  { id: 'minimal',     label: 'Minimal', emoji: '⬤'  },
+  { id: 'person', label: 'Person', emoji: 'P' },
+  { id: 'sketch-cube', label: 'Sketch', emoji: 'S' },
+  { id: 'robot', label: 'Robot', emoji: 'R' },
+  { id: 'blob', label: 'Blob', emoji: 'B' },
+  { id: 'minimal', label: 'Minimal', emoji: 'M' },
 ]
 
 const THEME_ORDER: ThemeId[] = ['office', 'hackerspace', 'gym', 'industrial']
@@ -22,159 +27,107 @@ export function WorldCustomizer() {
   const setAgentStyle = useWorldStore((s) => s.setAgentStyle)
 
   return (
-    <div
-      style={{
-        position: 'absolute',
-        bottom: 60,
-        left: 16,
-        pointerEvents: 'auto',
-        zIndex: 10,
-      }}
-    >
-      {/* Toggle button */}
-      <button
-        onClick={() => setOpen(o => !o)}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 5,
-          padding: '5px 10px',
-          background: open ? 'rgba(245,158,11,0.15)' : 'rgba(6,11,20,0.8)',
-          border: `1px solid ${open ? 'rgba(245,158,11,0.4)' : 'rgba(255,255,255,0.08)'}`,
-          borderRadius: 7,
-          color: open ? '#f59e0b' : '#475569',
-          fontSize: 9,
-          fontFamily: 'monospace',
-          cursor: 'pointer',
-          backdropFilter: 'blur(10px)',
-          transition: 'all 0.15s',
-          letterSpacing: 0.5,
-        }}
+    <div className="pointer-events-auto absolute bottom-16 left-4 z-10">
+      <Button
+        variant={open ? 'default' : 'outline'}
+        size="sm"
+        onClick={() => setOpen((value) => !value)}
+        className={open ? '' : 'bg-background/80 backdrop-blur-xl'}
       >
-        <span style={{ fontSize: 11 }}>⚙</span>
-        customize
-      </button>
+        <Settings2 />
+        Customize
+      </Button>
 
-      {/* Panel */}
       {open && (
-        <div
-          style={{
-            position: 'absolute',
-            bottom: 34,
-            left: 0,
-            width: 220,
-            background: 'rgba(6,11,20,0.92)',
-            backdropFilter: 'blur(16px)',
-            border: '1px solid rgba(255,255,255,0.09)',
-            borderRadius: 10,
-            padding: '12px 12px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 14,
-          }}
-        >
-          {/* World theme */}
-          <div>
-            <div style={{ fontSize: 8, color: '#475569', fontFamily: 'monospace', letterSpacing: 1, marginBottom: 8, textTransform: 'uppercase' }}>
-              World Theme
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 5 }}>
-              {THEME_ORDER.map(id => {
-                const t = THEMES[id]
-                const active = theme === id
-                return (
-                  <button
-                    key={id}
-                    onClick={() => setTheme(id)}
-                    style={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'center',
-                      gap: 3,
-                      padding: '8px 6px',
-                      background: active ? 'rgba(245,158,11,0.12)' : 'rgba(255,255,255,0.04)',
-                      border: `1px solid ${active ? 'rgba(245,158,11,0.45)' : 'rgba(255,255,255,0.07)'}`,
-                      borderRadius: 7,
-                      cursor: 'pointer',
-                      transition: 'all 0.12s',
-                    }}
-                  >
-                    <ThemeSwatch themeId={id} />
-                    <span style={{ fontSize: 13 }}>{t.emoji}</span>
-                    <span style={{ fontSize: 8, color: active ? '#f59e0b' : '#64748b', fontFamily: 'monospace', letterSpacing: 0.5 }}>
-                      {t.name}
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
+        <div className="absolute bottom-11 left-0 w-[260px] rounded-lg border border-white/10 bg-background/92 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
+          <SectionTitle>World Theme</SectionTitle>
+          <div className="grid grid-cols-2 gap-2">
+            {THEME_ORDER.map((id) => {
+              const currentTheme = THEMES[id]
+              const active = theme === id
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setTheme(id)}
+                  className={cn(
+                    'rounded-md border p-3 text-left transition-colors',
+                    active
+                      ? 'border-amber-400/45 bg-amber-400/10'
+                      : 'border-white/10 bg-white/[0.03] hover:bg-white/[0.06]',
+                  )}
+                >
+                  <ThemeSwatch themeId={id} />
+                  <div className={cn('mt-2 text-sm font-medium', active ? 'text-amber-200' : 'text-slate-300')}>
+                    {currentTheme.name}
+                  </div>
+                </button>
+              )
+            })}
           </div>
 
-          {/* Divider */}
-          <div style={{ height: 1, background: 'rgba(255,255,255,0.06)' }} />
+          <div className="my-4 h-px bg-white/10" />
 
-          {/* Agent style */}
-          <div>
-            <div style={{ fontSize: 8, color: '#475569', fontFamily: 'monospace', letterSpacing: 1, marginBottom: 8, textTransform: 'uppercase' }}>
-              Agent Style
-            </div>
-            <div style={{ display: 'flex', gap: 5 }}>
-              {AGENT_STYLES.map(s => {
-                const active = agentStyle === s.id
-                return (
-                  <button
-                    key={s.id}
-                    onClick={() => setAgentStyle(s.id)}
-                    style={{
-                      flex: 1,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'center',
-                      gap: 3,
-                      padding: '8px 4px',
-                      background: active ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)',
-                      border: `1px solid ${active ? 'rgba(99,102,241,0.45)' : 'rgba(255,255,255,0.07)'}`,
-                      borderRadius: 7,
-                      cursor: 'pointer',
-                      transition: 'all 0.12s',
-                    }}
-                  >
-                    <span style={{ fontSize: 16 }}>{s.emoji}</span>
-                    <span style={{ fontSize: 8, color: active ? '#818cf8' : '#475569', fontFamily: 'monospace' }}>
-                      {s.label}
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
+          <SectionTitle>Agent Style</SectionTitle>
+          <div className="grid grid-cols-5 gap-2">
+            {AGENT_STYLES.map((style) => {
+              const active = agentStyle === style.id
+              return (
+                <button
+                  key={style.id}
+                  type="button"
+                  onClick={() => setAgentStyle(style.id)}
+                  className={cn(
+                    'flex flex-col items-center gap-1 rounded-md border px-2 py-2 transition-colors',
+                    active
+                      ? 'border-indigo-300/45 bg-indigo-400/15 text-indigo-100'
+                      : 'border-white/10 bg-white/[0.03] text-muted-foreground hover:bg-white/[0.06]',
+                  )}
+                  title={style.label}
+                >
+                  <span className="flex size-7 items-center justify-center rounded border border-current/20 font-mono text-xs">
+                    {style.emoji}
+                  </span>
+                  <span className="text-[10px]">{style.label.slice(0, 3)}</span>
+                </button>
+              )
+            })}
           </div>
+
+          <Badge variant="outline" className="mt-4 w-full justify-center text-[11px]">
+            Visual changes apply to this world view
+          </Badge>
         </div>
       )}
     </div>
   )
 }
 
-function ThemeSwatch({ themeId }: { themeId: ThemeId }) {
-  const t = THEMES[themeId]
-  const roomVals = Object.values(t.rooms)
-  const swatchColors = [
-    t.floorA,
-    roomVals[0]?.fill ?? t.floorA,
-    roomVals[1]?.fill ?? t.floorB,
-    roomVals[2]?.fill ?? t.floorA,
-  ]
+function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ display: 'flex', gap: 2, height: 14 }}>
-      {swatchColors.map((c, i) => (
+    <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+      {children}
+    </div>
+  )
+}
+
+function ThemeSwatch({ themeId }: { themeId: ThemeId }) {
+  const theme = THEMES[themeId]
+  const roomVals = Object.values(theme.rooms)
+  const swatchColors = [
+    theme.floorA,
+    roomVals[0]?.fill ?? theme.floorA,
+    roomVals[1]?.fill ?? theme.floorB,
+    roomVals[2]?.fill ?? theme.floorA,
+  ]
+
+  return (
+    <div className="flex h-4 gap-1">
+      {swatchColors.map((color, index) => (
         <div
-          key={i}
-          style={{
-            width: 12,
-            height: 14,
-            borderRadius: 2,
-            background: '#' + c.toString(16).padStart(6, '0'),
-            border: '1px solid rgba(255,255,255,0.1)',
-          }}
+          key={index}
+          className="h-4 flex-1 rounded-sm border border-white/10"
+          style={{ background: `#${color.toString(16).padStart(6, '0')}` }}
         />
       ))}
     </div>

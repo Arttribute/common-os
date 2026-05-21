@@ -1,6 +1,10 @@
 'use client'
+
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { ArrowLeft } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { FleetPanel } from './FleetPanel'
 import { Inspector } from './Inspector'
 import { CommandBar } from './CommandBar'
@@ -13,100 +17,51 @@ export function HUD() {
   const router = useRouter()
 
   return (
-    <div
-      style={{
-        position: 'absolute',
-        inset: 0,
-        pointerEvents: 'none',
-        zIndex: 10,
-        fontFamily: 'monospace',
-      }}
-    >
-      {/* Top-left: logo + connection status + back button */}
-      <div
-        style={{
-          position: 'absolute',
-          top: 16,
-          left: 16,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          pointerEvents: 'auto',
-        }}
-      >
-        <button
-          onClick={() => router.push('/dashboard')}
-          style={{
-            background: 'none',
-            border: '1px solid rgba(255,255,255,0.08)',
-            borderRadius: 5,
-            color: '#64748b',
-            fontSize: 10,
-            fontFamily: 'monospace',
-            padding: '3px 8px',
-            cursor: 'pointer',
-            letterSpacing: 0.3,
-            lineHeight: 1,
-          }}
-        >
-          ← fleets
-        </button>
-        <Link href="/" style={{ fontSize: 14, fontWeight: 700, color: '#e2e8f0', letterSpacing: -0.5, textDecoration: 'none' }}>
-          common<span style={{ color: '#f59e0b' }}>os</span>
+    <div className="pointer-events-none absolute inset-0 z-10 font-sans">
+      <div className="pointer-events-auto absolute left-4 top-4 flex items-center gap-2 rounded-lg border border-white/10 bg-background/85 px-2 py-2 shadow-xl shadow-black/20 backdrop-blur-xl">
+        <Button variant="ghost" size="sm" onClick={() => router.push('/dashboard')} className="h-8 px-2 text-muted-foreground">
+          <ArrowLeft />
+          Fleets
+        </Button>
+        <Link href="/" className="px-2 text-sm font-semibold tracking-tight text-foreground">
+          Common<span className="text-primary">OS</span>
         </Link>
         <ConnectionDot status={socketStatus} />
       </div>
 
-      {/* Controls hint */}
-      <div
-        style={{
-          position: 'absolute',
-          bottom: 60,
-          right: 16,
-          fontSize: 10,
-          color: '#475569',
-          fontFamily: 'monospace',
-          lineHeight: 1.8,
-          textAlign: 'right',
-          pointerEvents: 'none',
-        }}
-      >
-        <div>arrows / WASD — pan</div>
-        <div>scroll — zoom</div>
-        <div>click agent — select</div>
+      <div className="pointer-events-none absolute bottom-16 right-4 rounded-md border border-white/10 bg-background/70 px-3 py-2 text-right text-[11px] leading-5 text-muted-foreground shadow-lg shadow-black/20 backdrop-blur-xl">
+        <div>Arrows / WASD to pan</div>
+        <div>Scroll to zoom</div>
+        <div>Click an agent to select</div>
       </div>
 
-      {/* Right: fleet panel + inspector */}
       <FleetPanel />
       <Inspector />
-
-      {/* Bottom-left: world customizer */}
       <WorldCustomizer />
-
-      {/* Bottom: command bar */}
       <CommandBar />
-
-      {/* Agent detail modal — rendered outside the canvas layer */}
       <AgentDetailModal />
     </div>
   )
 }
 
 function ConnectionDot({ status }: { status: string }) {
-  const colors: Record<string, string> = {
-    connected:    '#10b981',
-    connecting:   '#f59e0b',
-    disconnected: '#4b5563',
-    error:        '#ef4444',
+  const tone: Record<string, string> = {
+    connected: 'bg-emerald-400',
+    connecting: 'bg-amber-400',
+    disconnected: 'bg-slate-500',
+    error: 'bg-red-400',
   }
   const labels: Record<string, string> = {
-    connected: 'live', connecting: 'connecting', disconnected: 'demo', error: 'error',
+    connected: 'Live',
+    connecting: 'Connecting',
+    disconnected: 'Demo',
+    error: 'Error',
   }
-  const color = colors[status] ?? '#4b5563'
+
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-      <span style={{ width: 5, height: 5, borderRadius: '50%', background: color, display: 'inline-block' }} />
-      <span style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace' }}>{labels[status] ?? status}</span>
-    </div>
+    <Badge variant="outline" className="gap-2">
+      <span className={`size-1.5 rounded-full ${tone[status] ?? 'bg-slate-500'}`} />
+      {labels[status] ?? status}
+    </Badge>
   )
 }

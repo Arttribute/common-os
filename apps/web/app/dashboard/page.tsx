@@ -1,11 +1,38 @@
 'use client'
-import React, { useEffect, useState, useCallback } from 'react'
+
+import React, { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { usePrivy } from '@privy-io/react-auth'
+import {
+  Box,
+  ChevronDown,
+  ChevronRight,
+  CirclePlus,
+  ExternalLink,
+  Loader2,
+  LogOut,
+  MonitorUp,
+  Settings,
+  Trash2,
+  UserPlus,
+} from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import { cn } from '@/lib/utils'
 import { useAuth } from '@/hooks/useAuth'
-
-// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface Fleet {
   _id: string
@@ -30,61 +57,28 @@ interface Agent {
   createdAt: string
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-const mono: React.CSSProperties = { fontFamily: 'monospace' }
-
-const badge = (color: string): React.CSSProperties => ({
-  display: 'inline-block',
-  padding: '2px 7px',
-  borderRadius: 4,
-  fontSize: 10,
-  fontFamily: 'monospace',
-  letterSpacing: 0.5,
-  background: `${color}18`,
-  color,
-  border: `1px solid ${color}40`,
-})
-
-const statusColor: Record<string, string> = {
-  running: '#10b981',
-  starting: '#6366f1',
-  idle: '#10b981',
-  provisioning: '#6366f1',
-  stopped: '#4b5563',
-  terminated: '#4b5563',
-  error: '#ef4444',
+const statusTone: Record<string, 'success' | 'warning' | 'destructive' | 'secondary'> = {
+  running: 'success',
+  idle: 'success',
+  starting: 'warning',
+  provisioning: 'warning',
+  stopped: 'secondary',
+  terminated: 'secondary',
+  error: 'destructive',
 }
 
-function statusDot(status: string) {
-  const c = statusColor[status] ?? '#4b5563'
-  return (
-    <span
-      style={{
-        display: 'inline-block',
-        width: 7,
-        height: 7,
-        borderRadius: '50%',
-        background: c,
-        boxShadow: `0 0 4px ${c}`,
-        marginRight: 6,
-        flexShrink: 0,
-      }}
-    />
-  )
-}
+const selectClass =
+  'flex h-10 w-full rounded-md border border-input bg-background/80 px-3 py-2 text-sm shadow-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50'
 
 function shortId(value: string | null | undefined): string {
   if (!value) return 'missing'
   if (value.length <= 16) return value
-  return `${value.slice(0, 10)}…${value.slice(-4)}`
+  return `${value.slice(0, 10)}...${value.slice(-4)}`
 }
 
 function hasWalletIdentity(value: string | null | undefined): boolean {
   return Boolean(value && /^0x[a-fA-F0-9]{40}$/.test(value))
 }
-
-// ── Dashboard ────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
   const { ready } = usePrivy()
@@ -97,21 +91,18 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // ── Create fleet form state ──────────────────────────────────────────────
   const [showCreateFleet, setShowCreateFleet] = useState(false)
   const [fleetName, setFleetName] = useState('')
   const [fleetWorld, setFleetWorld] = useState('office')
   const [creatingFleet, setCreatingFleet] = useState(false)
 
-  // ── Create agent form state ───────────────────────────────────────────────
-  const [agentForm, setAgentForm] = useState<string | null>(null) // fleetId
+  const [agentForm, setAgentForm] = useState<string | null>(null)
   const [agentRole, setAgentRole] = useState('')
   const [agentPrompt, setAgentPrompt] = useState('')
   const [agentTier, setAgentTier] = useState<'manager' | 'worker'>('worker')
   const [agentPath, setAgentPath] = useState<'native' | 'openclaw'>('native')
   const [deployingAgent, setDeployingAgent] = useState(false)
 
-  // Redirect to /auth if not logged in
   useEffect(() => {
     if (ready && !authenticated) router.replace('/auth')
   }, [ready, authenticated, router])
@@ -123,9 +114,9 @@ export default function DashboardPage() {
     try {
       const res = await apiFetch('/fleets')
       if (res.ok) setFleets(await res.json() as Fleet[])
-      else setError('could not load fleets')
+      else setError('Could not load fleets.')
     } catch {
-      setError('could not connect to API')
+      setError('Could not connect to the API.')
     } finally {
       setLoading(false)
     }
@@ -194,7 +185,6 @@ export default function DashboardPage() {
           ...prev,
           [fleetId]: [agent, ...(prev[fleetId] ?? [])],
         }))
-        // Update agentCount in fleet list
         setFleets((prev) =>
           prev.map((f) =>
             f._id === fleetId ? { ...f, agentCount: f.agentCount + 1 } : f,
@@ -212,7 +202,7 @@ export default function DashboardPage() {
   const terminateAgent = async (fleetId: string, agentId: string) => {
     const res = await apiFetch(`/fleets/${fleetId}/agents/${agentId}`, { method: 'DELETE' })
     if (!res.ok) {
-      setError(`could not terminate agent (${res.status})`)
+      setError(`Could not terminate agent (${res.status}).`)
       return
     }
     setAgentsByFleet((prev) => ({
@@ -226,213 +216,279 @@ export default function DashboardPage() {
     )
   }
 
-  // ── Loading / auth states ─────────────────────────────────────────────────
-
   if (!ready || (!authenticated && !onboarding)) {
-    return (
-      <div style={{ ...centeredPage }}>
-        <span style={{ color: '#64748b', fontSize: 12, ...mono }}>loading…</span>
-      </div>
-    )
+    return <CenteredState label="Loading dashboard..." />
   }
 
   if (onboarding || (authenticated && !tenantId)) {
-    return (
-      <div style={{ ...centeredPage }}>
-        <span style={{ color: '#64748b', fontSize: 12, ...mono }}>setting up your account…</span>
-      </div>
-    )
+    return <CenteredState label="Setting up your account..." />
   }
 
-  // ── Main dashboard ────────────────────────────────────────────────────────
-
-  const activeAgentFleet = agentForm ? fleets.find(f => f._id === agentForm) : null
+  const activeAgentFleet = agentForm ? fleets.find((f) => f._id === agentForm) : null
+  const activeFleets = fleets.filter((fleet) => fleet.status === 'active').length
+  const totalAgents = fleets.reduce((sum, fleet) => sum + fleet.agentCount, 0)
 
   return (
-    <div style={{ minHeight: '100vh', background: '#060b14', color: '#e2e8f0', ...mono }}>
-
-      {/* Header */}
-      <header
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          padding: '14px 24px',
-          borderBottom: '1px solid rgba(255,255,255,0.06)',
-          gap: 12,
-        }}
-      >
-        <Link href="/" style={{ fontSize: 16, fontWeight: 700, letterSpacing: -0.5, color: 'inherit', textDecoration: 'none' }}>
-          common<span style={{ color: '#f59e0b' }}>os</span>
-        </Link>
-        <span style={{ marginLeft: 'auto' }} />
-        <UserEmail />
-        <button onClick={() => router.push('/settings')} style={ghostBtn}>settings</button>
-        <button onClick={() => void logout()} style={ghostBtn}>sign out</button>
+    <div className="min-h-screen bg-background text-foreground">
+      <header className="sticky top-0 z-30 border-b border-white/10 bg-background/95 backdrop-blur">
+        <div className="mx-auto flex h-16 max-w-7xl items-center gap-4 px-6">
+          <Link href="/" className="text-lg font-semibold tracking-tight">
+            Common<span className="text-primary">OS</span>
+          </Link>
+          <Badge variant="secondary" className="hidden sm:inline-flex">
+            Control plane
+          </Badge>
+          <div className="ml-auto flex items-center gap-2">
+            <UserEmail />
+            <Button variant="outline" size="sm" onClick={() => router.push('/settings')}>
+              <Settings />
+              Settings
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => void logout()}>
+              <LogOut />
+              Sign out
+            </Button>
+          </div>
+        </div>
       </header>
 
-      <main style={{ maxWidth: 820, margin: '0 auto', padding: '32px 24px' }}>
-
-        {/* Section header */}
-        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 24, gap: 12 }}>
-          <h2 style={{ fontSize: 14, fontWeight: 600, color: '#cbd5e1', margin: 0 }}>fleets</h2>
-          <span style={{ fontSize: 10, color: '#64748b', background: 'rgba(255,255,255,0.04)', padding: '2px 7px', borderRadius: 4 }}>
-            {fleets.length}
-          </span>
-          <button style={{ ...actionBtn, marginLeft: 'auto' }} onClick={() => setShowCreateFleet(true)}>
-            + new fleet
-          </button>
+      <main className="mx-auto max-w-7xl px-6 py-8">
+        <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+          <div>
+            <Badge variant="outline" className="bg-background">
+              Fleets
+            </Badge>
+            <h1 className="mt-3 text-3xl font-semibold tracking-tight">Agent operations</h1>
+            <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+              Create fleets, deploy agents, inspect runtime health, and open the live world view from a single surface.
+            </p>
+          </div>
+          <Button onClick={() => setShowCreateFleet(true)}>
+            <CirclePlus />
+            New fleet
+          </Button>
         </div>
 
-        {/* Error */}
+        <div className="mt-8 grid gap-4 md:grid-cols-3">
+          <MetricCard label="Total fleets" value={fleets.length} />
+          <MetricCard label="Active fleets" value={activeFleets} />
+          <MetricCard label="Agents deployed" value={totalAgents} />
+        </div>
+
         {error && (
-          <div style={{ ...panel, color: '#ef4444', fontSize: 11, marginBottom: 16 }}>{error}</div>
+          <div className="mt-6 rounded-md border border-red-400/25 bg-red-400/10 px-4 py-3 text-sm text-red-300">
+            {error}
+          </div>
         )}
 
-        {/* Fleet list */}
-        {loading ? (
-          <div style={{ fontSize: 11, color: '#64748b', padding: '16px 0' }}>loading fleets…</div>
-        ) : fleets.length === 0 ? (
-          <div style={{ ...panel, textAlign: 'center', padding: 40 }}>
-            <div style={{ fontSize: 13, color: '#94a3b8', marginBottom: 8 }}>no fleets yet</div>
-            <div style={{ fontSize: 12, color: '#64748b' }}>create a fleet to deploy your first agents</div>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {fleets.map((fleet) => (
-              <FleetCard
-                key={fleet._id}
-                fleet={fleet}
-                agents={agentsByFleet[fleet._id]}
-                expanded={expandedFleet === fleet._id}
-                onToggle={() => void toggleFleet(fleet._id)}
-                onOpenWorld={() => router.push(`/world?fleet=${fleet._id}`)}
-                onDeployAgent={() => setAgentForm(fleet._id)}
-                onTerminateAgent={(agentId) => void terminateAgent(fleet._id, agentId)}
-              />
-            ))}
-          </div>
-        )}
+        <section className="mt-6">
+          {loading ? (
+            <Card>
+              <CardContent className="flex items-center gap-2 p-6 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+                Loading fleets...
+              </CardContent>
+            </Card>
+          ) : fleets.length === 0 ? (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center px-6 py-16 text-center">
+                <div className="flex size-12 items-center justify-center rounded-md border bg-muted">
+                  <Box className="size-6 text-muted-foreground" />
+                </div>
+                <h2 className="mt-4 text-lg font-semibold">No fleets yet</h2>
+                <p className="mt-2 max-w-sm text-sm text-muted-foreground">
+                  Create a fleet to deploy your first isolated agent runtime.
+                </p>
+                <Button className="mt-5" onClick={() => setShowCreateFleet(true)}>
+                  <CirclePlus />
+                  New fleet
+                </Button>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-3">
+              {fleets.map((fleet) => (
+                <FleetCard
+                  key={fleet._id}
+                  fleet={fleet}
+                  agents={agentsByFleet[fleet._id]}
+                  expanded={expandedFleet === fleet._id}
+                  onToggle={() => void toggleFleet(fleet._id)}
+                  onOpenWorld={() => router.push(`/world?fleet=${fleet._id}`)}
+                  onDeployAgent={() => setAgentForm(fleet._id)}
+                  onTerminateAgent={(agentId) => void terminateAgent(fleet._id, agentId)}
+                />
+              ))}
+            </div>
+          )}
+        </section>
       </main>
 
-      {/* ── Create fleet dialog ── */}
-      {showCreateFleet && (
-        <DialogBackdrop onClose={() => { setShowCreateFleet(false); setFleetName(''); setFleetWorld('office') }}>
-          <form
-            onSubmit={(e) => void createFleet(e)}
-            style={{ display: 'flex', flexDirection: 'column', gap: 16 }}
-          >
-            <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0', marginBottom: 4 }}>new fleet</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <label style={labelStyle}>fleet name</label>
-              <input
-                style={inputStyle}
-                placeholder="my-agent-fleet"
+      <Dialog open={showCreateFleet} onOpenChange={(open) => {
+        setShowCreateFleet(open)
+        if (!open) {
+          setFleetName('')
+          setFleetWorld('office')
+        }
+      }}>
+        <DialogContent>
+          <form onSubmit={(e) => void createFleet(e)} className="space-y-5">
+            <DialogHeader>
+              <DialogTitle>Create fleet</DialogTitle>
+              <DialogDescription>
+                Choose a name and world template for this group of agent runtimes.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2">
+              <Label htmlFor="fleet-name">Fleet name</Label>
+              <Input
+                id="fleet-name"
+                placeholder="product-ops"
                 value={fleetName}
                 onChange={(e) => setFleetName(e.target.value)}
                 autoFocus
                 required
               />
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <label style={labelStyle}>world type</label>
-              <select style={inputStyle} value={fleetWorld} onChange={(e) => setFleetWorld(e.target.value)}>
-                <option value="office">office</option>
-                <option value="research-lab">research lab</option>
-                <option value="command-center">command center</option>
+            <div className="space-y-2">
+              <Label htmlFor="fleet-world">World type</Label>
+              <select
+                id="fleet-world"
+                className={selectClass}
+                value={fleetWorld}
+                onChange={(e) => setFleetWorld(e.target.value)}
+              >
+                <option value="office">Office</option>
+                <option value="research-lab">Research lab</option>
+                <option value="command-center">Command center</option>
               </select>
             </div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
-              <button type="button" style={ghostBtn} onClick={() => { setShowCreateFleet(false); setFleetName(''); setFleetWorld('office') }}>
-                cancel
-              </button>
-              <button type="submit" style={actionBtn} disabled={creatingFleet}>
-                {creatingFleet ? 'creating…' : 'create fleet'}
-              </button>
-            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setShowCreateFleet(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={creatingFleet}>
+                {creatingFleet && <Loader2 className="animate-spin" />}
+                Create fleet
+              </Button>
+            </DialogFooter>
           </form>
-        </DialogBackdrop>
-      )}
+        </DialogContent>
+      </Dialog>
 
-      {/* ── Deploy agent dialog ── */}
-      {agentForm && (
-        <DialogBackdrop onClose={() => { setAgentForm(null); setAgentRole(''); setAgentPrompt('') }}>
-          <form
-            onSubmit={(e) => void deployAgent(e, agentForm)}
-            style={{ display: 'flex', flexDirection: 'column', gap: 16 }}
-          >
-            <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0', marginBottom: 4 }}>
-              deploy agent
-              {activeAgentFleet && (
-                <span style={{ fontSize: 11, color: '#64748b', fontWeight: 400, marginLeft: 8 }}>
-                  → {activeAgentFleet.name}
-                </span>
-              )}
-            </div>
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 140px' }}>
-                <label style={labelStyle}>role</label>
-                <input
-                  style={inputStyle}
-                  placeholder="e.g. researcher"
-                  value={agentRole}
-                  onChange={(e) => setAgentRole(e.target.value)}
-                  autoFocus
-                  required
+      <Dialog open={Boolean(agentForm)} onOpenChange={(open) => {
+        if (!open) {
+          setAgentForm(null)
+          setAgentRole('')
+          setAgentPrompt('')
+        }
+      }}>
+        <DialogContent>
+          {agentForm && (
+            <form onSubmit={(e) => void deployAgent(e, agentForm)} className="space-y-5">
+              <DialogHeader>
+                <DialogTitle>Deploy agent</DialogTitle>
+                <DialogDescription>
+                  {activeAgentFleet
+                    ? `Add a runtime to ${activeAgentFleet.name}.`
+                    : 'Add a runtime to this fleet.'}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="grid gap-4 sm:grid-cols-3">
+                <div className="space-y-2 sm:col-span-3">
+                  <Label htmlFor="agent-role">Role</Label>
+                  <Input
+                    id="agent-role"
+                    placeholder="backend engineer"
+                    value={agentRole}
+                    onChange={(e) => setAgentRole(e.target.value)}
+                    autoFocus
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="agent-tier">Tier</Label>
+                  <select
+                    id="agent-tier"
+                    className={selectClass}
+                    value={agentTier}
+                    onChange={(e) => setAgentTier(e.target.value as 'manager' | 'worker')}
+                  >
+                    <option value="worker">Worker</option>
+                    <option value="manager">Manager</option>
+                  </select>
+                </div>
+                <div className="space-y-2 sm:col-span-2">
+                  <Label htmlFor="agent-path">Integration</Label>
+                  <select
+                    id="agent-path"
+                    className={selectClass}
+                    value={agentPath}
+                    onChange={(e) => setAgentPath(e.target.value as 'native' | 'openclaw')}
+                  >
+                    <option value="native">Native</option>
+                    <option value="openclaw">OpenClaw</option>
+                  </select>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="agent-prompt">System prompt</Label>
+                <Textarea
+                  id="agent-prompt"
+                  placeholder={`You are a ${agentRole || 'research'} agent...`}
+                  value={agentPrompt}
+                  onChange={(e) => setAgentPrompt(e.target.value)}
                 />
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                <label style={labelStyle}>tier</label>
-                <select style={inputStyle} value={agentTier} onChange={(e) => setAgentTier(e.target.value as 'manager' | 'worker')}>
-                  <option value="worker">worker</option>
-                  <option value="manager">manager</option>
-                </select>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                <label style={labelStyle}>integration</label>
-                <select style={inputStyle} value={agentPath} onChange={(e) => setAgentPath(e.target.value as 'native' | 'openclaw')}>
-                  <option value="native">native</option>
-                  <option value="openclaw">openclaw</option>
-                </select>
-              </div>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <label style={labelStyle}>system prompt (optional)</label>
-              <textarea
-                style={{ ...inputStyle, minHeight: 72, resize: 'vertical' }}
-                placeholder={`You are a ${agentRole || 'research'} agent…`}
-                value={agentPrompt}
-                onChange={(e) => setAgentPrompt(e.target.value)}
-              />
-            </div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
-              <button type="button" style={ghostBtn} onClick={() => { setAgentForm(null); setAgentRole(''); setAgentPrompt('') }}>
-                cancel
-              </button>
-              <button type="submit" style={actionBtn} disabled={deployingAgent}>
-                {deployingAgent ? 'deploying…' : 'deploy agent'}
-              </button>
-            </div>
-          </form>
-        </DialogBackdrop>
-      )}
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setAgentForm(null)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={deployingAgent}>
+                  {deployingAgent && <Loader2 className="animate-spin" />}
+                  Deploy agent
+                </Button>
+              </DialogFooter>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
 
-// ── UserEmail helper ──────────────────────────────────────────────────────────
+function CenteredState({ label }: { label: string }) {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background">
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="size-4 animate-spin" />
+        {label}
+      </div>
+    </div>
+  )
+}
 
 function UserEmail() {
   const { user } = usePrivy()
   const email = user?.email?.address ?? user?.wallet?.address?.slice(0, 10)
   if (!email) return null
   return (
-    <span style={{ fontSize: 11, color: '#64748b', letterSpacing: 0.5 }}>
+    <span className="hidden max-w-44 truncate text-sm text-muted-foreground md:inline">
       {email}
     </span>
   )
 }
 
-// ── FleetCard ─────────────────────────────────────────────────────────────────
+function MetricCard({ label, value }: { label: string; value: number }) {
+  return (
+    <Card>
+      <CardContent className="p-5">
+        <div className="text-sm text-muted-foreground">{label}</div>
+        <div className="mt-2 text-3xl font-semibold tracking-tight">{value}</div>
+      </CardContent>
+    </Card>
+  )
+}
 
 function FleetCard({
   fleet,
@@ -452,164 +508,141 @@ function FleetCard({
   onTerminateAgent: (agentId: string) => void
 }) {
   return (
-    <div style={panel}>
-      {/* Fleet header row */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }} onClick={onToggle}>
-        <div style={{ width: 6, height: 6, borderRadius: '50%', background: fleet.status === 'active' ? '#10b981' : '#4b5563' }} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{fleet.name}</span>
-        <span style={badge('#6366f1')}>{fleet.worldType}</span>
-        <span style={{ marginLeft: 'auto', fontSize: 11, color: '#64748b' }}>{fleet.agentCount} agents</span>
-        <button onClick={(e) => { e.stopPropagation(); onOpenWorld() }} style={{ ...actionBtn, fontSize: 9 }}>
-          open world →
-        </button>
-        <span style={{ fontSize: 10, color: '#64748b', marginLeft: 4 }}>{expanded ? '▲' : '▼'}</span>
-      </div>
-
-      {/* Expanded section */}
-      {expanded && (
-        <div style={{ marginTop: 14, borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: 12 }}>
-          {/* Agent list — scrollable when many agents */}
-          {!agents ? (
-            <div style={{ fontSize: 11, color: '#64748b', padding: '8px 0' }}>loading agents…</div>
-          ) : agents.length === 0 ? (
-            <div style={{ fontSize: 11, color: '#64748b', padding: '8px 0' }}>no agents deployed</div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12, maxHeight: 280, overflowY: 'auto' }}>
-              {agents.map((agent) => {
-                const walletAddress = agent.commons?.walletAddress ?? null
-                const agcOk = hasWalletIdentity(walletAddress)
-                return (
-                  <div
-                    key={agent._id}
-                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: 'rgba(255,255,255,0.03)', borderRadius: 6 }}
-                  >
-                    {statusDot(agent.status)}
-                    <span style={{ fontSize: 11, color: '#cbd5e1', textTransform: 'capitalize' }}>{agent.config.role}</span>
-                    <span style={badge(agent.permissionTier === 'manager' ? '#f59e0b' : '#6366f1')}>{agent.permissionTier}</span>
-                    <span style={badge('#4b5563')}>{agent.config.integrationPath}</span>
-                    {agent.config.integrationPath === 'native' && (
-                      <span style={badge(agcOk ? '#10b981' : '#ef4444')} title={walletAddress ?? 'Agent wallet not resolved'}>
-                        wallet {shortId(walletAddress)}
-                      </span>
-                    )}
-                    <span style={{ marginLeft: 'auto', fontSize: 10, color: '#64748b' }}>{agent.status}</span>
-                    <button
-                      onClick={() => onTerminateAgent(agent._id)}
-                      style={{ background: 'none', border: 'none', color: '#ef444460', fontSize: 10, cursor: 'pointer', fontFamily: 'monospace', padding: '0 4px' }}
-                      title="terminate"
-                    >
-                      ×
-                    </button>
-                  </div>
-                )
-              })}
+    <Card>
+      <CardContent className="p-0">
+        <button
+          type="button"
+          className="flex w-full flex-col gap-4 p-5 text-left transition-colors hover:bg-muted/40 lg:flex-row lg:items-center"
+          onClick={onToggle}
+        >
+          <div className="flex min-w-0 flex-1 items-start gap-3">
+            <div className="mt-1 flex size-9 shrink-0 items-center justify-center rounded-md border bg-background">
+              {expanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
             </div>
-          )}
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="truncate text-base font-semibold">{fleet.name}</h2>
+                <StatusBadge status={fleet.status} />
+                <Badge variant="outline">{fleet.worldType}</Badge>
+              </div>
+              <div className="mt-1 text-sm text-muted-foreground">
+                {fleet.agentCount} agents deployed
+              </div>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2 lg:justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation()
+                onOpenWorld()
+              }}
+            >
+              <MonitorUp />
+              Open world
+              <ExternalLink />
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation()
+                onDeployAgent()
+              }}
+            >
+              <UserPlus />
+              Deploy agent
+            </Button>
+          </div>
+        </button>
 
-          <button style={ghostBtn} onClick={onDeployAgent}>+ deploy agent</button>
-        </div>
-      )}
-    </div>
+        {expanded && (
+          <div className="border-t bg-background p-5">
+            {!agents ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+                Loading agents...
+              </div>
+            ) : agents.length === 0 ? (
+              <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
+                No agents deployed in this fleet.
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-md border">
+                <div className="grid grid-cols-[1.2fr_0.8fr_0.8fr_1fr_96px] gap-3 border-b bg-muted/50 px-4 py-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  <span>Role</span>
+                  <span>Tier</span>
+                  <span>Runtime</span>
+                  <span>Identity</span>
+                  <span className="text-right">Actions</span>
+                </div>
+                <div className="max-h-80 overflow-y-auto">
+                  {agents.map((agent) => {
+                    const walletAddress = agent.commons?.walletAddress ?? null
+                    const agcOk = hasWalletIdentity(walletAddress)
+                    return (
+                      <div
+                        key={agent._id}
+                        className="grid grid-cols-[1.2fr_0.8fr_0.8fr_1fr_96px] items-center gap-3 border-b px-4 py-3 text-sm last:border-b-0"
+                      >
+                        <div className="min-w-0">
+                          <div className="truncate font-medium capitalize">{agent.config.role}</div>
+                          <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                            <span
+                              className={cn(
+                                'size-2 rounded-full',
+                                agent.status === 'error'
+                                  ? 'bg-red-500'
+                                  : agent.status === 'running' || agent.status === 'idle'
+                                    ? 'bg-emerald-500'
+                                    : 'bg-amber-500',
+                              )}
+                            />
+                            {agent.status}
+                          </div>
+                        </div>
+                        <Badge variant={agent.permissionTier === 'manager' ? 'warning' : 'secondary'}>
+                          {agent.permissionTier}
+                        </Badge>
+                        <Badge variant="outline">{agent.config.integrationPath}</Badge>
+                        <span
+                          className={cn('truncate text-xs', agcOk ? 'text-emerald-300' : 'text-muted-foreground')}
+                          title={walletAddress ?? 'Agent wallet not resolved'}
+                        >
+                          {agent.config.integrationPath === 'native'
+                            ? `wallet ${shortId(walletAddress)}`
+                            : 'external runtime'}
+                        </span>
+                        <div className="text-right">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-muted-foreground hover:text-red-600"
+                            onClick={() => onTerminateAgent(agent._id)}
+                            title="Terminate agent"
+                          >
+                            <Trash2 />
+                          </Button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 
-// ── Dialog ────────────────────────────────────────────────────────────────────
-
-function DialogBackdrop({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
-  // Close on Escape
-  React.useEffect(() => {
-    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose() }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
-
+function StatusBadge({ status }: { status: string }) {
   return (
-    <div
-      style={{
-        position: 'fixed', inset: 0,
-        background: 'rgba(0,0,0,0.65)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        zIndex: 100,
-      }}
-      onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
-    >
-      <div
-        style={{
-          width: '100%', maxWidth: 460,
-          background: '#0d1525',
-          border: '1px solid rgba(255,255,255,0.08)',
-          borderRadius: 10,
-          padding: '24px 28px',
-          boxShadow: '0 24px 64px rgba(0,0,0,0.7)',
-          fontFamily: 'monospace',
-        }}
-      >
-        {children}
-      </div>
-    </div>
+    <Badge variant={statusTone[status] ?? 'secondary'} className="capitalize">
+      {status}
+    </Badge>
   )
-}
-
-// ── Styles ────────────────────────────────────────────────────────────────────
-
-const centeredPage: React.CSSProperties = {
-  width: '100vw',
-  height: '100vh',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  background: '#060b14',
-  fontFamily: 'monospace',
-}
-
-const panel: React.CSSProperties = {
-  background: 'rgba(255,255,255,0.025)',
-  border: '1px solid rgba(255,255,255,0.07)',
-  borderRadius: 10,
-  padding: '14px 16px',
-  fontFamily: 'monospace',
-}
-
-const actionBtn: React.CSSProperties = {
-  padding: '7px 14px',
-  background: 'rgba(245, 158, 11, 0.10)',
-  border: '1px solid rgba(245, 158, 11, 0.3)',
-  borderRadius: 6,
-  color: '#f59e0b',
-  fontSize: 11,
-  fontFamily: 'monospace',
-  cursor: 'pointer',
-  letterSpacing: 0.3,
-  whiteSpace: 'nowrap',
-}
-
-const ghostBtn: React.CSSProperties = {
-  padding: '7px 12px',
-  background: 'none',
-  border: '1px solid rgba(255,255,255,0.08)',
-  borderRadius: 6,
-  color: '#94a3b8',
-  fontSize: 11,
-  fontFamily: 'monospace',
-  cursor: 'pointer',
-  letterSpacing: 0.3,
-}
-
-const labelStyle: React.CSSProperties = {
-  fontSize: 10,
-  color: '#64748b',
-  letterSpacing: 0.5,
-  textTransform: 'uppercase',
-}
-
-const inputStyle: React.CSSProperties = {
-  background: 'rgba(255,255,255,0.04)',
-  border: '1px solid rgba(255,255,255,0.10)',
-  borderRadius: 6,
-  color: '#e2e8f0',
-  fontSize: 11,
-  fontFamily: 'monospace',
-  padding: '7px 10px',
-  outline: 'none',
-  width: '100%',
 }

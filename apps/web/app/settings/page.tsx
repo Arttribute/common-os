@@ -1,39 +1,14 @@
 'use client'
+
 import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { usePrivy } from '@privy-io/react-auth'
+import { ArrowLeft, Check, Copy, Eye, EyeOff, KeyRound, Terminal, User } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useAuthStore } from '@/store/authStore'
-
-const mono: React.CSSProperties = { fontFamily: 'monospace' }
-
-const panel: React.CSSProperties = {
-  background: 'rgba(255,255,255,0.025)',
-  border: '1px solid rgba(255,255,255,0.07)',
-  borderRadius: 10,
-  padding: '18px 20px',
-  fontFamily: 'monospace',
-}
-
-const label: React.CSSProperties = {
-  fontSize: 10,
-  color: '#64748b',
-  letterSpacing: 1,
-  textTransform: 'uppercase',
-  marginBottom: 6,
-}
-
-const codeBlock: React.CSSProperties = {
-  background: 'rgba(0,0,0,0.4)',
-  border: '1px solid rgba(255,255,255,0.07)',
-  borderRadius: 6,
-  padding: '10px 14px',
-  fontSize: 11,
-  color: '#94a3b8',
-  fontFamily: 'monospace',
-  wordBreak: 'break-all',
-  position: 'relative',
-}
 
 export default function SettingsPage() {
   const { user } = usePrivy()
@@ -44,191 +19,180 @@ export default function SettingsPage() {
   const [showKey, setShowKey] = useState(false)
 
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'https://api.commonos.dev'
-  const email = user?.email?.address ?? user?.wallet?.address?.slice(0, 16) ?? '—'
+  const email = user?.email?.address ?? user?.wallet?.address?.slice(0, 16) ?? '-'
+  const loginCmd = apiKey
+    ? `cos auth login --key ${apiKey} --url ${apiUrl}`
+    : `cos auth login --key <your-api-key> --url ${apiUrl}`
 
-  async function copy(text: string, setCopied: (v: boolean) => void) {
+  async function copy(text: string, setCopied: (value: boolean) => void) {
     await navigator.clipboard.writeText(text)
     setCopied(true)
     setTimeout(() => setCopied(false), 1800)
   }
 
-  const loginCmd = apiKey
-    ? `cos auth login --key ${apiKey} --url ${apiUrl}`
-    : `cos auth login --key <your-api-key> --url ${apiUrl}`
-
   return (
-    <div style={{ minHeight: '100vh', background: '#060b14', color: '#e2e8f0', ...mono }}>
-
-      {/* Header */}
-      <header style={{
-        display: 'flex',
-        alignItems: 'center',
-        padding: '14px 24px',
-        borderBottom: '1px solid rgba(255,255,255,0.06)',
-        gap: 12,
-      }}>
-        <Link href="/" style={{ fontSize: 16, fontWeight: 700, letterSpacing: -0.5, color: 'inherit', textDecoration: 'none' }}>
-          common<span style={{ color: '#f59e0b' }}>os</span>
-        </Link>
-        <span style={{ fontSize: 12, color: '#64748b' }}>/ settings</span>
-        <span style={{ marginLeft: 'auto' }} />
-        <button
-          onClick={() => router.push('/dashboard')}
-          style={{ ...ghostBtn, fontSize: 10 }}
-        >
-          ← dashboard
-        </button>
+    <div className="min-h-screen bg-background">
+      <header className="sticky top-0 z-30 border-b border-white/10 bg-background/95 backdrop-blur">
+        <div className="mx-auto flex h-16 max-w-7xl items-center gap-4 px-6">
+          <Link href="/" className="text-lg font-semibold tracking-tight">
+            Common<span className="text-primary">OS</span>
+          </Link>
+          <Badge variant="secondary">Settings</Badge>
+          <Button className="ml-auto" variant="outline" size="sm" onClick={() => router.push('/dashboard')}>
+            <ArrowLeft />
+            Dashboard
+          </Button>
+        </div>
       </header>
 
-      <main style={{ maxWidth: 660, margin: '0 auto', padding: '36px 24px', display: 'flex', flexDirection: 'column', gap: 20 }}>
-
-        {/* Account */}
-        <div style={panel}>
-          <div style={label}>account</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <Row k="email" v={email} />
-            <Row k="tenant id" v={tenantId ?? '—'} dim />
-            <Row k="plan" v="free" />
-          </div>
+      <main className="mx-auto max-w-4xl px-6 py-8">
+        <div className="mb-8">
+          <h1 className="text-3xl font-semibold tracking-tight">Account settings</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Manage your tenant identity, API key, and CLI setup.
+          </p>
         </div>
 
-        {/* API Key */}
-        <div style={panel}>
-          <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}>
-            <div style={label}>api key</div>
-            <span style={{ marginLeft: 'auto', fontSize: 10, color: '#64748b' }}>
-              {apiKey ? 'stored from first login' : 'not available — re-login to get a new key'}
-            </span>
-          </div>
-
-          {apiKey ? (
-            <div>
-              <div style={{ ...codeBlock, display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ flex: 1, color: '#94a3b8', letterSpacing: 0.3 }}>
-                  {showKey ? apiKey : `${apiKey.slice(0, 16)}${'•'.repeat(24)}`}
-                </span>
-                <button
-                  onClick={() => setShowKey(v => !v)}
-                  style={iconBtn}
-                  title={showKey ? 'hide' : 'reveal'}
-                >
-                  {showKey ? '👁' : '👁‍🗨'}
-                </button>
-                <button
-                  onClick={() => void copy(apiKey, setCopiedKey)}
-                  style={iconBtn}
-                  title="copy"
-                >
-                  {copiedKey ? '✓' : '⎘'}
-                </button>
+        <div className="grid gap-4">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <User className="size-5 text-primary" />
+                <CardTitle>Account</CardTitle>
               </div>
-              <div style={{ fontSize: 11, color: '#64748b', marginTop: 8 }}>
-                Keep this secret. It grants full control over your fleets.
-              </div>
-            </div>
-          ) : (
-            <div style={{ fontSize: 12, color: '#64748b' }}>
-              API key was shown once at account creation. Sign out and back in to generate a new one.
-            </div>
-          )}
-        </div>
+            </CardHeader>
+            <CardContent className="grid gap-4 sm:grid-cols-3">
+              <InfoItem label="Email or wallet" value={email} />
+              <InfoItem label="Tenant ID" value={tenantId ?? '-'} muted />
+              <InfoItem label="Plan" value="Free" />
+            </CardContent>
+          </Card>
 
-        {/* CLI Setup */}
-        <div style={panel}>
-          <div style={label}>cli setup</div>
-          <div style={{ fontSize: 11, color: '#64748b', marginBottom: 12 }}>
-            Install and authenticate the CommonOS CLI:
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <CodeLine label="install" code="npm install -g @common-os/cli" />
-            <div>
-              <div style={{ fontSize: 9, color: '#475569', marginBottom: 4 }}>authenticate</div>
-              <div style={{ ...codeBlock, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ flex: 1, color: apiKey ? '#94a3b8' : '#475569' }}>{loginCmd}</span>
-                <button
-                  onClick={() => void copy(loginCmd, setCopiedCmd)}
-                  style={iconBtn}
-                  title="copy"
-                >
-                  {copiedCmd ? '✓' : '⎘'}
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div style={{ marginTop: 16, borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: 14 }}>
-            <div style={{ fontSize: 10, color: '#64748b', marginBottom: 8, letterSpacing: 1, textTransform: 'uppercase' }}>
-              common commands
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {[
-                ['fleet create', 'cos fleet create --name my-fleet'],
-                ['agent deploy', 'cos agent deploy --fleet <id> --role engineer'],
-                ['task send', 'cos task send <agent-id> "build the auth module" --fleet <id>'],
-                ['agent logs', 'cos agent logs <agent-id> --fleet <id>'],
-                ['world view', 'cos world snapshot <fleet-id>'],
-              ].map(([name, cmd]) => (
-                <div key={name} style={{ display: 'flex', gap: 12, alignItems: 'baseline' }}>
-                  <span style={{ fontSize: 11, color: '#64748b', minWidth: 88, flexShrink: 0 }}>{name}</span>
-                  <span style={{ fontSize: 11, color: '#94a3b8', fontFamily: 'monospace' }}>{cmd}</span>
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-2">
+                  <KeyRound className="size-5 text-primary" />
+                  <CardTitle>API key</CardTitle>
                 </div>
-              ))}
-            </div>
-          </div>
-        </div>
+                <Badge variant={apiKey ? 'success' : 'secondary'}>
+                  {apiKey ? 'Stored locally' : 'Not available'}
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {apiKey ? (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 rounded-md border bg-background p-2">
+                    <code className="min-w-0 flex-1 truncate px-2 font-mono text-sm text-slate-300">
+                      {showKey ? apiKey : `${apiKey.slice(0, 16)}${'*'.repeat(24)}`}
+                    </code>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      title={showKey ? 'Hide key' : 'Reveal key'}
+                      onClick={() => setShowKey((value) => !value)}
+                    >
+                      {showKey ? <EyeOff /> : <Eye />}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      title="Copy key"
+                      onClick={() => void copy(apiKey, setCopiedKey)}
+                    >
+                      {copiedKey ? <Check /> : <Copy />}
+                    </Button>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Keep this key private. It can control fleets and agent operations for this tenant.
+                  </p>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  The API key is shown during account creation. Sign out and back in to generate a new one.
+                </p>
+              )}
+            </CardContent>
+          </Card>
 
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <Terminal className="size-5 text-primary" />
+                <CardTitle>CLI setup</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <CommandLine label="Install" command="npm install -g @common-os/cli" />
+              <div>
+                <div className="mb-2 text-sm font-medium">Authenticate</div>
+                <div className="flex items-center gap-2 rounded-md border border-white/10 bg-[#060b14] p-3 text-slate-100">
+                  <code className="min-w-0 flex-1 truncate font-mono text-sm">{loginCmd}</code>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="icon"
+                    title="Copy command"
+                    onClick={() => void copy(loginCmd, setCopiedCmd)}
+                  >
+                    {copiedCmd ? <Check /> : <Copy />}
+                  </Button>
+                </div>
+              </div>
+              <div className="rounded-md border">
+                {[
+                  ['Create fleet', 'cos fleet create --name my-fleet'],
+                  ['Deploy agent', 'cos agent deploy --fleet <id> --role engineer'],
+                  ['Send task', 'cos task send <agent-id> "build the auth module" --fleet <id>'],
+                  ['Agent logs', 'cos agent logs <agent-id> --fleet <id>'],
+                  ['World snapshot', 'cos world snapshot <fleet-id>'],
+                ].map(([name, cmd]) => (
+                  <div key={name} className="grid gap-2 border-b px-4 py-3 last:border-b-0 sm:grid-cols-[150px_1fr]">
+                    <span className="text-sm font-medium">{name}</span>
+                    <code className="min-w-0 break-all font-mono text-sm text-muted-foreground">{cmd}</code>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       </main>
     </div>
   )
 }
 
-function Row({ k, v, dim }: { k: string; v: string; dim?: boolean }) {
+function InfoItem({ label, value, muted }: { label: string; value: string; muted?: boolean }) {
   return (
-    <div style={{ display: 'flex', gap: 16, alignItems: 'baseline' }}>
-      <span style={{ fontSize: 11, color: '#64748b', minWidth: 80 }}>{k}</span>
-      <span style={{ fontSize: 12, color: dim ? '#64748b' : '#94a3b8', fontFamily: 'monospace' }}>{v}</span>
-    </div>
-  )
-}
-
-function CodeLine({ label: lbl, code }: { label: string; code: string }) {
-  const [copied, setCopied] = useState(false)
-  async function copy() {
-    await navigator.clipboard.writeText(code)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1800)
-  }
-  return (
-    <div>
-      <div style={{ fontSize: 10, color: '#64748b', marginBottom: 4 }}>{lbl}</div>
-      <div style={{ ...codeBlock, display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ flex: 1 }}>{code}</span>
-        <button onClick={() => void copy()} style={iconBtn} title="copy">
-          {copied ? '✓' : '⎘'}
-        </button>
+    <div className="min-w-0 rounded-md border bg-muted/30 p-4">
+      <div className="text-sm text-muted-foreground">{label}</div>
+      <div className={muted ? 'mt-1 truncate text-sm text-muted-foreground' : 'mt-1 truncate text-sm font-medium'}>
+        {value}
       </div>
     </div>
   )
 }
 
-const ghostBtn: React.CSSProperties = {
-  padding: '6px 12px',
-  background: 'none',
-  border: '1px solid rgba(255,255,255,0.08)',
-  borderRadius: 6,
-  color: '#94a3b8',
-  fontSize: 11,
-  fontFamily: 'monospace',
-  cursor: 'pointer',
-}
+function CommandLine({ label, command }: { label: string; command: string }) {
+  const [copied, setCopied] = useState(false)
 
-const iconBtn: React.CSSProperties = {
-  background: 'none',
-  border: 'none',
-  color: '#64748b',
-  cursor: 'pointer',
-  fontSize: 13,
-  padding: '0 2px',
-  flexShrink: 0,
+  async function copy() {
+    await navigator.clipboard.writeText(command)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1800)
+  }
+
+  return (
+    <div>
+      <div className="mb-2 text-sm font-medium">{label}</div>
+      <div className="flex items-center gap-2 rounded-md border border-white/10 bg-[#060b14] p-3 text-slate-100">
+        <code className="min-w-0 flex-1 truncate font-mono text-sm">{command}</code>
+        <Button type="button" variant="secondary" size="icon" title="Copy command" onClick={() => void copy()}>
+          {copied ? <Check /> : <Copy />}
+        </Button>
+      </div>
+    </div>
+  )
 }

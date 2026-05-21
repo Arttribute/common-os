@@ -1,54 +1,115 @@
 'use client'
+
+import { Badge } from '@/components/ui/badge'
+import { cn } from '@/lib/utils'
 import { useAgentStore, type Agent, type AgentStatus } from '@/store/agentStore'
 import { useWorldStore } from '@/store/worldStore'
 
 function statusLabel(status: AgentStatus): string {
   switch (status) {
-    case 'working':      return 'working'
+    case 'working': return 'Working'
     case 'idle':
-    case 'online':       return 'idle'
-    case 'error':        return 'error'
-    case 'offline':      return 'offline'
-    case 'provisioning': return 'starting'
-    default:             return status
+    case 'online': return 'Idle'
+    case 'error': return 'Error'
+    case 'offline': return 'Offline'
+    case 'provisioning': return 'Starting'
+    default: return status
   }
 }
 
-function statusDotColor(status: AgentStatus): string {
+function statusDotClass(status: AgentStatus): string {
   switch (status) {
-    case 'working':      return '#f59e0b'
+    case 'working': return 'bg-amber-400 shadow-amber-400/50'
     case 'idle':
-    case 'online':       return '#10b981'
-    case 'error':        return '#ef4444'
-    case 'provisioning': return '#6366f1'
-    default:             return '#4b5563'
+    case 'online': return 'bg-emerald-400 shadow-emerald-400/50'
+    case 'error': return 'bg-red-400 shadow-red-400/50'
+    case 'provisioning': return 'bg-indigo-400 shadow-indigo-400/50'
+    default: return 'bg-slate-500 shadow-slate-500/40'
   }
+}
+
+function statusBadgeVariant(status: AgentStatus): 'success' | 'warning' | 'destructive' | 'secondary' {
+  if (status === 'idle' || status === 'online') return 'success'
+  if (status === 'working' || status === 'provisioning') return 'warning'
+  if (status === 'error') return 'destructive'
+  return 'secondary'
 }
 
 const CREATION_STEPS = [
-  { maxMs: 20_000,  short: 'allocating' },
-  { maxMs: 60_000,  short: 'starting container' },
-  { maxMs: 120_000, short: 'registering' },
-  { maxMs: Infinity, short: 'waiting for daemon' },
+  { maxMs: 20_000, short: 'Allocating' },
+  { maxMs: 60_000, short: 'Starting container' },
+  { maxMs: 120_000, short: 'Registering' },
+  { maxMs: Infinity, short: 'Waiting for daemon' },
 ]
 
 function provisioningStep(createdAt?: number): string {
-  if (!createdAt) return 'allocating'
+  if (!createdAt) return 'Allocating'
   const elapsed = Date.now() - createdAt
-  for (const s of CREATION_STEPS) {
-    if (elapsed < s.maxMs) return s.short
+  for (const step of CREATION_STEPS) {
+    if (elapsed < step.maxMs) return step.short
   }
-  return 'waiting for daemon'
+  return 'Waiting for daemon'
 }
 
 function shortId(value: string | null | undefined): string {
-  if (!value) return 'agc missing'
+  if (!value) return 'missing'
   if (value.length <= 16) return value
-  return `${value.slice(0, 10)}…${value.slice(-4)}`
+  return `${value.slice(0, 10)}...${value.slice(-4)}`
 }
 
 function hasWalletIdentity(value: string | null | undefined): boolean {
   return Boolean(value && /^0x[a-fA-F0-9]{40}$/.test(value))
+}
+
+export function FleetPanel() {
+  const agentsMap = useAgentStore((s) => s.agents)
+  const agents = Object.values(agentsMap)
+  const selectedId = useAgentStore((s) => s.selectedAgentId)
+  const selectAgent = useAgentStore((s) => s.selectAgent)
+  const fleetName = useWorldStore((s) => s.fleetName)
+
+  const managers = agents.filter((a) => a.permissionTier === 'manager')
+  const workers = agents.filter((a) => a.permissionTier === 'worker')
+  const sorted = [...managers, ...workers]
+  const provisioningCount = agents.filter((a) => a.status === 'provisioning').length
+
+  return (
+    <aside className="pointer-events-auto absolute right-4 top-4 z-10 w-[280px] overflow-hidden rounded-lg border border-white/10 bg-background/88 text-foreground shadow-2xl shadow-black/30 backdrop-blur-xl">
+      <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3">
+        <span className="size-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgb(52_211_153_/_0.55)]" />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-semibold">{fleetName || 'Fleet'}</div>
+          <div className="text-xs text-muted-foreground">World runtime</div>
+        </div>
+        <Badge variant="outline">{agents.length} agents</Badge>
+      </div>
+
+      {provisioningCount > 0 && (
+        <div className="border-b border-white/10 bg-indigo-400/10 px-4 py-2 text-xs text-indigo-200">
+          {provisioningCount} agent{provisioningCount === 1 ? '' : 's'} starting
+        </div>
+      )}
+
+      <div className="max-h-[calc(100vh-210px)] overflow-y-auto p-2">
+        {sorted.length === 0 ? (
+          <div className="rounded-md border border-dashed border-white/10 px-4 py-8 text-center text-sm text-muted-foreground">
+            No agents deployed
+          </div>
+        ) : (
+          <div className="space-y-1">
+            {sorted.map((agent) => (
+              <AgentRow
+                key={agent.agentId}
+                agent={agent}
+                selected={agent.agentId === selectedId}
+                onSelect={() => selectAgent(agent.agentId === selectedId ? null : agent.agentId)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </aside>
+  )
 }
 
 function AgentRow({ agent, selected, onSelect }: {
@@ -58,227 +119,64 @@ function AgentRow({ agent, selected, onSelect }: {
 }) {
   const shortRole = agent.role.replace('-engineer', '').replace(/-/g, ' ')
   const isProvisioning = agent.status === 'provisioning'
-  const dotColor = statusDotColor(agent.status)
   const agcId = agent.commons?.agentId ?? agent.commons?.walletAddress ?? null
   const agcOk = hasWalletIdentity(agcId)
 
   return (
-    <div
+    <button
+      type="button"
       onClick={onSelect}
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 2,
-        padding: '8px 10px',
-        cursor: 'pointer',
-        borderRadius: 6,
-        background: selected ? 'rgba(255,255,255,0.06)' : 'transparent',
-        borderLeft: selected ? '2px solid rgba(255,255,255,0.3)' : '2px solid transparent',
-        transition: 'background 0.15s',
-      }}
+      className={cn(
+        'w-full rounded-md border px-3 py-3 text-left transition-colors',
+        selected
+          ? 'border-amber-400/35 bg-amber-400/10'
+          : 'border-transparent hover:border-white/10 hover:bg-white/[0.04]',
+      )}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        {isProvisioning ? (
-          <ProvisioningDot />
-        ) : (
-          <span
-            style={{
-              width: 7, height: 7, borderRadius: '50%',
-              background: dotColor, flexShrink: 0,
-              boxShadow: `0 0 4px ${dotColor}`,
-            }}
-          />
-        )}
-        <span style={{ fontSize: 11, color: '#e2e8f0', fontWeight: 500, textTransform: 'capitalize' }}>
-          {shortRole}
-        </span>
-        <span
-          style={{
-            marginLeft: 'auto', fontSize: 10, color: dotColor,
-            fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: 0.5,
-          }}
-        >
-          {statusLabel(agent.status)}
-        </span>
-        {agent.permissionTier === 'manager' && (
-          <span style={{ fontSize: 10, color: '#f59e0b', fontFamily: 'monospace', marginLeft: 2 }}>
-            MGR
-          </span>
-        )}
+      <div className="flex items-center gap-2">
+        <span className={cn('size-2 rounded-full shadow-[0_0_8px_currentColor]', statusDotClass(agent.status))} />
+        <span className="min-w-0 flex-1 truncate text-sm font-medium capitalize">{shortRole}</span>
+        {agent.permissionTier === 'manager' && <Badge variant="warning">Mgr</Badge>}
+        <Badge variant={statusBadgeVariant(agent.status)}>{statusLabel(agent.status)}</Badge>
       </div>
 
-      {/* Provisioning: show current creation step */}
-      {isProvisioning && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 1, paddingLeft: 13 }}>
-          <div style={{ fontSize: 10, color: '#6366f1', fontFamily: 'monospace' }}>
-            · {provisioningStep(agent.createdAt)}
-          </div>
-          {agent.pod && (
-            <div style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace' }}>
-              {agent.pod.provider} · {agent.pod.region}
-            </div>
-          )}
+      {isProvisioning ? (
+        <div className="mt-2 space-y-1 pl-4 text-xs text-muted-foreground">
+          <div className="text-indigo-200">{provisioningStep(agent.createdAt)}</div>
+          {agent.pod && <div className="font-mono">{agent.pod.provider} / {agent.pod.region}</div>}
           <CreationBar createdAt={agent.createdAt} />
         </div>
-      )}
-
-      {!isProvisioning && agent.currentAction && (
-        <div style={{ fontSize: 10, color: '#94a3b8', paddingLeft: 13, fontFamily: 'monospace' }}>
-          · {agent.currentAction}
+      ) : (
+        <div className="mt-2 space-y-1 pl-4 text-xs">
+          {agent.currentAction && (
+            <div className="truncate text-slate-300">{agent.currentAction}</div>
+          )}
+          <div
+            className={cn('truncate font-mono', agcOk ? 'text-emerald-300' : 'text-red-300')}
+            title={agcId ?? 'Agent Commons wallet not resolved'}
+          >
+            agc {shortId(agcId)}
+          </div>
+          {agent.currentTask && !agent.currentAction && (
+            <div className="truncate text-muted-foreground">{agent.currentTask.description}</div>
+          )}
         </div>
       )}
-
-      {!isProvisioning && (
-        <div style={{ fontSize: 10, color: agcOk ? '#4ade80' : '#f87171', paddingLeft: 13, fontFamily: 'monospace' }} title={agcId ?? 'Agent Commons wallet not resolved'}>
-          agc {shortId(agcId)}
-        </div>
-      )}
-
-      {!isProvisioning && agent.currentTask && !agent.currentAction && (
-        <div style={{ fontSize: 10, color: '#64748b', paddingLeft: 13, fontFamily: 'monospace' }}>
-          {agent.currentTask.description.slice(0, 48)}…
-        </div>
-      )}
-    </div>
-  )
-}
-
-function ProvisioningDot() {
-  return (
-    <span
-      style={{
-        width: 7,
-        height: 7,
-        borderRadius: '50%',
-        background: '#6366f1',
-        flexShrink: 0,
-        boxShadow: '0 0 6px #6366f1',
-        display: 'inline-block',
-        animation: 'fleetPulse 1.2s ease-in-out infinite',
-      }}
-    >
-      <style>{`
-        @keyframes fleetPulse {
-          0%, 100% { opacity: 1; box-shadow: 0 0 6px #6366f1; }
-          50%       { opacity: 0.4; box-shadow: 0 0 2px #6366f1; }
-        }
-      `}</style>
-    </span>
+    </button>
   )
 }
 
 function CreationBar({ createdAt }: { createdAt?: number }) {
-  const TOTAL_MS = 120_000
-  const elapsed  = createdAt ? Math.min(Date.now() - createdAt, TOTAL_MS) : 0
-  const pct      = Math.round((elapsed / TOTAL_MS) * 100)
+  const totalMs = 120_000
+  const elapsed = createdAt ? Math.min(Date.now() - createdAt, totalMs) : 0
+  const pct = Math.round((elapsed / totalMs) * 100)
 
   return (
-    <div style={{
-      height: 2,
-      background: 'rgba(99, 102, 241, 0.15)',
-      borderRadius: 1,
-      overflow: 'hidden',
-      marginTop: 2,
-    }}>
+    <div className="mt-2 h-1 overflow-hidden rounded-full bg-indigo-400/15">
       <div
-        style={{
-          height: '100%',
-          width: `${pct}%`,
-          background: 'linear-gradient(90deg, #4338ca, #6366f1)',
-          borderRadius: 1,
-          transition: 'width 1s linear',
-        }}
+        className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-amber-400 transition-[width] duration-1000"
+        style={{ width: `${pct}%` }}
       />
-    </div>
-  )
-}
-
-export function FleetPanel() {
-  const agentsMap = useAgentStore((s) => s.agents)
-  const agents    = Object.values(agentsMap)
-  const selectedId  = useAgentStore((s) => s.selectedAgentId)
-  const selectAgent = useAgentStore((s) => s.selectAgent)
-  const fleetName   = useWorldStore((s) => s.fleetName)
-
-  const managers = agents.filter((a) => a.permissionTier === 'manager')
-  const workers  = agents.filter((a) => a.permissionTier === 'worker')
-  const sorted   = [...managers, ...workers]
-
-  const provisioningCount = agents.filter((a) => a.status === 'provisioning').length
-
-  return (
-    <div
-      style={{
-        position: 'absolute',
-        top: 16,
-        right: 16,
-        width: 240,
-        background: 'rgba(6, 11, 20, 0.85)',
-        backdropFilter: 'blur(12px)',
-        border: '1px solid rgba(255,255,255,0.08)',
-        borderRadius: 10,
-        overflow: 'hidden',
-        pointerEvents: 'auto',
-        zIndex: 10,
-      }}
-    >
-      {/* Header */}
-      <div
-        style={{
-          padding: '10px 12px',
-          borderBottom: '1px solid rgba(255,255,255,0.06)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-        }}
-      >
-        <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981' }} />
-        <span style={{
-          fontSize: 11, color: '#94a3b8', fontFamily: 'monospace',
-          fontWeight: 600, letterSpacing: 0.5,
-        }}>
-          {fleetName || 'Fleet'}
-        </span>
-        <span
-          style={{
-            marginLeft: 'auto', fontSize: 10, color: '#64748b', fontFamily: 'monospace',
-            background: 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: 4,
-          }}
-        >
-          {agents.length} agents
-        </span>
-        {provisioningCount > 0 && (
-          <span
-            style={{
-              fontSize: 10, color: '#6366f1', fontFamily: 'monospace',
-              background: 'rgba(99,102,241,0.1)', padding: '2px 5px', borderRadius: 4,
-              border: '1px solid rgba(99,102,241,0.3)',
-            }}
-          >
-            {provisioningCount} starting
-          </span>
-        )}
-      </div>
-
-      {/* Agent list */}
-      <div style={{ padding: '4px 4px', maxHeight: 'calc(100vh - 200px)', overflowY: 'auto' }}>
-        {sorted.length === 0 && (
-          <div style={{
-            padding: 12, fontSize: 11, color: '#64748b',
-            textAlign: 'center', fontFamily: 'monospace',
-          }}>
-            No agents deployed
-          </div>
-        )}
-        {sorted.map((agent) => (
-          <AgentRow
-            key={agent.agentId}
-            agent={agent}
-            selected={agent.agentId === selectedId}
-            onSelect={() => selectAgent(agent.agentId === selectedId ? null : agent.agentId)}
-          />
-        ))}
-      </div>
     </div>
   )
 }

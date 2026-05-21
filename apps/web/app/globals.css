@@ -1,31 +1,192 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-space-grotesk);
+  --font-mono: "SF Mono", "Fira Code", "Fira Mono", "Roboto Mono", monospace;
+
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+}
+
+:root {
+  --background: 219 54% 5%;
+  --foreground: 214 32% 91%;
+  --card: 221 45% 8%;
+  --card-foreground: 214 32% 91%;
+  --popover: 221 45% 8%;
+  --popover-foreground: 214 32% 91%;
+  --primary: 38 92% 50%;
+  --primary-foreground: 222 47% 7%;
+  --secondary: 220 35% 12%;
+  --secondary-foreground: 214 32% 91%;
+  --muted: 220 35% 11%;
+  --muted-foreground: 215 20% 55%;
+  --accent: 220 35% 14%;
+  --accent-foreground: 214 32% 91%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 0 0% 100% / 0.08;
+  --input: 0 0% 100% / 0.1;
+  --ring: 38 92% 50%;
+}
+
 *, *::before, *::after {
   box-sizing: border-box;
-  margin: 0;
-  padding: 0;
 }
 
-html, body {
-  width: 100%;
-  height: 100%;
-  background: #060b14;
-  color: #e2e8f0;
-  font-family: 'SF Mono', 'Fira Code', 'Fira Mono', 'Roboto Mono', monospace;
+html,
+body {
+  min-height: 100%;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: var(--font-space-grotesk), ui-sans-serif, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
 }
 
-/* Scrollbar styling for HUD panels */
-::-webkit-scrollbar {
-  width: 3px;
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at top left, rgb(245 158 11 / 0.07), transparent 34rem),
+    hsl(219 54% 5%);
 }
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+::selection {
+  background: hsl(var(--primary) / 0.16);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: 2px;
+  background: hsl(var(--muted-foreground) / 0.22);
+  border-radius: 999px;
 }
 
-/* Phaser canvas override */
 canvas {
   display: block;
+}
+
+@keyframes swarmPulse {
+  0%, 100% {
+    opacity: 0.28;
+    transform: scale(0.96);
+  }
+  50% {
+    opacity: 0.75;
+    transform: scale(1);
+  }
+}
+
+@keyframes swarmFlow {
+  0% {
+    stroke-dashoffset: 120;
+    opacity: 0.12;
+  }
+  50% {
+    opacity: 0.42;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 0.12;
+  }
+}
+
+@keyframes windowBreathe {
+  0%, 100% {
+    box-shadow: 0 26px 80px rgb(0 0 0 / 0.36), 0 0 0 1px rgb(255 255 255 / 0.04);
+  }
+  50% {
+    box-shadow: 0 34px 90px rgb(0 0 0 / 0.44), 0 0 34px rgb(245 158 11 / 0.08), 0 0 0 1px rgb(255 255 255 / 0.05);
+  }
+}
+
+@keyframes packetTravel {
+  0% {
+    offset-distance: 0%;
+    opacity: 0;
+  }
+  12% {
+    opacity: 0.9;
+  }
+  88% {
+    opacity: 0.9;
+  }
+  100% {
+    offset-distance: 100%;
+    opacity: 0;
+  }
+}
+
+@keyframes agentPreviewShift {
+  0%, 100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(10px, -6px, 0);
+  }
+}
+
+.swarm-node {
+  animation: swarmPulse 4.8s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.swarm-line {
+  animation: swarmFlow 8s linear infinite;
+  stroke-dasharray: 4 10;
+}
+
+.window-breathe {
+  animation: windowBreathe 7s ease-in-out infinite;
+}
+
+.packet-dot {
+  animation: packetTravel 6.8s ease-in-out infinite;
+  offset-rotate: 0deg;
+}
+
+.agent-preview-shift {
+  animation: agentPreviewShift 8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .swarm-node,
+  .swarm-line,
+  .window-breathe,
+  .packet-dot,
+  .agent-preview-shift {
+    animation: none;
+  }
 }

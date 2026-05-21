@@ -380,6 +380,7 @@ export class WorldScene extends Phaser.Scene {
 
   private setupCamera(themeId: ThemeId): void {
     this.cameras.main.setBackgroundColor(THEMES[themeId].bgColor)
+    this.cameras.main.setZoom(useWorldStore.getState().zoom)
 
     const keyboard = this.input.keyboard!
     // Prevent Phaser calling preventDefault() on any key — characters must

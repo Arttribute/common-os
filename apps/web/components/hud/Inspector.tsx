@@ -1,27 +1,31 @@
 'use client'
+
+import { X, MonitorCog } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { useAgentStore } from '@/store/agentStore'
 
 const CREATION_STEPS = [
-  { maxMs: 20_000,  label: 'allocating pod' },
-  { maxMs: 60_000,  label: 'starting container' },
-  { maxMs: 120_000, label: 'registering agent' },
-  { maxMs: Infinity, label: 'waiting for daemon' },
+  { maxMs: 20_000, label: 'Allocating pod' },
+  { maxMs: 60_000, label: 'Starting container' },
+  { maxMs: 120_000, label: 'Registering agent' },
+  { maxMs: Infinity, label: 'Waiting for daemon' },
 ]
 
 function creationStep(createdAt?: number): string {
-  if (!createdAt) return 'provisioning'
+  if (!createdAt) return 'Provisioning'
   const elapsed = Date.now() - createdAt
   for (const step of CREATION_STEPS) {
     if (elapsed < step.maxMs) return step.label
   }
-  return 'waiting for daemon'
+  return 'Waiting for daemon'
 }
 
 export function Inspector() {
-  const agents       = useAgentStore((s) => s.agents)
-  const selectedId   = useAgentStore((s) => s.selectedAgentId)
-  const selectAgent  = useAgentStore((s) => s.selectAgent)
-  const openModal    = useAgentStore((s) => s.openDetailModal)
+  const agents = useAgentStore((s) => s.agents)
+  const selectedId = useAgentStore((s) => s.selectedAgentId)
+  const selectAgent = useAgentStore((s) => s.selectAgent)
+  const openModal = useAgentStore((s) => s.openDetailModal)
 
   const agent = selectedId ? agents[selectedId] : null
   if (!agent) return null
@@ -30,67 +34,31 @@ export function Inspector() {
   const isProvisioning = agent.status === 'provisioning'
 
   return (
-    <div
-      style={{
-        position: 'absolute',
-        top: 16,
-        right: 272,
-        width: 230,
-        background: 'rgba(6, 11, 20, 0.92)',
-        backdropFilter: 'blur(12px)',
-        border: '1px solid rgba(255,255,255,0.08)',
-        borderRadius: 10,
-        pointerEvents: 'auto',
-        zIndex: 10,
-        overflow: 'hidden',
-      }}
-    >
-      {/* Header */}
-      <div
-        style={{
-          padding: '10px 12px',
-          borderBottom: '1px solid rgba(255,255,255,0.06)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-        }}
-      >
-        <span style={{ fontSize: 10, color: '#94a3b8', fontFamily: 'monospace', textTransform: 'capitalize', flex: 1 }}>
-          {shortRole}
-        </span>
-        {agent.permissionTier === 'manager' && (
-          <span style={{ fontSize: 10, color: '#f59e0b', fontFamily: 'monospace' }}>MANAGER</span>
-        )}
-        <button
-          onClick={() => selectAgent(null)}
-          style={{
-            background: 'none', border: 'none', color: '#475569',
-            cursor: 'pointer', fontSize: 12, lineHeight: 1, padding: '0 2px',
-          }}
-        >
-          ×
-        </button>
+    <aside className="pointer-events-auto absolute right-[312px] top-4 z-10 w-[280px] overflow-hidden rounded-lg border border-white/10 bg-background/90 text-foreground shadow-2xl shadow-black/30 backdrop-blur-xl">
+      <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3">
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-semibold capitalize">{shortRole}</div>
+          <div className="font-mono text-xs text-muted-foreground">{agent.agentId}</div>
+        </div>
+        {agent.permissionTier === 'manager' && <Badge variant="warning">Manager</Badge>}
+        <Button variant="ghost" size="icon" className="size-8 text-muted-foreground" onClick={() => selectAgent(null)}>
+          <X />
+        </Button>
       </div>
 
-      <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {/* ID + Room */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-          <Row label="id"   value={agent.agentId} mono truncate />
-          <Row label="room" value={`${agent.world.room} (${agent.world.x}, ${agent.world.y})`} mono />
-        </div>
+      <div className="space-y-4 px-4 py-4">
+        <Section title="Location">
+          <InfoRow label="Room" value={`${agent.world.room} (${agent.world.x}, ${agent.world.y})`} />
+        </Section>
 
-        {/* Pod info */}
         {agent.pod && (
           <Section title="Pod">
-            <Row label="cloud"  value={agent.pod.provider} mono />
-            <Row label="region" value={agent.pod.region}   mono />
-            {agent.pod.namespaceId && (
-              <Row label="ns" value={agent.pod.namespaceId} mono truncate />
-            )}
+            <InfoRow label="Cloud" value={agent.pod.provider} mono />
+            <InfoRow label="Region" value={agent.pod.region} mono />
+            {agent.pod.namespaceId && <InfoRow label="Namespace" value={agent.pod.namespaceId} mono />}
           </Section>
         )}
 
-        {/* Status — with animated creation steps */}
         <Section title="Status">
           {isProvisioning ? (
             <CreationStatus createdAt={agent.createdAt} />
@@ -99,166 +67,87 @@ export function Inspector() {
           )}
         </Section>
 
-        {/* Current task */}
         {agent.currentTask && (
           <Section title="Current Task">
-            <div style={{ fontSize: 11, color: '#cbd5e1', fontFamily: 'monospace', lineHeight: 1.5 }}>
-              {agent.currentTask.description}
-            </div>
+            <p className="text-sm leading-5 text-slate-300">{agent.currentTask.description}</p>
           </Section>
         )}
 
-        {/* Current action */}
         {agent.currentAction && (
           <Section title="Doing">
-            <div style={{ fontSize: 11, color: '#f59e0b', fontFamily: 'monospace' }}>
-              · {agent.currentAction}
+            <p className="text-sm leading-5 text-amber-300">{agent.currentAction}</p>
+          </Section>
+        )}
+
+        {agent.recentActions.length > 0 && (
+          <Section title="Recent">
+            <div className="space-y-1">
+              {agent.recentActions.map((action, index) => (
+                <div key={index} className="truncate text-xs text-muted-foreground">
+                  {action}
+                </div>
+              ))}
             </div>
           </Section>
         )}
-
-        {/* Recent actions */}
-        {agent.recentActions.length > 0 && (
-          <Section title="Recent">
-            {agent.recentActions.map((a, i) => (
-              <div key={i} style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace' }}>
-                · {a}
-              </div>
-            ))}
-          </Section>
-        )}
       </div>
 
-      {/* Footer — "View Internals" button */}
-      <div
-        style={{
-          borderTop: '1px solid rgba(255,255,255,0.04)',
-          padding: '8px 12px',
-          display: 'flex',
-          justifyContent: 'flex-end',
-        }}
-      >
-        <button
-          onClick={openModal}
-          style={{
-            background: 'rgba(59, 130, 246, 0.1)',
-            border: '1px solid rgba(59, 130, 246, 0.3)',
-            borderRadius: 5,
-            color: '#93c5fd',
-            cursor: 'pointer',
-            fontSize: 10,
-            fontFamily: 'monospace',
-            padding: '4px 10px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 5,
-            transition: 'background 0.15s',
-          }}
-          onMouseEnter={(e) => {
-            ;(e.currentTarget as HTMLButtonElement).style.background = 'rgba(59, 130, 246, 0.2)'
-          }}
-          onMouseLeave={(e) => {
-            ;(e.currentTarget as HTMLButtonElement).style.background = 'rgba(59, 130, 246, 0.1)'
-          }}
-        >
-          <span style={{ fontSize: 10 }}>🖥️</span>
-          view internals
-        </button>
+      <div className="flex justify-end border-t border-white/10 px-4 py-3">
+        <Button size="sm" variant="outline" onClick={openModal}>
+          <MonitorCog />
+          Internals
+        </Button>
       </div>
-    </div>
+    </aside>
   )
 }
 
-// Animated creation-step display for provisioning agents
-function CreationStatus({ createdAt }: { createdAt?: number }) {
-  const step = creationStep(createdAt)
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-      <PulsingDot color="#6366f1" />
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-        <span style={{ fontSize: 10, color: '#6366f1', fontFamily: 'monospace' }}>provisioning</span>
-        <span style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace' }}>· {step}</span>
-      </div>
-    </div>
+    <section>
+      <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">{title}</div>
+      <div className="space-y-1.5">{children}</div>
+    </section>
   )
 }
 
-function PulsingDot({ color }: { color: string }) {
+function InfoRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
-    <span
-      style={{
-        width: 6,
-        height: 6,
-        borderRadius: '50%',
-        background: color,
-        display: 'inline-block',
-        boxShadow: `0 0 6px ${color}`,
-        animation: 'inspectorPulse 1.4s ease-in-out infinite',
-        flexShrink: 0,
-      }}
-    >
-      <style>{`
-        @keyframes inspectorPulse {
-          0%, 100% { opacity: 1; }
-          50%       { opacity: 0.35; }
-        }
-      `}</style>
-    </span>
-  )
-}
-
-function Row({ label, value, mono, truncate }: {
-  label: string; value: string; mono?: boolean; truncate?: boolean
-}) {
-  return (
-    <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
-      <span style={{
-        fontSize: 10, color: '#64748b', fontFamily: 'monospace',
-        minWidth: 32, textTransform: 'uppercase', letterSpacing: 0.5, flexShrink: 0,
-      }}>
-        {label}
-      </span>
-      <span style={{
-        fontSize: 10,
-        color: '#94a3b8',
-        fontFamily: mono ? 'monospace' : 'inherit',
-        ...(truncate ? { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 140 } : { wordBreak: 'break-all' }),
-      }}>
+    <div className="grid grid-cols-[72px_1fr] gap-3 text-xs">
+      <span className="text-muted-foreground">{label}</span>
+      <span className={mono ? 'truncate font-mono text-slate-300' : 'truncate text-slate-300'} title={value}>
         {value}
       </span>
     </div>
   )
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function CreationStatus({ createdAt }: { createdAt?: number }) {
   return (
-    <div>
-      <div style={{
-        fontSize: 10, color: '#64748b', fontFamily: 'monospace',
-        textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4,
-      }}>
-        {title}
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-        {children}
+    <div className="flex items-center gap-2">
+      <span className="size-2 animate-pulse rounded-full bg-indigo-400 shadow-[0_0_10px_rgb(129_140_248_/_0.55)]" />
+      <div>
+        <div className="text-sm text-indigo-200">Provisioning</div>
+        <div className="text-xs text-muted-foreground">{creationStep(createdAt)}</div>
       </div>
     </div>
   )
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const colors: Record<string, string> = {
-    working: '#f59e0b', idle: '#10b981', online: '#10b981',
-    error: '#ef4444', offline: '#4b5563', provisioning: '#6366f1',
+  const tone: Record<string, string> = {
+    working: 'bg-amber-400',
+    idle: 'bg-emerald-400',
+    online: 'bg-emerald-400',
+    error: 'bg-red-400',
+    offline: 'bg-slate-500',
+    provisioning: 'bg-indigo-400',
   }
-  const color = colors[status] ?? '#4b5563'
+
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-      <span style={{
-        width: 6, height: 6, borderRadius: '50%',
-        background: color, display: 'inline-block', boxShadow: `0 0 4px ${color}`,
-      }} />
-      <span style={{ fontSize: 10, color, fontFamily: 'monospace' }}>{status}</span>
+    <div className="flex items-center gap-2 text-sm capitalize">
+      <span className={`size-2 rounded-full ${tone[status] ?? 'bg-slate-500'}`} />
+      <span className="text-slate-300">{status}</span>
     </div>
   )
 }

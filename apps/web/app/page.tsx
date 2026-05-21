@@ -1,549 +1,396 @@
 import Link from "next/link";
+import {
+  ArrowRight,
+  Boxes,
+  CheckCircle2,
+  Cloud,
+  HardDrive,
+  LockKeyhole,
+  Network,
+  Server,
+  Terminal,
+  Workflow,
+} from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { LandingWorldPreview } from "@/components/LandingWorldPreview";
 
-const C = {
-  bg: "#060b14",
-  amber: "#f59e0b",
-  cyan: "#22d3ee",
-  green: "#4ade80",
-  purple: "#a78bfa",
-  text: "#e2e8f0",
-  muted: "#64748b",
-  dim: "#334155",
-  faint: "#1e293b",
-  border: "rgba(255,255,255,0.07)",
-  cardBg: "rgba(255,255,255,0.025)",
-};
+const capabilities = [
+  {
+    icon: Server,
+    title: "Dedicated runtime per agent",
+    description:
+      "Each agent runs in its own isolated pod with a durable workspace and clear operational boundaries.",
+  },
+  {
+    icon: Workflow,
+    title: "Fleet control plane",
+    description:
+      "Create fleets, deploy agents, assign tasks, and stream events from one API and CLI surface.",
+  },
+  {
+    icon: HardDrive,
+    title: "Persistent workspaces",
+    description:
+      "Agent files survive restarts so long-running work can resume instead of starting from scratch.",
+  },
+  {
+    icon: LockKeyhole,
+    title: "Permissioned agents",
+    description:
+      "Separate manager and worker tiers so autonomy is useful without turning operations into guesswork.",
+  },
+];
+
+const runtimeRows = [
+  ["Native", "Managed AI agent runtime with tools, memory, wallet identity, and task events."],
+  ["OpenClaw", "Connector-ready runtime for platform integrations and browser-based work."],
+  [
+    "Guest image",
+    "Run your own agent container beside the CommonOS daemon, with shared workspace access and the task/event API contract.",
+  ],
+];
+
+const terminalLines = [
+  "npm install -g @common-os/cli",
+  'cos fleet create --name "product-team"',
+  'cos agent deploy --fleet flt_xyz --role "backend-engineer"',
+  'cos task send agt_xyz "ship the auth module" --fleet flt_xyz',
+];
 
 export default function HomePage() {
   return (
-    <>
-      <style>{`
-        .landing { overflow-y: auto; height: 100vh; scroll-behavior: smooth; }
-
-        @keyframes pulse-dot {
-          0%, 100% { opacity: 1; }
-          50%       { opacity: 0.2; }
-        }
-        .live-dot { animation: pulse-dot 2s ease-in-out infinite; }
-
-        .cta-primary:hover  { background: rgba(245,158,11,0.22) !important; border-color: rgba(245,158,11,0.6) !important; }
-        .cta-secondary:hover { border-color: rgba(255,255,255,0.22) !important; color: #e2e8f0 !important; }
-        .github-star:hover   { background: rgba(255,255,255,0.07) !important; border-color: rgba(255,255,255,0.22) !important; color: #e2e8f0 !important; }
-        .feature-card:hover  { background: rgba(255,255,255,0.05) !important; border-color: rgba(245,158,11,0.18) !important; }
-        .comp-row:hover      { background: rgba(255,255,255,0.03) !important; }
-        .nav-link:hover      { color: #e2e8f0 !important; }
-        .runtime-card:hover  { border-color: rgba(34,211,238,0.3) !important; background: rgba(34,211,238,0.04) !important; }
-
-        @media (max-width: 860px) {
-          .hero-title   { font-size: 20px !important; }
-          .section-title { font-size: 16px !important; }
-          .two-col      { grid-template-columns: 1fr !important; }
-          .three-col    { grid-template-columns: 1fr !important; }
-          .four-col     { flex-direction: column !important; }
-          .comp-row, .comp-head { grid-template-columns: 2fr 1fr 1fr !important; font-size: 10px !important; }
-          .nav-links    { display: none !important; }
-          .s-pad        { padding: 72px 24px !important; }
-        }
-      `}</style>
-
-      <div className="landing" style={{ background: C.bg, color: C.text, fontFamily: "monospace" }}>
-
-        {/* ── Nav ── */}
-        <nav style={{
-          position: "sticky", top: 0, zIndex: 100,
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "16px 40px",
-          background: "rgba(6,11,20,0.88)",
-          backdropFilter: "blur(14px)",
-          borderBottom: `1px solid ${C.border}`,
-        }}>
-          <Link href="/" style={{ fontSize: 14, fontWeight: 700, letterSpacing: -0.5, color: 'inherit', textDecoration: 'none' }}>
-            common<span style={{ color: C.amber }}>os</span>
-          </Link>
-          <div className="nav-links" style={{ display: "flex", gap: 28, alignItems: "center" }}>
-            {[
-              { label: "How it works", href: "#how-it-works" },
-              { label: "World UI",     href: "#world-ui" },
-              { label: "SDK & CLI",    href: "#sdk" },
-            ].map(({ label, href }) => (
-              <a key={href} href={href} className="nav-link" style={{ fontSize: 10, color: C.muted, textDecoration: "none", letterSpacing: 1.5, textTransform: "uppercase", transition: "color 0.15s" }}>
-                {label}
+    <main className="min-h-screen bg-background text-foreground">
+      <header className="sticky top-0 z-40 overflow-hidden border-b border-white/10 bg-background/90 backdrop-blur">
+        <HeaderSwarm />
+        <div className="relative mx-auto flex h-16 max-w-7xl items-center gap-6 px-6">
+          <Logo />
+          <nav className="hidden items-center gap-6 text-sm text-muted-foreground md:flex">
+            <a className="transition-colors hover:text-foreground" href="#platform">
+              Platform
+            </a>
+            <a className="transition-colors hover:text-foreground" href="#world-ui">
+              World UI
+            </a>
+            <a className="transition-colors hover:text-foreground" href="#workflow">
+              Workflow
+            </a>
+          </nav>
+          <div className="ml-auto flex items-center gap-2">
+            <Button asChild variant="outline" size="sm" className="hidden sm:inline-flex">
+              <a href="https://github.com/Arttribute/common-os" target="_blank" rel="noreferrer">
+                GitHub
               </a>
-            ))}
+            </Button>
+            <Button asChild size="sm">
+              <Link href="/auth">
+                Launch
+                <ArrowRight />
+              </Link>
+            </Button>
           </div>
-          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-            <a href="https://github.com/Arttribute/common-os" target="_blank" rel="noopener noreferrer" className="github-star" style={{
-              display: "inline-flex", alignItems: "center", gap: 6,
-              padding: "8px 16px",
-              background: "rgba(255,255,255,0.04)", border: `1px solid ${C.border}`,
-              borderRadius: 6, color: C.muted, fontSize: 11, textDecoration: "none",
-              letterSpacing: 0.5, transition: "all 0.2s",
-            }}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style={{ flexShrink: 0 }}>
-                <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/>
-              </svg>
-              star
-            </a>
-            <Link href="/auth" className="cta-primary" style={{
-              padding: "8px 22px",
-              background: "rgba(245,158,11,0.1)", border: `1px solid rgba(245,158,11,0.3)`,
-              borderRadius: 6, color: C.amber, fontSize: 11, textDecoration: "none",
-              letterSpacing: 0.5, transition: "all 0.2s",
-            }}>
-              get started →
-            </Link>
-          </div>
-        </nav>
+        </div>
+      </header>
 
-        {/* ── Hero ── */}
-        <section style={{
-          minHeight: "100vh",
-          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-          textAlign: "center", padding: "100px 24px 80px",
-          position: "relative", overflow: "hidden",
-        }}>
-          <div style={{
-            position: "absolute", top: "38%", left: "50%", transform: "translate(-50%, -50%)",
-            width: 700, height: 500,
-            background: "radial-gradient(ellipse, rgba(245,158,11,0.07) 0%, transparent 68%)",
-            pointerEvents: "none",
-          }} />
-
-          <div style={{ fontSize: 10, color: C.amber, letterSpacing: 3, marginBottom: 44, textTransform: "uppercase" }}>
-            Agent Fleet Infrastructure
-          </div>
-
-          <h1 className="hero-title" style={{
-            fontFamily: "var(--font-pixel)",
-            fontSize: 28, lineHeight: 1.75, marginBottom: 44, maxWidth: 580,
-          }}>
-            Run agent swarms,<br />
-            each with a<br />
-            dedicated runtime<br />
-            and filesystem.
-          </h1>
-
-          <p style={{ fontSize: 15, color: C.muted, lineHeight: 1.9, maxWidth: 500, marginBottom: 16 }}>
-            Deploy a swarm with one command — every agent gets its own <span style={{ color: C.text }}>dedicated computer</span>, persistent filesystem, and P2P messaging. No shared state. No interference.
-          </p>
-
-          {/* CLI teaser */}
-          <div style={{
-            display: "inline-block", margin: "20px 0 48px",
-            padding: "16px 24px",
-            background: "rgba(0,0,0,0.5)", border: `1px solid ${C.border}`,
-            borderRadius: 10, textAlign: "left",
-          }}>
-            <div style={{ fontSize: 10, color: C.dim, marginBottom: 12, letterSpacing: 1 }}>QUICKSTART</div>
-            {[
-              { prompt: "$", cmd: "npm install -g @common-os/cli",                          color: C.muted },
-              { prompt: "$", cmd: "cos fleet create --name \"product-team\"",               color: C.text  },
-              { prompt: "$", cmd: "cos agent deploy --fleet flt_xyz --role \"researcher\"", color: C.text  },
-              { prompt: "$", cmd: "cos task send agt_xyz \"analyze the market\"",           color: C.text  },
-            ].map(({ prompt, cmd, color }) => (
-              <div key={cmd} style={{ fontSize: 12, lineHeight: 1.9 }}>
-                <span style={{ color: C.amber }}>{prompt} </span>
-                <span style={{ color }}>{cmd}</span>
-              </div>
-            ))}
-          </div>
-
-          <Link href="/auth" className="cta-primary" style={{
-            display: "inline-flex", alignItems: "center", gap: 8,
-            padding: "13px 48px",
-            background: "rgba(245,158,11,0.12)", border: `1px solid rgba(245,158,11,0.35)`,
-            borderRadius: 8, color: C.amber, fontSize: 12, textDecoration: "none",
-            letterSpacing: 0.5, transition: "all 0.2s",
-          }}>
-            launch your fleet →
-          </Link>
-
-          <div style={{ position: "absolute", bottom: 36, fontSize: 9, color: C.faint, letterSpacing: 2 }}>↓ scroll</div>
-        </section>
-
-        <div style={{ height: 1, background: `linear-gradient(to right, transparent, ${C.border}, transparent)` }} />
-
-        {/* ── How it works ── */}
-        <section id="how-it-works" className="s-pad" style={{ padding: "120px 40px" }}>
-          <div style={{ maxWidth: 1000, margin: "0 auto" }}>
-            <div style={{ fontSize: 10, color: C.cyan, letterSpacing: 3, marginBottom: 24, textTransform: "uppercase" }}>How it works</div>
-
-            <h2 className="section-title" style={{
-              fontFamily: "var(--font-pixel)",
-              fontSize: 22, lineHeight: 1.75, marginBottom: 40, maxWidth: 500,
-            }}>
-              One pod.<br />
-              Per agent.<br />
-              Always on.
-            </h2>
-
-            <p style={{ fontSize: 14, color: C.muted, lineHeight: 1.95, maxWidth: 580, marginBottom: 72 }}>
-              Every agent in your fleet runs in a dedicated, sandboxed pod with a persistent cloud filesystem. Agents communicate directly over a P2P network — no shared state, no central broker, no interference between agents or with your own environment.
+      <section className="border-b border-white/10">
+        <div className="mx-auto grid min-h-[calc(100vh-4rem)] max-w-7xl items-center gap-12 px-6 py-24 lg:grid-cols-[0.95fr_1.05fr] lg:py-28">
+          <div className="relative max-w-2xl">
+            <HeroSwarm />
+            <Badge variant="outline" className="mb-6 bg-background">
+              Agent fleet infrastructure
+            </Badge>
+            <h1 className="max-w-3xl text-4xl font-semibold tracking-tight text-balance sm:text-5xl lg:text-6xl">
+              Operate AI agents like production infrastructure.
+            </h1>
+            <p className="mt-6 max-w-xl text-base leading-7 text-muted-foreground sm:text-lg sm:leading-8">
+              CommonOS gives every agent a dedicated runtime, persistent filesystem,
+              task stream, and fleet-level control plane so teams can deploy
+              autonomous workers with the same discipline they expect from cloud tools.
             </p>
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+              <Button asChild size="lg">
+                <Link href="/auth">
+                  Create a fleet
+                  <ArrowRight />
+                </Link>
+              </Button>
+            </div>
+            <div className="mt-10 grid max-w-xl grid-cols-2 gap-4 text-sm text-muted-foreground sm:grid-cols-3">
+              {["Isolated pods", "Persistent files", "Real-time events"].map((item) => (
+                <div key={item} className="flex items-center gap-2">
+                  <CheckCircle2 className="size-4 text-emerald-400" />
+                  {item}
+                </div>
+              ))}
+            </div>
+          </div>
 
-            {/* Architecture diagram */}
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 72 }}>
-              <div style={{
-                padding: "12px 36px",
-                background: "rgba(245,158,11,0.08)", border: `1px solid rgba(245,158,11,0.25)`,
-                borderRadius: 8, color: C.amber, fontSize: 10, letterSpacing: 1.5,
-              }}>
-                YOUR ENVIRONMENT
+          <div className="window-breathe overflow-hidden rounded-lg border border-white/10 bg-[#080c14] shadow-2xl shadow-black/50">
+            <div className="flex h-10 items-center gap-3 border-b border-white/10 bg-gradient-to-b from-[#141e30] to-[#0e1525] px-4">
+              <div className="flex gap-1.5">
+                <span className="size-3 rounded-full bg-red-500" />
+                <span className="size-3 rounded-full bg-amber-500" />
+                <span className="size-3 rounded-full bg-emerald-500" />
               </div>
-              <div style={{ width: 1, height: 28, background: `linear-gradient(to bottom, rgba(245,158,11,0.4), ${C.border})` }} />
-
-              <div style={{ width: "100%", padding: "28px 28px 32px", background: "rgba(255,255,255,0.018)", border: `1px solid ${C.border}`, borderRadius: 14 }}>
-                <div style={{ fontSize: 9, color: C.dim, letterSpacing: 2, marginBottom: 28, textAlign: "center" }}>
-                  COMMON OS — FLEET CONTROL PLANE
-                </div>
-
-                <div className="four-col" style={{ display: "flex", gap: 14, justifyContent: "center", flexWrap: "wrap" }}>
-                  {[
-                    { label: "Agent 01", role: "researcher",  delay: "0s"   },
-                    { label: "Agent 02", role: "eng",         delay: "0.5s" },
-                    { label: "Agent 03", role: "manager",     delay: "1s"   },
-                    { label: "Agent 04", role: "analyst",     delay: "1.5s" },
-                  ].map(({ label, role, delay }) => (
-                    <div key={label} style={{
-                      flex: "1 1 150px",
-                      padding: "20px 16px",
-                      background: "rgba(34,211,238,0.03)", border: `1px solid rgba(34,211,238,0.14)`,
-                      borderRadius: 10, textAlign: "center",
-                    }}>
-                      <div style={{ fontSize: 9, color: C.cyan, letterSpacing: 1.5, marginBottom: 6 }}>{label}</div>
-                      <div style={{ fontSize: 9, color: C.dim, marginBottom: 14 }}>role: {role}</div>
-                      <div style={{ fontSize: 9, color: C.faint, lineHeight: 2.0, marginBottom: 14 }}>
-                        /workspace<br />
-                        gVisor sandbox<br />
-                        AXL P2P node<br />
-                        daemon.mjs
-                      </div>
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                        <span className="live-dot" style={{ display: "inline-block", width: 5, height: 5, borderRadius: "50%", background: C.green, animationDelay: delay }} />
-                        <span style={{ fontSize: 8, color: C.muted }}>running</span>
-                      </div>
-                    </div>
-                  ))}
-                  <div style={{
-                    flex: "1 1 80px",
-                    padding: "20px 16px", border: `1px dashed ${C.faint}`,
-                    borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center",
-                  }}>
-                    <span style={{ fontSize: 10, color: C.faint }}>+ n</span>
-                  </div>
-                </div>
-
-                {/* AXL P2P line */}
-                <div style={{ marginTop: 24, padding: "12px 20px", background: "rgba(167,139,250,0.04)", border: `1px solid rgba(167,139,250,0.12)`, borderRadius: 8, textAlign: "center" }}>
-                  <span style={{ fontSize: 10, color: C.purple, letterSpacing: 1.5 }}>AXL P2P — </span>
-                  <span style={{ fontSize: 10, color: C.muted }}>agents communicate directly, no central broker</span>
-                </div>
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <Terminal className="size-4 text-muted-foreground" />
+                <span className="truncate text-sm font-medium text-slate-300">Fleet quickstart</span>
+                <Badge variant="warning" className="hidden sm:inline-flex">CLI</Badge>
               </div>
+              <span className="hidden font-mono text-xs text-muted-foreground sm:inline">
+                cos quickstart
+              </span>
             </div>
 
-            {/* Property cards */}
-            <div className="two-col" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            <div className="flex border-b border-white/10 bg-[#0a0e1a] px-4">
+              {["Terminal", "Fleets", "Agents"].map((label, index) => (
+                <div
+                  key={label}
+                  className={
+                    index === 0
+                      ? "border-b-2 border-amber-400 px-3 py-2 text-xs font-medium text-amber-200"
+                      : "px-3 py-2 text-xs font-medium text-muted-foreground"
+                  }
+                >
+                  {label}
+                </div>
+              ))}
+            </div>
+
+            <div className="p-5">
+              <div className="rounded-md border border-white/10 bg-[#060a12] p-5 font-mono text-sm text-slate-200 shadow-inner">
+                <div className="mb-4 flex items-center justify-between border-b border-white/10 pb-3 text-xs text-muted-foreground">
+                  <span>/workspace/product-team</span>
+                  <span>zsh</span>
+                </div>
+                {terminalLines.map((line) => (
+                  <div key={line} className="flex gap-3 py-1.5">
+                    <span className="text-amber-300">$</span>
+                    <span className="break-all">{line}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                {[
+                  ["fleets", "Create runtime groups"],
+                  ["agents", "Deploy workers"],
+                  ["tasks", "Route work"],
+                ].map(([label, copy]) => (
+                  <div key={label} className="rounded-md border border-white/10 bg-white/[0.03] p-3">
+                    <div className="text-sm font-semibold">{label}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">{copy}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="platform" className="border-b border-white/10 bg-muted/30 py-20">
+        <div className="mx-auto max-w-7xl px-6">
+          <div className="max-w-2xl">
+            <Badge variant="secondary">Platform</Badge>
+            <h2 className="mt-4 text-3xl font-semibold tracking-tight sm:text-4xl">
+              The standard operating layer for agent fleets.
+            </h2>
+            <p className="mt-4 text-muted-foreground">
+              CommonOS focuses on the operational pieces teams need after the first demo:
+              isolation, lifecycle control, task routing, identity, and audit-ready events.
+            </p>
+          </div>
+          <div className="mt-10 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            {capabilities.map((item) => (
+              <Card key={item.title}>
+                <CardHeader>
+                  <div className="mb-3 flex size-10 items-center justify-center rounded-md border bg-background">
+                    <item.icon className="size-5 text-primary" />
+                  </div>
+                  <CardTitle className="text-base">{item.title}</CardTitle>
+                </CardHeader>
+                <CardContent className="text-sm leading-6 text-muted-foreground">
+                  {item.description}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section id="world-ui" className="border-b border-white/10 bg-muted/20 py-20">
+        <div className="mx-auto grid max-w-7xl items-center gap-10 px-6 lg:grid-cols-[1.15fr_0.85fr]">
+          <LandingWorldPreview />
+          <div className="max-w-xl lg:pl-6">
+            <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+              Watch work move through the fleet.
+            </h2>
+            <p className="mt-4 leading-7 text-muted-foreground">
+              The world view gives operators a quick read on who is running, what is in flight,
+              and where attention is needed. It is a map for supervision, not decoration.
+            </p>
+            <div className="mt-6 grid gap-3 text-sm text-muted-foreground sm:grid-cols-2">
               {[
-                { label: "Sandboxed pods",              desc: "Every agent runs in a hardened, kernel-isolated pod. A compromised agent cannot escape its sandbox or reach your environment.", color: C.cyan },
-                { label: "Persistent workspaces",      desc: "Each pod mounts a persistent cloud filesystem. Files survive restarts. Long-running work picks up exactly where it left off.", color: C.green },
-                { label: "AXL P2P messaging",          desc: "Agents talk directly over a decentralized P2P network. Workers notify managers on task completion — no broker, no bottleneck.", color: C.purple },
-                { label: "Fleet control plane",        desc: "Task routing, event streaming, permission tiers, and world state — one API surface for your entire swarm.", color: C.amber },
+                "Fleet status at a glance",
+                "Task progress in context",
+                "Command input in context",
+                "Details available when selected",
               ].map((item) => (
-                <div key={item.label} className="feature-card" style={{
-                  padding: 24, background: C.cardBg, border: `1px solid ${C.border}`,
-                  borderRadius: 10, transition: "all 0.2s",
-                }}>
-                  <div style={{ fontSize: 11, color: item.color, marginBottom: 8, fontWeight: 600 }}>{item.label}</div>
-                  <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.8 }}>{item.desc}</div>
+                <div key={item} className="flex items-center gap-2">
+                  <CheckCircle2 className="size-4 text-emerald-400" />
+                  {item}
                 </div>
               ))}
             </div>
           </div>
-        </section>
+        </div>
+      </section>
 
-        {/* ── Agent runtimes ── */}
-        <section style={{
-          padding: "120px 40px",
-          background: "rgba(255,255,255,0.015)",
-          borderTop: `1px solid ${C.border}`, borderBottom: `1px solid ${C.border}`,
-        }}>
-          <div style={{ maxWidth: 1000, margin: "0 auto" }}>
-            <div style={{ fontSize: 10, color: C.purple, letterSpacing: 3, marginBottom: 24, textTransform: "uppercase" }}>Agent Runtimes</div>
-
-            <h2 className="section-title" style={{
-              fontFamily: "var(--font-pixel)",
-              fontSize: 22, lineHeight: 1.75, marginBottom: 40, maxWidth: 480,
-            }}>
-              Bring your<br />
-              own agent.
+      <section id="runtimes" className="border-b border-white/10 py-20">
+        <div className="mx-auto grid max-w-7xl gap-10 px-6 lg:grid-cols-[0.9fr_1.1fr]">
+          <div>
+            <Badge variant="secondary">Runtimes</Badge>
+            <h2 className="mt-4 text-3xl font-semibold tracking-tight sm:text-4xl">
+              Use the runtime path that matches the work.
             </h2>
-
-            <p style={{ fontSize: 14, color: C.muted, lineHeight: 1.95, maxWidth: 560, marginBottom: 56 }}>
-              Each pod supports three runtime paths. Use the native AI runtime for full agent capabilities, the integrations gateway for 50+ platforms, or bring your own image with any framework.
+            <p className="mt-4 text-muted-foreground">
+              Start with the managed runtime, connect to external systems when needed,
+              or bring a containerized agent stack you already trust.
             </p>
-
-            <div className="three-col" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20 }}>
-              {[
-                {
-                  tag: "native",
-                  color: C.amber,
-                  title: "Native runtime",
-                  desc: "Full AI agent capabilities — memory, tools, wallets, and onchain identity. The default path for autonomous agents.",
-                  flag: "--integration native",
-                },
-                {
-                  tag: "openclaw",
-                  color: C.cyan,
-                  title: "Integrations gateway",
-                  desc: "50+ platform connectors built in. Messaging platforms, social networks, browser automation — no extra config.",
-                  flag: "--integration openclaw",
-                },
-                {
-                  tag: "guest",
-                  color: C.purple,
-                  title: "Bring your own image",
-                  desc: "Any container image, any framework. If your agent runs in a container, it runs here — no lock-in.",
-                  flag: "--integration guest",
-                },
-              ].map((rt) => (
-                <div key={rt.tag} className="runtime-card feature-card" style={{
-                  padding: 28, background: C.cardBg, border: `1px solid ${C.border}`,
-                  borderRadius: 12, transition: "all 0.2s",
-                }}>
-                  <div style={{
-                    display: "inline-block", padding: "3px 10px", marginBottom: 16,
-                    background: `rgba(${rt.color === C.amber ? "245,158,11" : rt.color === C.cyan ? "34,211,238" : "167,139,250"},0.1)`,
-                    border: `1px solid rgba(${rt.color === C.amber ? "245,158,11" : rt.color === C.cyan ? "34,211,238" : "167,139,250"},0.25)`,
-                    borderRadius: 4, fontSize: 10, color: rt.color, letterSpacing: 1,
-                  }}>
-                    {rt.tag}
-                  </div>
-                  <div style={{ fontSize: 13, color: C.text, marginBottom: 10, fontWeight: 600 }}>{rt.title}</div>
-                  <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.8, marginBottom: 20 }}>{rt.desc}</div>
-                  <div style={{ fontSize: 11, color: C.faint, fontFamily: "monospace" }}>{rt.flag}</div>
+          </div>
+          <Card>
+            <CardContent className="p-0">
+              {runtimeRows.map(([name, description]) => (
+                <div
+                  key={name}
+                  className="grid gap-3 border-b p-5 last:border-b-0 sm:grid-cols-[160px_1fr]"
+                >
+                  <div className="font-semibold">{name}</div>
+                  <div className="text-sm leading-6 text-muted-foreground">{description}</div>
                 </div>
               ))}
-            </div>
+            </CardContent>
+          </Card>
+        </div>
+      </section>
+
+      <section id="workflow" className="py-20">
+        <div className="mx-auto max-w-7xl px-6">
+          <div className="grid gap-4 md:grid-cols-3">
+            {[
+              {
+                icon: Boxes,
+                title: "Create a fleet",
+                copy: "Define the operating environment and deploy a group of isolated agents.",
+              },
+              {
+                icon: Cloud,
+                title: "Assign work",
+                copy: "Send tasks through the API, CLI, or dashboard and follow status in real time.",
+              },
+              {
+                icon: Network,
+                title: "Inspect outcomes",
+                copy: "Review agents, workspaces, events, and the visual world view when you need live context.",
+              },
+            ].map((item) => (
+              <Card key={item.title}>
+                <CardHeader>
+                  <item.icon className="size-5 text-primary" />
+                  <CardTitle className="text-lg">{item.title}</CardTitle>
+                </CardHeader>
+                <CardContent className="text-sm leading-6 text-muted-foreground">
+                  {item.copy}
+                </CardContent>
+              </Card>
+            ))}
           </div>
-        </section>
-
-        {/* ── World UI ── */}
-        <section id="world-ui" className="s-pad" style={{ padding: "120px 40px" }}>
-          <div style={{ maxWidth: 1000, margin: "0 auto" }}>
-            <div style={{ fontSize: 10, color: C.green, letterSpacing: 3, marginBottom: 24, textTransform: "uppercase" }}>World UI</div>
-
-            <h2 className="section-title" style={{
-              fontFamily: "var(--font-pixel)",
-              fontSize: 22, lineHeight: 1.75, marginBottom: 40, maxWidth: 520,
-            }}>
-              Watch your<br />
-              fleet work<br />
-              in real time.
+          <div className="mt-16 rounded-lg border border-amber-400/20 bg-[#060b14] px-6 py-8 text-center text-slate-100 shadow-2xl shadow-black/30 sm:px-10">
+            <h2 className="text-3xl font-semibold tracking-tight">
+              Deploy a fleet with a clean operational surface.
             </h2>
-
-            <p style={{ fontSize: 14, color: C.muted, lineHeight: 1.95, maxWidth: 560, marginBottom: 64 }}>
-              Open the World UI and your fleet appears in a live 2.5D isometric simulation. Every pod state is reflected in real time — when an agent starts a task, it walks to its desk. When it finishes, an artifact appears in the world. When two agents communicate over AXL, you see the message exchange.
+            <p className="mx-auto mt-3 max-w-2xl text-sm leading-6 text-slate-300">
+              The dashboard is built for repeated use: create fleets, deploy agents,
+              open the world view, and manage credentials without leaving the control plane.
             </p>
-
-            <div className="two-col" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 48, alignItems: "start" }}>
-              <div>
-                {[
-                  { label: "Task start",       desc: "Agent walks to its desk when work begins." },
-                  { label: "Task complete",     desc: "A glowing artifact appears at the agent's workspace." },
-                  { label: "AXL message",       desc: "Speech bubbles show live P2P messages between agents." },
-                  { label: "Dynamic objects",   desc: "Agents can create whiteboards, terminals, checkpoints in the world." },
-                  { label: "Fleet panel",       desc: "Live agent list with status and current action." },
-                  { label: "Inspector",         desc: "Select any agent to view task history and recent actions." },
-                ].map((item, i) => (
-                  <div key={item.label} style={{
-                    display: "flex", gap: 16, alignItems: "flex-start",
-                    padding: "16px 0",
-                    borderBottom: i < 5 ? `1px solid ${C.border}` : "none",
-                  }}>
-                    <span className="live-dot" style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: C.green, marginTop: 4, flexShrink: 0, animationDelay: `${i * 0.3}s` }} />
-                    <div>
-                      <div style={{ fontSize: 12, color: C.text, marginBottom: 4, fontWeight: 600 }}>{item.label}</div>
-                      <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.7 }}>{item.desc}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div style={{ padding: 28, background: C.cardBg, border: `1px solid ${C.border}`, borderRadius: 12 }}>
-                <div style={{ fontSize: 10, color: C.green, letterSpacing: 2, marginBottom: 20 }}>WORLD EVENT STREAM</div>
-                {[
-                  { time: "12:04:01", agent: "agt_a1f3", event: "task_start",     detail: "build the auth module",        color: C.cyan },
-                  { time: "12:04:03", agent: "agt_b7c2", event: "world_move",     detail: "→ desk_02",                    color: C.muted },
-                  { time: "12:04:11", agent: "agt_a1f3", event: "message_sent",   detail: "→ agt_b7c2 via AXL",          color: C.purple },
-                  { time: "12:04:11", agent: "agt_b7c2", event: "message_recv",   detail: "from agt_a1f3",               color: C.purple },
-                  { time: "12:07:42", agent: "agt_a1f3", event: "task_complete",  detail: "auth.ts written",             color: C.green },
-                  { time: "12:07:43", agent: "agt_a1f3", event: "world_create",   detail: "artifact: auth_module",       color: C.amber },
-                  { time: "12:07:45", agent: "agt_b7c2", event: "task_start",     detail: "review auth module",          color: C.cyan },
-                ].map((ev, i) => (
-                  <div key={i} style={{
-                    display: "grid", gridTemplateColumns: "60px 80px 1fr",
-                    gap: 8, fontSize: 10, padding: "7px 0",
-                    borderBottom: i < 6 ? `1px solid rgba(255,255,255,0.04)` : "none",
-                  }}>
-                    <span style={{ color: C.faint }}>{ev.time}</span>
-                    <span style={{ color: C.dim }}>{ev.agent.slice(0, 8)}</span>
-                    <span style={{ color: ev.color }}>{ev.event} <span style={{ color: C.faint }}>{ev.detail}</span></span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
+            <Button asChild size="lg" className="mt-6">
+              <Link href="/auth">
+                Get started
+                <ArrowRight />
+              </Link>
+            </Button>
           </div>
-        </section>
+        </div>
+      </section>
+    </main>
+  );
+}
 
-        {/* ── SDK & CLI ── */}
-        <section id="sdk" style={{
-          padding: "120px 40px",
-          background: "rgba(255,255,255,0.015)",
-          borderTop: `1px solid ${C.border}`, borderBottom: `1px solid ${C.border}`,
-        }}>
-          <div style={{ maxWidth: 1000, margin: "0 auto" }}>
-            <div style={{ fontSize: 10, color: C.amber, letterSpacing: 3, marginBottom: 24, textTransform: "uppercase" }}>SDK & CLI</div>
+function Logo() {
+  return (
+    <Link href="/" className="text-lg font-semibold tracking-tight text-foreground">
+      Common<span className="text-primary">OS</span>
+    </Link>
+  );
+}
 
-            <h2 className="section-title" style={{
-              fontFamily: "var(--font-pixel)",
-              fontSize: 22, lineHeight: 1.75, marginBottom: 40, maxWidth: 480,
-            }}>
-              Deploy a fleet<br />
-              in minutes.
-            </h2>
+function HeaderSwarm() {
+  return (
+    <svg
+      className="pointer-events-none absolute right-0 top-0 h-16 w-[360px] text-amber-300/50 opacity-60"
+      viewBox="0 0 360 64"
+      aria-hidden="true"
+    >
+      <path className="swarm-line" d="M36 34 C88 8 132 54 184 28 S286 12 330 38" fill="none" stroke="currentColor" strokeWidth="1" />
+      <path className="swarm-line" d="M76 46 C124 24 170 42 220 20 S294 30 340 18" fill="none" stroke="currentColor" strokeWidth="1" style={{ animationDelay: "1.4s" }} />
+      {[36, 105, 184, 260, 330].map((x, index) => (
+        <circle
+          key={x}
+          className="swarm-node"
+          cx={x}
+          cy={index % 2 ? 24 : 38}
+          r="3"
+          fill="currentColor"
+          style={{ animationDelay: `${index * 0.45}s` }}
+        />
+      ))}
+    </svg>
+  );
+}
 
-            <p style={{ fontSize: 14, color: C.muted, lineHeight: 1.95, maxWidth: 520, marginBottom: 56 }}>
-              A CLI and TypeScript SDK built around fleets, agents, and tasks. One command to create a fleet. One command to deploy an agent. One command to send work.
-            </p>
-
-            <div className="two-col" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
-              {/* CLI */}
-              <div style={{ background: "rgba(0,0,0,0.45)", border: `1px solid ${C.border}`, borderRadius: 14, overflow: "hidden" }}>
-                <div style={{
-                  display: "flex", alignItems: "center", gap: 16,
-                  padding: "12px 20px", background: "rgba(255,255,255,0.03)", borderBottom: `1px solid ${C.border}`,
-                }}>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    {["#ff5f57","#febc2e","#28c840"].map(c => <div key={c} style={{ width: 10, height: 10, borderRadius: "50%", background: c }} />)}
-                  </div>
-                  <span style={{ fontSize: 11, color: C.muted }}>terminal</span>
-                </div>
-                <pre style={{ padding: "28px 28px", fontSize: 12, lineHeight: 2.0, overflowX: "auto", margin: 0 }}>
-                  <code>
-                    <span style={{ color: C.dim }}># install</span>{"\n"}
-                    <span style={{ color: C.amber }}>$ </span><span style={{ color: C.text }}>npm install -g @common-os/cli</span>{"\n\n"}
-                    <span style={{ color: C.dim }}># create a fleet</span>{"\n"}
-                    <span style={{ color: C.amber }}>$ </span><span style={{ color: C.text }}>cos fleet create --name "product-team"</span>{"\n\n"}
-                    <span style={{ color: C.dim }}># deploy agents to it</span>{"\n"}
-                    <span style={{ color: C.amber }}>$ </span><span style={{ color: C.text }}>cos agent deploy --fleet flt_xyz \</span>{"\n"}
-                    {"    "}<span style={{ color: C.text }}>--role "backend-engineer"</span>{"\n\n"}
-                    <span style={{ color: C.dim }}># send work</span>{"\n"}
-                    <span style={{ color: C.amber }}>$ </span><span style={{ color: C.text }}>cos task send agt_xyz \</span>{"\n"}
-                    {"    "}<span style={{ color: C.text }}>"build the auth module" \</span>{"\n"}
-                    {"    "}<span style={{ color: C.text }}>--fleet flt_xyz</span>
-                  </code>
-                </pre>
-              </div>
-
-              {/* SDK */}
-              <div style={{ background: "rgba(0,0,0,0.45)", border: `1px solid ${C.border}`, borderRadius: 14, overflow: "hidden" }}>
-                <div style={{
-                  display: "flex", alignItems: "center", gap: 16,
-                  padding: "12px 20px", background: "rgba(255,255,255,0.03)", borderBottom: `1px solid ${C.border}`,
-                }}>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    {["#ff5f57","#febc2e","#28c840"].map(c => <div key={c} style={{ width: 10, height: 10, borderRadius: "50%", background: c }} />)}
-                  </div>
-                  <span style={{ fontSize: 11, color: C.muted }}>fleet.ts</span>
-                </div>
-                <pre style={{ padding: "28px 28px", fontSize: 12, lineHeight: 2.0, overflowX: "auto", margin: 0 }}>
-                  <code>
-                    <span style={{ color: C.dim }}>{"// TypeScript SDK"}</span>{"\n"}
-                    <span style={{ color: C.cyan }}>import</span><span style={{ color: C.text }}>{" { CommonOSClient } "}</span><span style={{ color: C.cyan }}>from</span><span style={{ color: C.green }}>{" '@common-os/sdk'"}</span>{"\n\n"}
-                    <span style={{ color: C.text }}>{"const client = new CommonOSClient({"}</span>{"\n"}
-                    {"  "}<span style={{ color: C.text }}>{"apiKey: 'cos_live_...'"}</span>{"\n"}
-                    <span style={{ color: C.text }}>{"}) "}</span>{"\n\n"}
-                    <span style={{ color: C.dim }}>{"// one fleet, isolated pods per agent"}</span>{"\n"}
-                    <span style={{ color: C.text }}>{"const fleet = await client.fleets.create({"}</span>{"\n"}
-                    {"  "}<span style={{ color: C.text }}>{"name: 'eng-team'"}</span>{"\n"}
-                    <span style={{ color: C.text }}>{"}) "}</span>{"\n\n"}
-                    <span style={{ color: C.text }}>{"const agent = await client.agents.deploy("}</span>{"\n"}
-                    {"  "}<span style={{ color: C.text }}>{"fleet._id, { role: 'researcher' }"}</span>{"\n"}
-                    <span style={{ color: C.text }}>{")"}</span>{"\n\n"}
-                    <span style={{ color: C.text }}>{"await client.tasks.send(fleet._id,"}</span>{"\n"}
-                    {"  "}<span style={{ color: C.text }}>{"agent._id, { description: 'analyze market' }"}</span>{"\n"}
-                    <span style={{ color: C.text }}>{")"}</span>
-                  </code>
-                </pre>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* ── Final CTA ── */}
-        <section style={{
-          padding: "120px 40px", textAlign: "center",
-          borderTop: `1px solid ${C.border}`,
-          position: "relative", overflow: "hidden",
-        }}>
-          <div style={{
-            position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
-            width: 700, height: 500,
-            background: "radial-gradient(ellipse, rgba(245,158,11,0.06) 0%, transparent 68%)",
-            pointerEvents: "none",
-          }} />
-
-          <div style={{ fontSize: 10, color: C.amber, letterSpacing: 3, marginBottom: 36, textTransform: "uppercase" }}>Ship it</div>
-
-          <h2 style={{ fontFamily: "var(--font-pixel)", fontSize: 24, lineHeight: 1.75, marginBottom: 44 }}>
-            Deploy your<br />
-            swarm today.
-          </h2>
-
-          <p style={{ fontSize: 14, color: C.muted, lineHeight: 1.95, maxWidth: 420, margin: "0 auto 52px" }}>
-            Every agent gets its own <span style={{ color: C.text }}>dedicated computer</span>. Isolated, persistent, always on. Your environment stays yours.
-          </p>
-
-          <div style={{ display: "flex", gap: 14, alignItems: "center", justifyContent: "center", flexWrap: "wrap" }}>
-            <Link href="/auth" className="cta-primary" style={{
-              display: "inline-flex", alignItems: "center", gap: 8,
-              padding: "14px 48px",
-              background: "rgba(245,158,11,0.12)", border: `1px solid rgba(245,158,11,0.35)`,
-              borderRadius: 8, color: C.amber, fontSize: 12, textDecoration: "none",
-              letterSpacing: 0.5, transition: "all 0.2s",
-            }}>
-              launch your fleet →
-            </Link>
-            <a href="https://github.com/Arttribute/common-os" target="_blank" rel="noopener noreferrer" className="github-star" style={{
-              display: "inline-flex", alignItems: "center", gap: 8,
-              padding: "14px 32px",
-              background: "rgba(255,255,255,0.04)", border: `1px solid ${C.border}`,
-              borderRadius: 8, color: C.muted, fontSize: 12, textDecoration: "none",
-              letterSpacing: 0.5, transition: "all 0.2s",
-            }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ flexShrink: 0 }}>
-                <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/>
-              </svg>
-              star on github
-            </a>
-          </div>
-        </section>
-
-        {/* ── Footer ── */}
-        <footer style={{
-          padding: "28px 40px", borderTop: `1px solid ${C.border}`,
-          display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12,
-        }}>
-          <span style={{ fontSize: 12, fontWeight: 700 }}>
-            common<span style={{ color: C.amber }}>os</span>
-          </span>
-          <span style={{ fontSize: 9, color: C.faint, letterSpacing: 1.5 }}>
-            AGENT COMMONS HACKATHON · 2026
-          </span>
-        </footer>
-
-      </div>
-    </>
+function HeroSwarm() {
+  return (
+    <div className="pointer-events-none absolute -right-10 top-6 hidden h-56 w-72 text-amber-300/45 opacity-45 sm:block lg:-right-20">
+      <svg className="h-full w-full" viewBox="0 0 288 224" aria-hidden="true">
+        <path className="swarm-line" d="M28 116 C76 62 128 150 174 84 S228 92 262 42" fill="none" stroke="currentColor" strokeWidth="1.2" />
+        <path className="swarm-line" d="M42 166 C86 112 126 128 174 158 S226 148 258 112" fill="none" stroke="rgb(129 140 248 / 0.72)" strokeWidth="1.1" style={{ animationDelay: "1.6s" }} />
+        <path className="swarm-line" d="M72 58 C122 38 168 58 214 30" fill="none" stroke="rgb(52 211 153 / 0.5)" strokeWidth="1" style={{ animationDelay: "2.5s" }} />
+        {[
+          [28, 116],
+          [86, 82],
+          [132, 132],
+          [174, 84],
+          [222, 104],
+          [262, 42],
+        ].map(([x, y], index) => (
+          <g key={`${x}-${y}`} className="swarm-node" style={{ animationDelay: `${index * 0.35}s` }}>
+            <circle cx={x} cy={y} r="5.5" fill="rgb(6 11 20 / 0.92)" stroke="currentColor" strokeWidth="1.3" />
+            <circle cx={x} cy={y} r="2" fill="currentColor" />
+          </g>
+        ))}
+      </svg>
+      <span
+        className="packet-dot absolute size-1.5 rounded-full bg-amber-300 shadow-[0_0_12px_rgb(245_158_11_/_0.8)]"
+        style={{ offsetPath: "path('M28 116 C76 62 128 150 174 84 S228 92 262 42')" }}
+      />
+      <span
+        className="packet-dot absolute size-1.5 rounded-full bg-indigo-300 shadow-[0_0_12px_rgb(129_140_248_/_0.8)]"
+        style={{
+          offsetPath: "path('M42 166 C86 112 126 128 174 158 S226 148 258 112')",
+          animationDelay: "2.2s",
+        }}
+      />
+    </div>
   );
 }
