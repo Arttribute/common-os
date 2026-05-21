@@ -1264,7 +1264,8 @@ export function AgentDetailModal() {
       try {
         const token = await getAccessToken()
         if (token) return token
-      } catch { /* fall through to API-key modes */ }
+      } catch { /* use authenticated session or fail closed */ }
+      return null
     }
     if (process.env.NEXT_PUBLIC_API_KEY) return process.env.NEXT_PUBLIC_API_KEY
     if (storedApiKey) return storedApiKey

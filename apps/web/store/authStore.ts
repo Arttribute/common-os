@@ -14,7 +14,7 @@ export const useAuthStore = create<AuthState>()(
       tenantId: null,
       apiKey: null,
       setTenant: (tenantId, apiKey) =>
-        set({ tenantId, ...(apiKey ? { apiKey } : {}) }),
+        set({ tenantId, apiKey: apiKey ?? null }),
       clear: () => set({ tenantId: null, apiKey: null }),
     }),
     { name: 'commonos-auth' },
