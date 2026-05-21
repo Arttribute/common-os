@@ -1260,9 +1260,15 @@ export function AgentDetailModal() {
   const isLive = Boolean(apiUrl && fleetId && (storedApiKey || process.env.NEXT_PUBLIC_API_KEY || authenticated))
 
   async function resolveToken(): Promise<string | null> {
-    if (storedApiKey) return storedApiKey
+    if (authenticated) {
+      try {
+        const token = await getAccessToken()
+        if (token) return token
+      } catch { /* fall through to API-key modes */ }
+    }
     if (process.env.NEXT_PUBLIC_API_KEY) return process.env.NEXT_PUBLIC_API_KEY
-    try { return await getAccessToken() } catch { return null }
+    if (storedApiKey) return storedApiKey
+    return null
   }
 
   const fetchSessions = useCallback(async () => {
