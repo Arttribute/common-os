@@ -1,6 +1,10 @@
 import type { BaseLayoutProps } from "fumadocs-ui/layouts/shared";
 
 export function baseOptions(): BaseLayoutProps {
+  const webOrigin =
+    process.env.NEXT_PUBLIC_WEB_ORIGIN ??
+    (process.env.NODE_ENV === "development" ? "http://localhost:3000" : "https://os.agentcommons.io");
+
   return {
     nav: {
       title: (
@@ -12,11 +16,11 @@ export function baseOptions(): BaseLayoutProps {
     links: [
       {
         text: "World UI",
-        url: "/world",
+        url: `${webOrigin}/world`,
       },
       {
         text: "Dashboard",
-        url: "/dashboard",
+        url: `${webOrigin}/dashboard`,
       },
       {
         text: "GitHub",

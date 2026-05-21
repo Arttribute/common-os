@@ -5,9 +5,9 @@ const nextConfig: NextConfig = {
 	async rewrites() {
 		const docsOrigin =
 			process.env.DOCS_ORIGIN ??
-			(process.env.NODE_ENV === "development" ? "http://localhost:3002" : null);
-
-		if (!docsOrigin) return [];
+			(process.env.NODE_ENV === "development"
+				? "http://localhost:3002"
+				: "https://common-os-docs.vercel.app");
 
 		return [
 			{
