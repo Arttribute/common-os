@@ -12,11 +12,11 @@ export function baseOptions(): BaseLayoutProps {
     links: [
       {
         text: "World UI",
-        url: "http://localhost:3000/world",
+        url: "/world",
       },
       {
         text: "Dashboard",
-        url: "http://localhost:3000/dashboard",
+        url: "/dashboard",
       },
       {
         text: "GitHub",

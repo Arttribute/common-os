@@ -59,7 +59,7 @@ The World UI makes the fleet visible — agents appear as characters in a 2.5D i
 |---|---|---|
 | `native` | `agc` CLI (Agent Commons) | Agents needing full AI capabilities — memory, tools, wallets |
 | `openclaw` | OpenClaw gateway (50+ integrations) | Telegram, Discord, Slack, WhatsApp, browser automation |
-| `guest` | Tenant's own Docker image + `@common-os/sdk` | Any other framework — LangGraph, CrewAI, AutoGen |
+| `guest` | Tenant Docker image + `@common-os/sdk` or HTTP contract | Custom frameworks — LangGraph, CrewAI, AutoGen, internal agents |
 
 ### Gensyn AXL — P2P inter-agent messaging
 

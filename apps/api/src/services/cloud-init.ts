@@ -25,9 +25,9 @@ export interface LaunchOptions {
 	walletAddress?: string;
 	openclawGatewayUrl?: string;
 	workspaceDir?: string;
-		runnerUrl?: string;
-		axlPeers?: string;
-		worldRoom?: string;
+	runnerUrl?: string;
+	axlPeers?: string;
+	worldRoom?: string;
 	worldX?: number;
 	worldY?: number;
 }
@@ -36,6 +36,70 @@ export interface LaunchedService {
 	/** Kubernetes namespace name — stored as namespaceId in agent.pod */
 	serviceId: string;
 	sessionId: string;
+}
+
+function commonRuntimeEnv(opts: LaunchOptions, imageUrl: string): k8s.V1EnvVar[] {
+	return [
+		{ name: "AGENT_ID",              value: opts.agentId },
+		{ name: "AGENT_TOKEN",           value: opts.agentToken },
+		{ name: "FLEET_ID",              value: opts.fleetId },
+		{ name: "TENANT_ID",             value: opts.tenantId },
+		{ name: "API_URL",               value: opts.apiUrl },
+		{ name: "ROLE",                  value: opts.role },
+		{ name: "INTEGRATION_PATH",      value: opts.integrationPath },
+		{ name: "COMMONS_API_KEY",       value: opts.commonsApiKey },
+		{ name: "COMMONS_AGENT_ID",      value: opts.commonsAgentId },
+		{ name: "WALLET_ADDRESS",        value: opts.walletAddress ?? "" },
+		{ name: "AGENT_WALLET_CHAIN_ID", value: process.env.AGENT_WALLET_DEFAULT_CHAIN_ID ?? "84532" },
+		{ name: "AGC_INITIATOR",         value: process.env.AGC_INITIATOR ?? process.env.AGENTCOMMONS_INITIATOR ?? "" },
+		{ name: "OPENCLAW_GATEWAY_URL",  value: opts.openclawGatewayUrl ?? "http://localhost:18789" },
+		{ name: "WORKSPACE_DIR",         value: opts.workspaceDir ?? "/mnt/shared" },
+		{ name: "COMMONOS_WORKSPACE",    value: opts.workspaceDir ?? "/mnt/shared" },
+		{ name: "COMMONOS_AGENT_IMAGE",  value: imageUrl },
+		{ name: "DOCKER_IMAGE",          value: opts.dockerImage ?? "" },
+		{ name: "RUNNER_URL",            value: opts.runnerUrl ?? process.env.RUNNER_URL ?? "" },
+		{ name: "AXL_PEERS",             value: opts.axlPeers ?? process.env.AXL_PEERS ?? "" },
+		{ name: "POD_IP",                valueFrom: { fieldRef: { fieldPath: "status.podIP" } } },
+		{ name: "WORLD_ROOM",            value: opts.worldRoom ?? "dev-room" },
+		{ name: "WORLD_X",               value: String(opts.worldX ?? 2) },
+		{ name: "WORLD_Y",               value: String(opts.worldY ?? 2) },
+	];
+}
+
+function agentContainer(imageUrl: string, envVars: k8s.V1EnvVar[]): k8s.V1Container {
+	return {
+		name:            "agent",
+		image:           imageUrl,
+		imagePullPolicy: "Always",
+		env:             envVars,
+		resources: {
+			requests: { cpu: "100m", memory: "128Mi" },
+			limits:   { cpu: "1",    memory: "512Mi"  },
+		},
+		volumeMounts: [{ name: "agent-storage", mountPath: "/mnt/shared" }],
+	};
+}
+
+function guestRuntimeContainer(opts: LaunchOptions, envVars: k8s.V1EnvVar[]): k8s.V1Container | null {
+	if (opts.integrationPath !== "guest") return null;
+	if (!opts.dockerImage) {
+		throw new Error("guest integration path requires dockerImage");
+	}
+
+	return {
+		name:            "guest-runtime",
+		image:           opts.dockerImage,
+		imagePullPolicy: "Always",
+		env: [
+			...envVars,
+			{ name: "COMMONOS_RUNTIME_ROLE", value: "guest" },
+		],
+		resources: {
+			requests: { cpu: "250m", memory: "256Mi" },
+			limits:   { cpu: "2",    memory: "2Gi"    },
+		},
+		volumeMounts: [{ name: "agent-storage", mountPath: "/mnt/shared" }],
+	};
 }
 
 export interface WorkspaceReadOptions {
@@ -363,7 +427,7 @@ export async function readAgentWorkspaceFile(opts: WorkspaceReadOptions): Promis
 		false,
 		(status) => { settleExec(status); },
 	);
-	ws.on("error", (err) => {
+		ws.on("error", (err: unknown) => {
 		rejectExec(err instanceof Error ? err : new Error(String(err)));
 	});
 	ws.on("close", () => {
@@ -497,31 +561,7 @@ export async function launchAgentPod(
 	});
 	console.log(`[cloud-init] namespace ready, creating pod ${podName} with image ${imageUrl}...`);
 
-	const envVars: k8s.V1EnvVar[] = [
-		{ name: "AGENT_ID",             value: opts.agentId },
-		{ name: "AGENT_TOKEN",          value: opts.agentToken },
-		{ name: "FLEET_ID",             value: opts.fleetId },
-		{ name: "TENANT_ID",            value: opts.tenantId },
-		{ name: "API_URL",              value: opts.apiUrl },
-		{ name: "ROLE",                 value: opts.role },
-		{ name: "INTEGRATION_PATH",     value: opts.integrationPath },
-		{ name: "COMMONS_API_KEY",      value: opts.commonsApiKey },
-		{ name: "COMMONS_AGENT_ID",     value: opts.commonsAgentId },
-		{ name: "WALLET_ADDRESS",       value: opts.walletAddress ?? "" },
-		{ name: "AGENT_WALLET_CHAIN_ID", value: process.env.AGENT_WALLET_DEFAULT_CHAIN_ID ?? "84532" },
-		{ name: "AGC_INITIATOR",        value: process.env.AGC_INITIATOR ?? process.env.AGENTCOMMONS_INITIATOR ?? "" },
-		{ name: "OPENCLAW_GATEWAY_URL", value: opts.openclawGatewayUrl ?? "http://localhost:18789" },
-		{ name: "WORKSPACE_DIR",        value: opts.workspaceDir ?? "/mnt/shared" },
-		{ name: "COMMONOS_WORKSPACE",   value: opts.workspaceDir ?? "/mnt/shared" },
-		{ name: "COMMONOS_AGENT_IMAGE", value: imageUrl },
-		{ name: "DOCKER_IMAGE",         value: opts.dockerImage ?? "" },
-			{ name: "RUNNER_URL",           value: opts.runnerUrl ?? process.env.RUNNER_URL ?? "" },
-			{ name: "AXL_PEERS",            value: opts.axlPeers ?? process.env.AXL_PEERS ?? "" },
-			{ name: "POD_IP",               valueFrom: { fieldRef: { fieldPath: "status.podIP" } } },
-			{ name: "WORLD_ROOM",           value: opts.worldRoom ?? "dev-room" },
-		{ name: "WORLD_X",              value: String(opts.worldX ?? 2) },
-		{ name: "WORLD_Y",              value: String(opts.worldY ?? 2) },
-	];
+	const envVars = commonRuntimeEnv(opts, imageUrl);
 
 	const volume: k8s.V1Volume = useGcsFuse
 		? {
@@ -541,6 +581,7 @@ export async function launchAgentPod(
 		await ensureAgentStorage(projectId, bucketName, opts.agentId, sessionId);
 	}
 
+	const guestContainer = guestRuntimeContainer(opts, envVars);
 	const podBody: k8s.V1Pod = {
 		metadata: {
 			name: podName,
@@ -556,22 +597,8 @@ export async function launchAgentPod(
 		spec: {
 			restartPolicy: "Always",
 			containers: [
-				{
-					name: "agent",
-					image: imageUrl,
-					imagePullPolicy: "Always",
-					env: envVars,
-					resources: {
-						requests: { cpu: "100m", memory: "128Mi" },
-						limits:   { cpu: "1",    memory: "512Mi"  },
-					},
-					volumeMounts: [
-						{
-							name:      "agent-storage",
-							mountPath: "/mnt/shared",
-						},
-					],
-				},
+				agentContainer(imageUrl, envVars),
+				...(guestContainer ? [guestContainer] : []),
 			],
 			volumes: [volume],
 		},
@@ -579,7 +606,7 @@ export async function launchAgentPod(
 
 	await ensurePodWithRetry(projectId, region, clusterName, namespace, podBody);
 
-	console.log(`[cloud-init] pod ${podName} created in namespace ${namespace} using image ${imageUrl}`);
+	console.log(`[cloud-init] pod ${podName} created in namespace ${namespace} using image ${imageUrl}${opts.dockerImage ? ` guest=${opts.dockerImage}` : ""}`);
 	return { serviceId: namespace, sessionId };
 }
 
@@ -723,31 +750,8 @@ export async function launchAgentPodEks(opts: LaunchOptions): Promise<LaunchedSe
 		// Already exists — reuse
 	}
 
-	const envVars: k8s.V1EnvVar[] = [
-		{ name: "AGENT_ID",             value: opts.agentId },
-		{ name: "AGENT_TOKEN",          value: opts.agentToken },
-		{ name: "FLEET_ID",             value: opts.fleetId },
-		{ name: "TENANT_ID",            value: opts.tenantId },
-		{ name: "API_URL",              value: opts.apiUrl },
-		{ name: "ROLE",                 value: opts.role },
-		{ name: "INTEGRATION_PATH",     value: opts.integrationPath },
-		{ name: "COMMONS_API_KEY",      value: opts.commonsApiKey },
-		{ name: "COMMONS_AGENT_ID",     value: opts.commonsAgentId },
-		{ name: "WALLET_ADDRESS",       value: opts.walletAddress ?? "" },
-		{ name: "AGENT_WALLET_CHAIN_ID", value: process.env.AGENT_WALLET_DEFAULT_CHAIN_ID ?? "84532" },
-		{ name: "AGC_INITIATOR",        value: process.env.AGC_INITIATOR ?? process.env.AGENTCOMMONS_INITIATOR ?? "" },
-		{ name: "OPENCLAW_GATEWAY_URL", value: opts.openclawGatewayUrl ?? "http://localhost:18789" },
-		{ name: "WORKSPACE_DIR",        value: opts.workspaceDir ?? "/mnt/shared" },
-		{ name: "COMMONOS_WORKSPACE",   value: opts.workspaceDir ?? "/mnt/shared" },
-		{ name: "COMMONOS_AGENT_IMAGE", value: imageUrl },
-		{ name: "DOCKER_IMAGE",         value: opts.dockerImage ?? "" },
-			{ name: "RUNNER_URL",           value: opts.runnerUrl ?? process.env.RUNNER_URL ?? "" },
-			{ name: "AXL_PEERS",            value: opts.axlPeers ?? process.env.AXL_PEERS ?? "" },
-			{ name: "POD_IP",               valueFrom: { fieldRef: { fieldPath: "status.podIP" } } },
-			{ name: "WORLD_ROOM",           value: opts.worldRoom ?? "dev-room" },
-		{ name: "WORLD_X",              value: String(opts.worldX ?? 2) },
-		{ name: "WORLD_Y",              value: String(opts.worldY ?? 2) },
-	];
+	const envVars = commonRuntimeEnv(opts, imageUrl);
+	const guestContainer = guestRuntimeContainer(opts, envVars);
 
 	// Use EFS CSI for persistent storage when available, otherwise emptyDir
 	const volume: k8s.V1Volume = efsId
@@ -775,23 +779,16 @@ export async function launchAgentPodEks(opts: LaunchOptions): Promise<LaunchedSe
 			},
 			spec: {
 				restartPolicy: "Always",
-				containers: [{
-					name:            "agent",
-					image:           imageUrl,
-					imagePullPolicy: "Always",
-					env:             envVars,
-					resources: {
-						requests: { cpu: "100m", memory: "128Mi" },
-						limits:   { cpu: "1",    memory: "512Mi"  },
-					},
-					volumeMounts: [{ name: "agent-storage", mountPath: "/mnt/shared" }],
-				}],
+				containers: [
+					agentContainer(imageUrl, envVars),
+					...(guestContainer ? [guestContainer] : []),
+				],
 				volumes: [volume],
 			},
 		},
 	});
 
-	console.log(`[cloud-init] EKS pod ${podName} created in namespace ${namespace} using image ${imageUrl}`);
+	console.log(`[cloud-init] EKS pod ${podName} created in namespace ${namespace} using image ${imageUrl}${opts.dockerImage ? ` guest=${opts.dockerImage}` : ""}`);
 	return { serviceId: namespace, sessionId };
 }
 

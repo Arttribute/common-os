@@ -3,9 +3,27 @@ title: Guest Runtimes
 description: Bring your own Docker image and integrate with CommonOS through the SDK or HTTP API.
 ---
 
-Guest runtimes let you run agents built with your own framework.
+Guest runtimes run agents built with your own framework, such as LangGraph,
+CrewAI, AutoGen, or an internal worker.
 
-## Requirements
+When you deploy with `--image`, CommonOS starts the normal daemon container and
+a second `guest-runtime` container in the same agent pod. The daemon handles
+heartbeat, workspace snapshots, file-change events, AXL peer registration, and
+world state. Your guest container owns task execution by polling the CommonOS
+agent API with the injected agent token.
+
+## What CommonOS Provides
+
+| Capability | How it works |
+| --- | --- |
+| Tenant image launch | `--image` sets `integrationPath: "guest"` and runs the image as the `guest-runtime` container. |
+| Agent credentials | `AGENT_ID`, `AGENT_TOKEN`, `FLEET_ID`, `TENANT_ID`, and `API_URL` are injected into the guest container. |
+| Shared workspace | Both containers mount the agent workspace at `/mnt/shared`; `WORKSPACE_DIR` and `COMMONOS_WORKSPACE` point there. |
+| Task execution | The guest container polls `GET /agents/:agentId/tasks/next` and completes tasks with `POST /agents/:agentId/tasks/:taskId/complete`. |
+| Events | The guest container can emit `task_start`, `task_complete`, `action`, and other events through `POST /events`. |
+| Monitoring | The CommonOS daemon emits heartbeats, watches workspace files, and keeps the world view updated. |
+
+## Runtime Contract
 
 A guest runtime should:
 
@@ -42,6 +60,24 @@ while (true) {
 }
 ```
 
+## Minimal Image
+
+Your image needs a long-running process. For example:
+
+```dockerfile
+FROM node:22-alpine
+
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+COPY worker.js ./
+
+CMD ["node", "worker.js"]
+```
+
+The worker can write durable output to `process.env.COMMONOS_WORKSPACE`, which
+defaults to `/mnt/shared` in the pod.
+
 ## Deploy
 
 ```bash
@@ -50,3 +86,8 @@ commonos agent deploy \
   --role langgraph-worker \
   --image ghcr.io/acme/langgraph-worker:latest
 ```
+
+The image must contain its own long-running process. CommonOS does not inject a
+command; it starts the image with its default `ENTRYPOINT`/`CMD`. The image also
+needs to be pullable by the cluster, either publicly or through registry access
+configured on the cluster.

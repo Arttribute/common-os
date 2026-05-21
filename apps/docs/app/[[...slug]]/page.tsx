@@ -1,5 +1,7 @@
 import { source } from "@/lib/source";
 import { getMDXComponents } from "@/components/mdx";
+import { baseOptions } from "@/lib/layout.shared";
+import { DocsLayout } from "fumadocs-ui/layouts/docs";
 import {
   DocsBody,
   DocsDescription,
@@ -26,13 +28,15 @@ export default async function Page({ params }: PageProps) {
   const MDX = data.body;
 
   return (
-    <DocsPage toc={data.toc} full={data.full}>
-      <DocsTitle>{data.title}</DocsTitle>
-      <DocsDescription>{data.description}</DocsDescription>
-      <DocsBody>
-        <MDX components={getMDXComponents()} />
-      </DocsBody>
-    </DocsPage>
+    <DocsLayout tree={source.pageTree} {...baseOptions()}>
+      <DocsPage toc={data.toc} full={data.full}>
+        <DocsTitle>{data.title}</DocsTitle>
+        <DocsDescription>{data.description}</DocsDescription>
+        <DocsBody>
+          <MDX components={getMDXComponents()} />
+        </DocsBody>
+      </DocsPage>
+    </DocsLayout>
   );
 }
 

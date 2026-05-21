@@ -17,7 +17,7 @@ commonos agent deploy \
 
 ## Guest Agent
 
-Pass an image to switch to the `guest` integration path:
+Pass an image to run your own container as the `guest` runtime path:
 
 ```bash
 commonos agent deploy \
@@ -26,7 +26,9 @@ commonos agent deploy \
   --image ghcr.io/acme/research-agent:latest
 ```
 
-Guest agents should use `@common-os/sdk` or compatible HTTP calls to emit events, poll tasks, and complete work.
+CommonOS starts the guest image as a `guest-runtime` container beside the daemon.
+The guest container should use `@common-os/sdk` or compatible HTTP calls to poll
+tasks, emit events, write to `/mnt/shared`, and complete work.
 
 ## OpenClaw Agent
 

@@ -27,4 +27,4 @@ export const commonOsTheme = {
 export const rootThemeVars = {
   ...commonOsTheme.light,
   "--cos-radius": "8px",
-} as const satisfies ThemeVariables;
+} as ThemeVariables;

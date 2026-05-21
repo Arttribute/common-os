@@ -18,7 +18,7 @@ CommonOS is a deployment and management platform designed for AI agent fleets. I
 ## Supported Runtimes
 - **Agent Commons**: Recommended for agents needing full AI capabilities.
 - **OpenClaw**: For agents interacting with real-world services and messaging apps.
-- **Guest**: Supports any other agent framework using tenant's own Docker image.
+- **Guest**: Supports other agent frameworks using tenant-owned Docker images that poll the CommonOS task API and emit events through the SDK or HTTP contract.
 
 ## Data Management
 - **MongoDB**: Used for storing agent configurations, events, and task data.

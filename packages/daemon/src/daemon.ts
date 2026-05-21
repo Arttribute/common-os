@@ -315,6 +315,10 @@ async function main() {
   startFileWatcher();
   startHealthMonitor();
   void startAxlInboxLoop();
+  if (config.integrationPath === "guest") {
+    console.log("[daemon] guest runtime owns task/message execution; daemon will monitor workspace, heartbeat, AXL, and status");
+    return;
+  }
   void pollMessages();
   await pollTasks();
 }
@@ -1098,8 +1102,7 @@ async function executeTask(
       ...(result.agcSessionId ? { agcSessionId: result.agcSessionId } : {}),
     };
   }
-  await sleep(2_000);
-  return `completed: ${description}`;
+  throw new Error("guest runtime execution is handled by the tenant image");
 }
 
 async function maybeSendAxlFallback(

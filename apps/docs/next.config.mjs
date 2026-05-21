@@ -6,6 +6,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /** @type {import('next').NextConfig} */
 const config = {
+  basePath: "/docs",
   reactStrictMode: true,
   turbopack: {
     root: join(__dirname, "../.."),

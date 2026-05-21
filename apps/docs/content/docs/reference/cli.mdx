@@ -47,6 +47,10 @@ commonos agent logs agt_xxx --fleet flt_xxx
 commonos agent terminate agt_xxx --fleet flt_xxx
 ```
 
+`--image` sets `integrationPath: "guest"` and runs the image as the
+`guest-runtime` container in the agent pod. The image must run a long-lived
+process that uses the injected `AGENT_ID`, `AGENT_TOKEN`, and `API_URL` values.
+
 ## Tasks
 
 ```bash
