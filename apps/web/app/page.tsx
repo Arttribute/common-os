@@ -70,8 +70,8 @@ export default function HomePage() {
             <a className="transition-colors hover:text-foreground" href="#platform">
               Platform
             </a>
-            <a className="transition-colors hover:text-foreground" href="#world-ui">
-              World UI
+            <a className="transition-colors hover:text-foreground" href="/docs">
+              Docs
             </a>
             <a className="transition-colors hover:text-foreground" href="#workflow">
               Workflow
