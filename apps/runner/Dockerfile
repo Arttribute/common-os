@@ -1,4 +1,6 @@
-FROM oven/bun:1.3.12-alpine AS base
+FROM public.ecr.aws/docker/library/node:22-alpine AS base
+
+RUN npm install -g bun@1.3.12
 
 
 FROM base AS builder

@@ -28,6 +28,7 @@ phases:
       - docker push "$API_IMAGE"
   post_build:
     commands:
+      - test "$CODEBUILD_BUILD_SUCCEEDING" = "1"
       - trap 'infra/aws/set-express-alarm-threshold.sh common-os-api-production 1 || true; infra/aws/set-express-alarm-threshold.sh common-os-runner-production 1 || true' EXIT
       - infra/aws/set-express-alarm-threshold.sh common-os-api-production 100 || true
       - infra/aws/set-express-alarm-threshold.sh common-os-runner-production 100 || true

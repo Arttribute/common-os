@@ -1,5 +1,5 @@
 # Stage 1: Build AXL node binary from source
-FROM golang:1.25.9-alpine AS axl-builder
+FROM public.ecr.aws/docker/library/golang:1.25.9-alpine AS axl-builder
 ARG AXL_REF=9cba555ff0b8e14ebf1244ae02b274fbc4ec044e
 RUN apk add --no-cache git make
 RUN git clone --depth 1 https://github.com/gensyn-ai/axl.git /axl
@@ -8,7 +8,7 @@ RUN git fetch --depth 1 origin "$AXL_REF" && git checkout "$AXL_REF"
 RUN go build -o /axl-node ./cmd/node/
 
 # Stage 2: Agent runtime image
-FROM oven/bun:1.3.12-alpine
+FROM public.ecr.aws/docker/library/node:22-alpine
 ARG COMMONOS_COMMIT_SHA=unknown
 ARG COMMONOS_BUILD_DATE=unknown
 
@@ -17,7 +17,8 @@ LABEL org.opencontainers.image.created=$COMMONOS_BUILD_DATE
 ENV COMMONOS_COMMIT_SHA=$COMMONOS_COMMIT_SHA
 ENV COMMONOS_BUILD_DATE=$COMMONOS_BUILD_DATE
 
-RUN apk add --no-cache curl git jq bash ca-certificates openssl nodejs npm
+RUN apk add --no-cache curl git jq bash ca-certificates openssl \
+    && npm install -g bun@1.3.12
 
 # AXL — P2P inter-agent communication binary (built from source above)
 COPY --from=axl-builder /axl-node /usr/local/bin/axl-node
