@@ -723,6 +723,7 @@ export async function launchAgentPodEks(opts: LaunchOptions): Promise<LaunchedSe
 	const clusterName = process.env.EKS_CLUSTER ?? "common-os-agents";
 	const imageUrl    = process.env.AGENT_IMAGE_URL ?? "ghcr.io/arttribute/common-os/agent:latest";
 	const efsId       = process.env.EFS_FILE_SYSTEM_ID ?? "";
+	const efsStorageClass = process.env.EFS_STORAGE_CLASS ?? "common-os-efs";
 
 	const sessionId = uuidv4();
 	const k8sId = opts.agentId.replace(/_/g, "-");
@@ -753,18 +754,30 @@ export async function launchAgentPodEks(opts: LaunchOptions): Promise<LaunchedSe
 	const envVars = commonRuntimeEnv(opts, imageUrl);
 	const guestContainer = guestRuntimeContainer(opts, envVars);
 
-	// Use EFS CSI for persistent storage when available, otherwise emptyDir
+	if (efsId) {
+		try {
+			await coreApi.createNamespacedPersistentVolumeClaim({
+				namespace,
+				body: {
+					metadata: { name: "agent-storage", namespace },
+					spec: {
+						accessModes: ["ReadWriteMany"],
+						resources: { requests: { storage: "5Gi" } },
+						storageClassName: efsStorageClass,
+					},
+				},
+			});
+		} catch (err: unknown) {
+			const code = (err as { statusCode?: number })?.statusCode;
+			if (code !== 409) throw err;
+		}
+	}
+
+	// The dynamically provisioned PVC keeps the workspace across pod restarts.
 	const volume: k8s.V1Volume = efsId
 		? {
 			name: "agent-storage",
-			csi: {
-				driver: "efs.csi.aws.com",
-				volumeAttributes: {
-					fileSystemId: efsId,
-					directoryPerms: "700",
-					basePath: `/agents/${opts.agentId}/sessions/${sessionId}`,
-				},
-			},
+			persistentVolumeClaim: { claimName: "agent-storage" },
 		}
 		: { name: "agent-storage", emptyDir: {} };
 

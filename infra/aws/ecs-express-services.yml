@@ -1,0 +1,141 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: CommonOS API and runner ECS Express Mode services.
+
+Parameters:
+  ApiImageUri:
+    Type: String
+  RunnerImageUri:
+    Type: String
+  AgentImageUri:
+    Type: String
+  ExecutionRoleArn:
+    Type: String
+  InfrastructureRoleArn:
+    Type: String
+  ApiTaskRoleArn:
+    Type: String
+  RuntimeSecretArn:
+    Type: String
+  EksClusterName:
+    Type: String
+  EfsFileSystemId:
+    Type: String
+  ApiPublicUrl:
+    Type: String
+    Default: ""
+  RunnerPublicUrl:
+    Type: String
+    Default: ""
+
+Resources:
+  ApiService:
+    Type: AWS::ECS::ExpressGatewayService
+    Properties:
+      ServiceName: common-os-api-production
+      Cluster: default
+      ExecutionRoleArn: !Ref ExecutionRoleArn
+      InfrastructureRoleArn: !Ref InfrastructureRoleArn
+      TaskRoleArn: !Ref ApiTaskRoleArn
+      Cpu: "1024"
+      Memory: "2048"
+      HealthCheckPath: /health
+      PrimaryContainer:
+        Image: !Ref ApiImageUri
+        ContainerPort: 3001
+        Environment:
+          - Name: NODE_ENV
+            Value: production
+          - Name: PORT
+            Value: "3001"
+          - Name: CLOUD_PROVIDER
+            Value: aws
+          - Name: AWS_REGION
+            Value: !Ref AWS::Region
+          - Name: CLOUD_REGION
+            Value: !Ref AWS::Region
+          - Name: EKS_CLUSTER
+            Value: !Ref EksClusterName
+          - Name: EFS_FILE_SYSTEM_ID
+            Value: !Ref EfsFileSystemId
+          - Name: EFS_STORAGE_CLASS
+            Value: common-os-efs
+          - Name: AGENT_IMAGE_URL
+            Value: !Ref AgentImageUri
+          - Name: API_URL
+            Value: !Ref ApiPublicUrl
+          - Name: RUNNER_URL
+            Value: !Ref RunnerPublicUrl
+          - Name: AGC_API_URL
+            Value: https://api.agentcommons.io
+          - Name: AGENT_WALLET_CHAIN_IDS
+            Value: "84532"
+          - Name: AGENT_WALLET_DEFAULT_CHAIN_ID
+            Value: "84532"
+          - Name: AGENT_WALLET_RPC_URL
+            Value: https://sepolia.base.org
+        Secrets:
+          - Name: MONGODB_URI
+            ValueFrom: !Sub "${RuntimeSecretArn}:MONGODB_URI::"
+          - Name: PRIVY_APP_SECRET
+            ValueFrom: !Sub "${RuntimeSecretArn}:PRIVY_APP_SECRET::"
+          - Name: AGENTCOMMONS_API_KEY
+            ValueFrom: !Sub "${RuntimeSecretArn}:AGENTCOMMONS_API_KEY::"
+          - Name: PRIVY_APP_ID
+            ValueFrom: !Sub "${RuntimeSecretArn}:PRIVY_APP_ID::"
+      ScalingTarget:
+        MinTaskCount: 1
+        MaxTaskCount: 4
+        AutoScalingMetric: AVERAGE_CPU
+        AutoScalingTargetValue: 70
+      Tags:
+        - Key: Organization
+          Value: agent-commons
+        - Key: Project
+          Value: common-os
+        - Key: Environment
+          Value: production
+
+  RunnerService:
+    Type: AWS::ECS::ExpressGatewayService
+    Properties:
+      ServiceName: common-os-runner-production
+      Cluster: default
+      ExecutionRoleArn: !Ref ExecutionRoleArn
+      InfrastructureRoleArn: !Ref InfrastructureRoleArn
+      Cpu: "1024"
+      Memory: "2048"
+      HealthCheckPath: /health
+      PrimaryContainer:
+        Image: !Ref RunnerImageUri
+        ContainerPort: 3002
+        Environment:
+          - Name: NODE_ENV
+            Value: production
+          - Name: HOST
+            Value: 0.0.0.0
+          - Name: PORT
+            Value: "3002"
+          - Name: AGC_API_URL
+            Value: https://api.agentcommons.io
+      ScalingTarget:
+        MinTaskCount: 1
+        MaxTaskCount: 4
+        AutoScalingMetric: AVERAGE_CPU
+        AutoScalingTargetValue: 70
+      Tags:
+        - Key: Organization
+          Value: agent-commons
+        - Key: Project
+          Value: common-os
+        - Key: Environment
+          Value: production
+
+Outputs:
+  ApiEndpoint:
+    Value: !GetAtt ApiService.Endpoint
+  ApiServiceArn:
+    Value: !GetAtt ApiService.ServiceArn
+  RunnerEndpoint:
+    Value: !GetAtt RunnerService.Endpoint
+  RunnerServiceArn:
+    Value: !GetAtt RunnerService.ServiceArn

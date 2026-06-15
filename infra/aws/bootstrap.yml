@@ -1,0 +1,511 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: CommonOS AWS foundation inside the Agent Commons organization.
+
+Parameters:
+  GitHubOrganization:
+    Type: String
+    Default: Arttribute
+  GitHubRepository:
+    Type: String
+    Default: common-os
+  GitHubEnvironment:
+    Type: String
+    Default: production
+  GitHubOidcProviderArn:
+    Type: String
+    Default: arn:aws:iam::286273777416:oidc-provider/token.actions.githubusercontent.com
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.42.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: common-os-production
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: 10.42.0.0/20
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: common-os-public-a
+        - Key: kubernetes.io/role/elb
+          Value: "1"
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: 10.42.16.0/20
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: common-os-public-b
+        - Key: kubernetes.io/role/elb
+          Value: "1"
+
+  SubnetRouteA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetA
+      RouteTableId: !Ref PublicRouteTable
+
+  SubnetRouteB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetB
+      RouteTableId: !Ref PublicRouteTable
+
+  EksClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: common-os-eks-cluster
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: eks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+
+  EksNodeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: common-os-eks-node
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        - arn:aws:iam::aws:policy/AmazonElasticFileSystemClientReadWriteAccess
+        - arn:aws:iam::aws:policy/service-role/AmazonEFSCSIDriverPolicy
+
+  EksCluster:
+    Type: AWS::EKS::Cluster
+    Properties:
+      Name: common-os-agents
+      RoleArn: !GetAtt EksClusterRole.Arn
+      AccessConfig:
+        AuthenticationMode: API_AND_CONFIG_MAP
+        BootstrapClusterCreatorAdminPermissions: true
+      ResourcesVpcConfig:
+        EndpointPrivateAccess: true
+        EndpointPublicAccess: true
+        SubnetIds:
+          - !Ref PublicSubnetA
+          - !Ref PublicSubnetB
+      Tags:
+        - Key: Organization
+          Value: agent-commons
+        - Key: Project
+          Value: common-os
+        - Key: Environment
+          Value: production
+
+  EksNodeGroup:
+    Type: AWS::EKS::Nodegroup
+    DependsOn:
+      - DefaultRoute
+    Properties:
+      ClusterName: !Ref EksCluster
+      NodegroupName: common-os-agents
+      NodeRole: !GetAtt EksNodeRole.Arn
+      Subnets:
+        - !Ref PublicSubnetA
+        - !Ref PublicSubnetB
+      AmiType: AL2023_x86_64_STANDARD
+      InstanceTypes:
+        - t3.large
+      CapacityType: ON_DEMAND
+      DiskSize: 40
+      ScalingConfig:
+        MinSize: 2
+        DesiredSize: 2
+        MaxSize: 10
+      UpdateConfig:
+        MaxUnavailable: 1
+
+  EfsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: EFS access from CommonOS EKS nodes
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          CidrIp: 10.42.0.0/16
+
+  AgentFileSystem:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      Encrypted: true
+      PerformanceMode: generalPurpose
+      ThroughputMode: elastic
+      BackupPolicy:
+        Status: ENABLED
+      FileSystemTags:
+        - Key: Name
+          Value: common-os-agent-storage
+
+  EfsMountTargetA:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref AgentFileSystem
+      SubnetId: !Ref PublicSubnetA
+      SecurityGroups:
+        - !Ref EfsSecurityGroup
+
+  EfsMountTargetB:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref AgentFileSystem
+      SubnetId: !Ref PublicSubnetB
+      SecurityGroups:
+        - !Ref EfsSecurityGroup
+
+  EfsCsiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: common-os-efs-csi
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: pods.eks.amazonaws.com
+            Action:
+              - sts:AssumeRole
+              - sts:TagSession
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEFSCSIDriverPolicy
+
+  EksPodIdentityAddon:
+    Type: AWS::EKS::Addon
+    DependsOn: EksNodeGroup
+    Properties:
+      AddonName: eks-pod-identity-agent
+      ClusterName: !Ref EksCluster
+      ResolveConflicts: OVERWRITE
+
+  EfsCsiAddon:
+    Type: AWS::EKS::Addon
+    DependsOn:
+      - EksNodeGroup
+      - EfsMountTargetA
+      - EfsMountTargetB
+      - EksPodIdentityAddon
+    Properties:
+      AddonName: aws-efs-csi-driver
+      ClusterName: !Ref EksCluster
+      ResolveConflicts: OVERWRITE
+      PodIdentityAssociations:
+        - RoleArn: !GetAtt EfsCsiRole.Arn
+          ServiceAccount: efs-csi-controller-sa
+
+  ApiRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: common-os/api
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: '{"rules":[{"rulePriority":1,"description":"Keep 30 images","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":30},"action":{"type":"expire"}}]}'
+
+  RunnerRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: common-os/runner
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: '{"rules":[{"rulePriority":1,"description":"Keep 30 images","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":30},"action":{"type":"expire"}}]}'
+
+  AgentRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: common-os/agent
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: '{"rules":[{"rulePriority":1,"description":"Keep 30 images","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":30},"action":{"type":"expire"}}]}'
+
+  RuntimeSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: common-os/api/production
+      SecretString: "{}"
+
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: common-os-task-execution
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: ReadCommonOsSecret
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref RuntimeSecret
+
+  InfrastructureRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: common-os-ecs-infrastructure
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSInfrastructureRoleforExpressGatewayServices
+
+  ApiTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: common-os-api-task
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ManageAgentPods
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - eks:DescribeCluster
+                  - sts:GetCallerIdentity
+                Resource: "*"
+
+  ApiEksAccessEntry:
+    Type: AWS::EKS::AccessEntry
+    Properties:
+      ClusterName: !Ref EksCluster
+      PrincipalArn: !GetAtt ApiTaskRole.Arn
+      Type: STANDARD
+      AccessPolicies:
+        - PolicyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy
+          AccessScope:
+            Type: cluster
+
+  SourceBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub common-os-cicd-${AWS::AccountId}-${AWS::Region}
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: common-os-codebuild
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: BuildAndDeployCommonOs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - ecr:GetAuthorizationToken
+                  - cloudformation:DescribeStacks
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:GetTemplate
+                  - cloudformation:GetTemplateSummary
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:PutMetricAlarm
+                  - ecs:CreateCluster
+                  - ecs:RegisterTaskDefinition
+                  - ecs:CreateExpressGatewayService
+                  - ecs:UpdateExpressGatewayService
+                  - ecs:DeleteExpressGatewayService
+                  - ecs:DescribeExpressGatewayService
+                  - ecs:DescribeClusters
+                  - ecs:DescribeServices
+                  - ecs:DescribeServiceRevisions
+                  - ecs:ListServiceDeployments
+                  - ecs:DescribeServiceDeployments
+                  - ecs:TagResource
+                  - ecs:UntagResource
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource: !Sub ${SourceBucket.Arn}/common-os/*
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:CompleteLayerUpload
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:InitiateLayerUpload
+                  - ecr:PutImage
+                  - ecr:UploadLayerPart
+                Resource:
+                  - !GetAtt ApiRepository.Arn
+                  - !GetAtt RunnerRepository.Arn
+                  - !GetAtt AgentRepository.Arn
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource:
+                  - !GetAtt TaskExecutionRole.Arn
+                  - !GetAtt InfrastructureRole.Arn
+                  - !GetAtt ApiTaskRole.Arn
+
+  BuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: common-os-production
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Source:
+        Type: S3
+        Location: !Sub ${SourceBucket}/common-os/source.zip
+        BuildSpec: buildspec.aws.yml
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_LARGE
+        Image: aws/codebuild/standard:7.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: AWS_ACCOUNT_ID
+            Value: !Ref AWS::AccountId
+          - Name: API_ECR_REPOSITORY
+            Value: !Ref ApiRepository
+          - Name: RUNNER_ECR_REPOSITORY
+            Value: !Ref RunnerRepository
+          - Name: AGENT_ECR_REPOSITORY
+            Value: !Ref AgentRepository
+          - Name: TASK_EXECUTION_ROLE_ARN
+            Value: !GetAtt TaskExecutionRole.Arn
+          - Name: INFRASTRUCTURE_ROLE_ARN
+            Value: !GetAtt InfrastructureRole.Arn
+          - Name: API_TASK_ROLE_ARN
+            Value: !GetAtt ApiTaskRole.Arn
+          - Name: RUNTIME_SECRET_ARN
+            Value: !Ref RuntimeSecret
+          - Name: EKS_CLUSTER
+            Value: !Ref EksCluster
+          - Name: EFS_FILE_SYSTEM_ID
+            Value: !Ref AgentFileSystem
+      TimeoutInMinutes: 90
+
+  GitHubDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: common-os-github-deploy
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Ref GitHubOidcProviderArn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubOrganization}/${GitHubRepository}:environment:${GitHubEnvironment}
+      Policies:
+        - PolicyName: TriggerCommonOsDeployment
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource: !Sub ${SourceBucket.Arn}/common-os/*
+              - Effect: Allow
+                Action:
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+                Resource: !GetAtt BuildProject.Arn
+
+Outputs:
+  SourceBucketName:
+    Value: !Ref SourceBucket
+  CodeBuildProjectName:
+    Value: !Ref BuildProject
+  GitHubDeployRoleArn:
+    Value: !GetAtt GitHubDeployRole.Arn
+  RuntimeSecretArn:
+    Value: !Ref RuntimeSecret
+  EksClusterName:
+    Value: !Ref EksCluster
+  EfsFileSystemId:
+    Value: !Ref AgentFileSystem

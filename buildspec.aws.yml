@@ -1,0 +1,81 @@
+version: 0.2
+
+env:
+  shell: bash
+
+phases:
+  pre_build:
+    commands:
+      - set -euo pipefail
+      - IMAGE_TAG="${CODEBUILD_RESOLVED_SOURCE_VERSION:-manual}-${CODEBUILD_BUILD_NUMBER}"
+      - REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+      - API_IMAGE="${REGISTRY}/${API_ECR_REPOSITORY}:${IMAGE_TAG}"
+      - RUNNER_IMAGE="${REGISTRY}/${RUNNER_ECR_REPOSITORY}:${IMAGE_TAG}"
+      - AGENT_IMAGE="${REGISTRY}/${AGENT_ECR_REPOSITORY}:${IMAGE_TAG}"
+      - aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$REGISTRY"
+  build:
+    commands:
+      - corepack enable && corepack prepare pnpm@9.15.3 --activate
+      - pnpm install --frozen-lockfile
+      - pnpm --filter @common-os/events build
+      - pnpm --filter @common-os/sdk build
+      - pnpm --filter @common-os/daemon build
+      - docker build --platform linux/amd64 -f apps/api/agent/Dockerfile --build-arg COMMONOS_COMMIT_SHA="$CODEBUILD_RESOLVED_SOURCE_VERSION" --build-arg COMMONOS_BUILD_DATE="$CODEBUILD_BUILD_NUMBER" -t "$AGENT_IMAGE" .
+      - docker build --platform linux/amd64 -f apps/runner/Dockerfile -t "$RUNNER_IMAGE" .
+      - docker build --platform linux/amd64 -f apps/api/Dockerfile -t "$API_IMAGE" .
+      - docker push "$AGENT_IMAGE"
+      - docker push "$RUNNER_IMAGE"
+      - docker push "$API_IMAGE"
+  post_build:
+    commands:
+      - trap 'infra/aws/set-express-alarm-threshold.sh common-os-api-production 1 || true; infra/aws/set-express-alarm-threshold.sh common-os-runner-production 1 || true' EXIT
+      - infra/aws/set-express-alarm-threshold.sh common-os-api-production 100 || true
+      - infra/aws/set-express-alarm-threshold.sh common-os-runner-production 100 || true
+      - >-
+        aws cloudformation deploy
+        --stack-name common-os-services
+        --template-file infra/aws/ecs-express-services.yml
+        --parameter-overrides
+        ApiImageUri="$API_IMAGE"
+        RunnerImageUri="$RUNNER_IMAGE"
+        AgentImageUri="$AGENT_IMAGE"
+        ExecutionRoleArn="$TASK_EXECUTION_ROLE_ARN"
+        InfrastructureRoleArn="$INFRASTRUCTURE_ROLE_ARN"
+        ApiTaskRoleArn="$API_TASK_ROLE_ARN"
+        RuntimeSecretArn="$RUNTIME_SECRET_ARN"
+        EksClusterName="$EKS_CLUSTER"
+        EfsFileSystemId="$EFS_FILE_SYSTEM_ID"
+        --region "$AWS_REGION"
+      - API_ENDPOINT=$(aws cloudformation describe-stacks --stack-name common-os-services --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' --output text --region "$AWS_REGION")
+      - RUNNER_ENDPOINT=$(aws cloudformation describe-stacks --stack-name common-os-services --query 'Stacks[0].Outputs[?OutputKey==`RunnerEndpoint`].OutputValue' --output text --region "$AWS_REGION")
+      - API_ENDPOINT="https://${API_ENDPOINT#https://}"
+      - RUNNER_ENDPOINT="https://${RUNNER_ENDPOINT#https://}"
+      - infra/aws/set-express-alarm-threshold.sh common-os-api-production 100
+      - infra/aws/set-express-alarm-threshold.sh common-os-runner-production 100
+      - >-
+        aws cloudformation deploy
+        --stack-name common-os-services
+        --template-file infra/aws/ecs-express-services.yml
+        --parameter-overrides
+        ApiImageUri="$API_IMAGE"
+        RunnerImageUri="$RUNNER_IMAGE"
+        AgentImageUri="$AGENT_IMAGE"
+        ExecutionRoleArn="$TASK_EXECUTION_ROLE_ARN"
+        InfrastructureRoleArn="$INFRASTRUCTURE_ROLE_ARN"
+        ApiTaskRoleArn="$API_TASK_ROLE_ARN"
+        RuntimeSecretArn="$RUNTIME_SECRET_ARN"
+        EksClusterName="$EKS_CLUSTER"
+        EfsFileSystemId="$EFS_FILE_SYSTEM_ID"
+        ApiPublicUrl="$API_ENDPOINT"
+        RunnerPublicUrl="$RUNNER_ENDPOINT"
+        --region "$AWS_REGION"
+      - curl --fail --show-error --silent --retry 18 --retry-delay 10 --retry-all-errors "${API_ENDPOINT%/}/health" | jq -e '.status == "ok"'
+      - curl --fail --show-error --silent --retry 18 --retry-delay 10 --retry-all-errors "${RUNNER_ENDPOINT%/}/health" | jq -e '.status == "ok"'
+      - infra/aws/set-express-alarm-threshold.sh common-os-api-production 1
+      - infra/aws/set-express-alarm-threshold.sh common-os-runner-production 1
+      - trap - EXIT
+      - printf '{"apiEndpoint":"%s","runnerEndpoint":"%s","agentImage":"%s"}\n' "$API_ENDPOINT" "$RUNNER_ENDPOINT" "$AGENT_IMAGE" > deployment.json
+
+artifacts:
+  files:
+    - deployment.json
