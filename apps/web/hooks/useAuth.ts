@@ -58,7 +58,7 @@ export function useAuth() {
     logout,
     // Helper: call any API endpoint with the current Privy JWT
     apiFetch: useCallback(async (path: string, init?: RequestInit) => {
-      if (!apiUrl) throw new Error('NEXT_PUBLIC_API_URL not set')
+      if (!apiUrl) throw new Error('CommonOS API URL not set')
       const token = await getAccessToken()
       return fetch(`${apiUrl}${path}`, {
         ...init,
