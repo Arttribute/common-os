@@ -32,8 +32,10 @@ export async function provisionAgent(
 	const startX = roomDef ? roomDef.bounds.x + 2 : 2;
 	const startY = roomDef ? roomDef.bounds.y + 2 : 2;
 
-	const provider = (process.env.CLOUD_PROVIDER as "gcp" | "aws") ?? "gcp";
-	const region = process.env.GCP_REGION ?? process.env.CLOUD_REGION ?? "europe-west1";
+	const provider = process.env.CLOUD_PROVIDER === "aws" ? "aws" : "gcp";
+	const region = provider === "aws"
+		? process.env.AWS_REGION ?? process.env.CLOUD_REGION ?? "eu-west-1"
+		: process.env.GCP_REGION ?? process.env.CLOUD_REGION ?? "europe-west1";
 
 	const commons =
 		opts.integrationPath === "openclaw"
@@ -223,6 +225,7 @@ async function launchCloudInstance(
 			{
 				$set: {
 					"pod.namespaceId": result.serviceId,
+					"pod.lastError": null,
 					status: "starting",
 					updatedAt: new Date(),
 				},
@@ -230,9 +233,26 @@ async function launchCloudInstance(
 		);
 	} catch (err) {
 		console.error(`[provisioner] cloud launch failed for ${agentDoc._id}:`, err);
+		const now = new Date();
+		const errorMessage = err instanceof Error ? err.message : String(err);
 		await (await agents()).updateOne(
 			{ _id: agentDoc._id },
-			{ $set: { status: "failed", updatedAt: new Date() } },
+			{
+				$set: {
+					status: "failed",
+					"pod.lastError": errorMessage,
+					updatedAt: now,
+				},
+			},
+		);
+		await (await worldStates()).updateOne(
+			{ fleetId: agentDoc.fleetId, "agents.agentId": agentDoc._id },
+			{
+				$set: {
+					"agents.$.status": "failed",
+					updatedAt: now,
+				},
+			},
 		);
 	}
 }

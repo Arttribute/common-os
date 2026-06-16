@@ -29,6 +29,7 @@ const AgentSchema = new Schema<AgentDoc>(
       namespaceId: String,
       provider: String,
       region: String,
+      lastError: { type: String, default: null },
     },
     agentTokenHash: { type: String, required: true },
     status: String,

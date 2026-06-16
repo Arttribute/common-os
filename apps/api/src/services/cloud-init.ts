@@ -669,18 +669,18 @@ async function getEksToken(region: string, clusterName: string): Promise<string>
 		{
 			method: "GET",
 			protocol: "https:",
-			hostname: "sts.amazonaws.com",
+			hostname: `sts.${region}.amazonaws.com`,
 			path: "/",
 			query: { Action: "GetCallerIdentity", Version: "2011-06-15" },
 			headers: {
-				host: "sts.amazonaws.com",
+				host: `sts.${region}.amazonaws.com`,
 				"x-k8s-aws-id": clusterName,
 			},
 		},
 		{ expiresIn: 60 },
 	);
 
-	const url = new URL("https://sts.amazonaws.com/");
+	const url = new URL(`https://sts.${region}.amazonaws.com/`);
 	for (const [k, v] of Object.entries(signed.query ?? {})) {
 		url.searchParams.set(k, Array.isArray(v) ? v[0] : (v as string));
 	}
@@ -747,7 +747,9 @@ export async function launchAgentPodEks(opts: LaunchOptions): Promise<LaunchedSe
 				},
 			},
 		});
-	} catch {
+	} catch (err: unknown) {
+		const code = (err as { statusCode?: number; code?: number })?.statusCode ?? (err as { code?: number })?.code;
+		if (code !== 409) throw err;
 		// Already exists — reuse
 	}
 

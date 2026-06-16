@@ -76,6 +76,7 @@ export interface AgentDoc {
     namespaceId: string | null
     provider: 'gcp' | 'aws'
     region: string
+    lastError?: string | null
   }
   agentTokenHash: string
   status: AgentStatus

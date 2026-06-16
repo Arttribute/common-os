@@ -56,6 +56,7 @@ export function Inspector() {
             <InfoRow label="Cloud" value={agent.pod.provider} mono />
             <InfoRow label="Region" value={agent.pod.region} mono />
             {agent.pod.namespaceId && <InfoRow label="Namespace" value={agent.pod.namespaceId} mono />}
+            {agent.pod.lastError && <InfoRow label="Error" value={agent.pod.lastError} />}
           </Section>
         )}
 

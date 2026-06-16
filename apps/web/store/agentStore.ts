@@ -29,6 +29,7 @@ export interface AgentPod {
   provider: string
   region: string
   namespaceId?: string | null
+  lastError?: string | null
 }
 
 export interface AgentCommonsIdentity {

@@ -50,6 +50,7 @@ const API_STATUS_MAP: Record<string, AgentStatus> = {
   stopped: 'offline',
   terminated: 'offline',
   error: 'error',
+  failed: 'error',
   online: 'online',
   working: 'working',
   offline: 'offline',
@@ -130,7 +131,7 @@ export function useWorldConnection(fleetId?: string, getToken?: () => Promise<st
             permissionTier?: 'manager' | 'worker'
             status?: string
             world?: { room: string; x: number; y: number; facing: string }
-            pod?: { provider?: string; region?: string; namespaceId?: string | null }
+            pod?: { provider?: string; region?: string; namespaceId?: string | null; lastError?: string | null }
             commons?: AgentCommonsIdentity
             createdAt?: string
           }>
@@ -163,6 +164,7 @@ export function useWorldConnection(fleetId?: string, getToken?: () => Promise<st
                 provider:    a.pod.provider    ?? 'unknown',
                 region:      a.pod.region      ?? 'unknown',
                 namespaceId: a.pod.namespaceId ?? null,
+                lastError:   a.pod.lastError   ?? null,
               } : undefined,
               commons: a.commons,
               createdAt: a.createdAt ? new Date(a.createdAt).getTime() : undefined,
