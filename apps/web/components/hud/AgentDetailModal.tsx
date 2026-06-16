@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import type { CSSProperties } from 'react'
 import { useAgentStore } from '@/store/agentStore'
 import type { AgentCommonsIdentity } from '@/store/agentStore'
+import { getCommonOsApiUrl } from '@/lib/api-url'
 import { useWorldStore } from '@/store/worldStore'
 import { useAuthStore } from '@/store/authStore'
 import { usePrivy } from '@privy-io/react-auth'
@@ -1255,7 +1256,7 @@ export function AgentDetailModal() {
   const setActiveSession = useAgentStore((s) => s.setActiveSession)
   const urlFleet = searchParams.get('fleet')
   const fleetId = urlFleet ?? storeFleetId
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL
+  const apiUrl = getCommonOsApiUrl()
 
   const isLive = Boolean(apiUrl && fleetId && (storedApiKey || process.env.NEXT_PUBLIC_API_KEY || authenticated))
 

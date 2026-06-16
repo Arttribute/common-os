@@ -8,6 +8,7 @@ import { ArrowLeft, Check, Copy, Eye, EyeOff, KeyRound, Terminal, User } from 'l
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { getCommonOsApiUrl } from '@/lib/api-url'
 import { useAuthStore } from '@/store/authStore'
 
 export default function SettingsPage() {
@@ -18,7 +19,7 @@ export default function SettingsPage() {
   const [copiedCmd, setCopiedCmd] = useState(false)
   const [showKey, setShowKey] = useState(false)
 
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'https://api.commonos.dev'
+  const apiUrl = getCommonOsApiUrl()
   const email = user?.email?.address ?? user?.wallet?.address?.slice(0, 16) ?? '-'
   const loginCmd = apiKey
     ? `cos auth login --key ${apiKey} --url ${apiUrl}`

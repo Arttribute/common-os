@@ -5,7 +5,7 @@ import { launchAgentPod, launchAgentPodEks } from "./cloud-init.js";
 import { ensureAgentWallet } from "./agentWallet.js";
 
 const AGC_BASE_URL = (process.env.AGC_API_URL ?? "https://api.agentcommons.io").replace(/\/$/, "");
-const DEFAULT_API_URL = "https://common-os-api-prod-7it3eyacta-ew.a.run.app";
+const DEFAULT_API_URL = "https://co-34acbf16a9a0464c8be79137d4f7bbd6.ecs.eu-west-1.on.aws";
 
 interface ProvisionAgentOptions {
 	fleetId: string;

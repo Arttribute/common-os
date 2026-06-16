@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react'
 import { useAgentStore } from '@/store/agentStore'
 import { useWorldStore } from '@/store/worldStore'
 import { useSocketStore } from '@/store/socketStore'
+import { getCommonOsApiUrl } from '@/lib/api-url'
 import { startMockSimulation } from '@/lib/mockSimulation'
 import type { AgentCommonsIdentity, AgentStatus, AgentWorld } from '@/store/agentStore'
 
@@ -79,7 +80,7 @@ export function useWorldConnection(fleetId?: string, getToken?: () => Promise<st
   const stopSimRef = useRef<(() => void) | null>(null)
   const speechTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL
+  const apiUrl = getCommonOsApiUrl()
   // Static API key as fallback (CLI/demo access without Privy)
   const staticApiKey = process.env.NEXT_PUBLIC_API_KEY
 

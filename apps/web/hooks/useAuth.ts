@@ -1,13 +1,14 @@
 'use client'
 import { useCallback, useEffect, useState } from 'react'
 import { usePrivy } from '@privy-io/react-auth'
+import { getCommonOsApiUrl } from '@/lib/api-url'
 import { useAuthStore } from '@/store/authStore'
 
 export function useAuth() {
   const { ready, authenticated, getAccessToken, user, logout: privyLogout } = usePrivy()
   const { tenantId, apiKey, setTenant, clear } = useAuthStore()
   const [onboarding, setOnboarding] = useState(false)
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL
+  const apiUrl = getCommonOsApiUrl()
 
   // After Privy login, ensure this user has a tenant record in the API
   useEffect(() => {

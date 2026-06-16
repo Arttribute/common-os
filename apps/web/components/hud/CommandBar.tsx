@@ -5,6 +5,7 @@ import { usePrivy } from '@privy-io/react-auth'
 import { Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { getCommonOsApiUrl } from '@/lib/api-url'
 import { cn } from '@/lib/utils'
 import { useAgentStore } from '@/store/agentStore'
 import { useWorldStore } from '@/store/worldStore'
@@ -44,7 +45,7 @@ export function CommandBar() {
   ), [agents, selectedId, mentionQuery])
 
   const { getAccessToken, authenticated } = usePrivy()
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL
+  const apiUrl = getCommonOsApiUrl()
   // URL param takes priority; store value is fallback (set from snapshot)
   const urlFleet = searchParams.get('fleet')
   const activeFleetId = urlFleet ?? storeFleetId
