@@ -25,7 +25,7 @@ const POLL_MS        = 5_000;
 const MSG_POLL_MS    = Number(process.env.MSG_POLL_MS ?? 750);
 const MESSAGE_RUN_TIMEOUT_MS = Number(process.env.MESSAGE_RUN_TIMEOUT_MS ?? 180_000);
 const OPENCLAW_RESPONSE_TIMEOUT_MS = Number(process.env.OPENCLAW_RESPONSE_TIMEOUT_MS ?? 90_000);
-const OPENCLAW_CLI_TIMEOUT_MS = Number(process.env.OPENCLAW_CLI_TIMEOUT_MS ?? 30_000);
+const OPENCLAW_READY_TIMEOUT_MS = Number(process.env.OPENCLAW_READY_TIMEOUT_MS ?? 30_000);
 const HEALTH_MS      = 10_000;
 const AXL_INBOX_MS   = 5_000;
 const WORKSPACE_DIR  = process.env.COMMONOS_WORKSPACE ?? config.workspaceDir;
@@ -1827,108 +1827,61 @@ async function runViaNative(
 
 async function runViaOpenClaw(description: string, messages?: AgcMessage[], hooks?: MessageRunHooks): Promise<string> {
   const message = buildRunPrompt(description, messages);
-  try {
-    await hooks?.onStatus?.("waiting_for_openclaw").catch(() => {});
-    const res = await fetch(`${config.openclawGatewayUrl}/v1/responses`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: `openclaw/${config.agentId.replace(/[^a-zA-Z0-9_-]/g, "-")}`,
-        input: message,
-        stream: true,
-        user: `commonos:${config.fleetId}:${config.agentId}`,
-      }),
-      signal: AbortSignal.timeout(OPENCLAW_RESPONSE_TIMEOUT_MS),
-    });
+  await hooks?.onStatus?.("waiting_for_openclaw").catch(() => {});
+  await waitForOpenClawGateway();
 
-    if (res.ok) {
-      const contentType = res.headers.get("content-type") ?? "";
-      if (contentType.includes("text/event-stream") || contentType.includes("application/x-ndjson")) {
-        const streamed = await readOpenClawStream(res, hooks);
-        if (streamed.trim()) return streamed;
-      }
-      const data = await res.json() as {
-        output_text?: string;
-        output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }>; text?: string }>;
-        response?: string;
-        text?: string;
-      };
-      const outputText = data.output_text
-        ?? data.text
-        ?? data.response
-        ?? data.output?.flatMap((item) => [
-          item.text,
-          ...(item.content?.map((content) => content.text) ?? []),
-        ]).filter(Boolean).join("\n");
-      return outputText || "done";
+  const res = await fetch(`${config.openclawGatewayUrl}/v1/responses`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: `openclaw/${config.agentId.replace(/[^a-zA-Z0-9_-]/g, "-")}`,
+      input: message,
+      stream: true,
+      user: `commonos:${config.fleetId}:${config.agentId}`,
+    }),
+    signal: AbortSignal.timeout(OPENCLAW_RESPONSE_TIMEOUT_MS),
+  });
+
+  if (res.ok) {
+    const contentType = res.headers.get("content-type") ?? "";
+    if (contentType.includes("text/event-stream") || contentType.includes("application/x-ndjson")) {
+      const streamed = await readOpenClawStream(res, hooks);
+      if (streamed.trim()) return streamed;
     }
-
-    console.warn(`[daemon] OpenClaw responses API returned ${res.status}; falling back to CLI`);
-  } catch (err) {
-    console.warn("[daemon] OpenClaw responses API unavailable; falling back to CLI:", err instanceof Error ? err.message : err);
-  }
-
-  await hooks?.onStatus?.("waiting_for_openclaw_cli").catch(() => {});
-  const agentId = config.agentId.replace(/[^a-zA-Z0-9_-]/g, "-");
-  const { spawn } = await import("child_process");
-  const child = spawn("openclaw", [
-    "agent",
-    "--agent",
-    agentId,
-    "--session-key",
-    `commonos:${config.fleetId}:${config.agentId}`,
-    "--message",
-    message,
-    "--json",
-  ], {
-    env: {
-      ...process.env,
-      OPENCLAW_GATEWAY_URL: config.openclawGatewayUrl,
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-
-  const stdout: Buffer[] = [];
-  const stderr: Buffer[] = [];
-  child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
-  child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
-
-  const code = await new Promise<number | null>((resolve) => {
-    const timeout = setTimeout(() => {
-      child.kill("SIGTERM");
-      resolve(124);
-    }, OPENCLAW_CLI_TIMEOUT_MS);
-    child.on("close", (exitCode) => {
-      clearTimeout(timeout);
-      resolve(exitCode);
-    });
-  });
-
-  const raw = Buffer.concat(stdout).toString("utf-8").trim();
-  if (code !== 0) {
-    const errText = Buffer.concat(stderr).toString("utf-8").trim();
-    throw new Error(`OpenClaw CLI failed (${code}): ${errText || raw || "no output"}`);
-  }
-
-  try {
-    const data = JSON.parse(raw) as {
-      output?: string;
+    const data = await res.json() as {
+      output_text?: string;
+      output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }>; text?: string }>;
       response?: string;
       text?: string;
-      payloads?: Array<{ text?: string }>;
-      result?: { output?: string; response?: string; text?: string };
     };
-    return data.output
-      ?? data.response
+    const outputText = data.output_text
       ?? data.text
-      ?? data.result?.output
-      ?? data.result?.response
-      ?? data.result?.text
-      ?? data.payloads?.map((payload) => payload.text).filter(Boolean).join("\n")
-      ?? "done";
-  } catch {
-    return raw || "done";
+      ?? data.response
+      ?? data.output?.flatMap((item) => [
+        item.text,
+        ...(item.content?.map((content) => content.text) ?? []),
+      ]).filter(Boolean).join("\n");
+    return outputText || "done";
   }
+
+  const detail = await res.text().catch(() => "");
+  throw new Error(`OpenClaw gateway failed (${res.status}): ${truncate(detail || res.statusText, 500)}`);
+}
+
+async function waitForOpenClawGateway(): Promise<void> {
+  const deadline = Date.now() + OPENCLAW_READY_TIMEOUT_MS;
+  let lastError = "not ready";
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`${config.openclawGatewayUrl}/health`, { signal: AbortSignal.timeout(3_000) });
+      if (res.ok) return;
+      lastError = `status ${res.status}`;
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+    }
+    await sleep(1_000);
+  }
+  throw new Error(`OpenClaw gateway unavailable after ${Math.round(OPENCLAW_READY_TIMEOUT_MS / 1000)}s: ${lastError}`);
 }
 
 async function readOpenClawStream(res: Response, hooks?: MessageRunHooks): Promise<string> {
