@@ -174,7 +174,7 @@ if [ -n "\${OPENCLAW_CONFIG_JSON:-}" ]; then
   printf '%s' "$OPENCLAW_CONFIG_JSON" > "$HOME/.openclaw/openclaw.json"
 fi
 if command -v openclaw >/dev/null 2>&1; then
-  exec openclaw gateway start --headless
+  exec openclaw gateway start
 fi
 echo "openclaw binary not found in image" >&2
 exit 127
