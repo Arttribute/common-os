@@ -1900,7 +1900,8 @@ async function readOpenClawStream(res: Response, hooks?: MessageRunHooks): Promi
     } catch {
       return;
     }
-    const delta = openClawDeltaFromEvent(event);
+    const text = openClawDeltaFromEvent(event);
+    const delta = nextOpenClawDelta(output, text);
     if (delta) {
       output += delta;
       await hooks?.onDelta?.(delta).catch(() => {});
@@ -1921,6 +1922,14 @@ async function readOpenClawStream(res: Response, hooks?: MessageRunHooks): Promi
   }
   await handlePayload(buffer.startsWith("data:") ? buffer.slice(5) : buffer);
   return output;
+}
+
+function nextOpenClawDelta(output: string, text: string | null): string | null {
+  if (!text) return null;
+  if (!output) return text;
+  if (text === output || output.endsWith(text)) return null;
+  if (text.startsWith(output)) return text.slice(output.length);
+  return text;
 }
 
 function openClawDeltaFromEvent(event: Record<string, unknown>): string | null {
