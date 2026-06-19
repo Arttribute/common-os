@@ -177,6 +177,7 @@ export function useWorldConnection(fleetId?: string, getToken?: () => Promise<st
 
         connect(streamUrl, (msg) => {
           const data = msg as Record<string, unknown>
+          window.dispatchEvent(new CustomEvent('commonos:fleet-event', { detail: data }))
 
           if (data['type'] === 'snapshot') {
             const snapshot = data['data'] as {
@@ -291,6 +292,8 @@ export function useWorldConnection(fleetId?: string, getToken?: () => Promise<st
             const response = data['response'] as string
             updateStatus(agentId, 'idle')
             scheduleSpeechBubble(agentId, response)
+          } else if (data['type'] === 'message_failed') {
+            updateStatus(data['agentId'] as string, 'error')
           } else if (data['type'] === 'axl_response') {
             // A remote AXL response arrived for this agent's chat. Do not show it
             // as this local agent speaking in the world.

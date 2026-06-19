@@ -9,6 +9,7 @@ import type { AgentDoc, Env, HumanMessageDoc } from '../types.js'
 
 const AGC_BASE_URL = (process.env.AGC_API_URL ?? 'https://api.agentcommons.io').replace(/\/$/, '')
 const AGC_INITIATOR = process.env.AGC_INITIATOR ?? process.env.AGENTCOMMONS_INITIATOR ?? null
+const MESSAGE_RECLAIM_MS = Number(process.env.MESSAGE_RECLAIM_MS ?? 3 * 60_000)
 
 async function createAgcSession(commonsAgentId: string, title: string): Promise<string | null> {
   const apiKey = process.env.AGENTCOMMONS_API_KEY
@@ -296,54 +297,21 @@ router.get('/:agentId/messages/next', async (c) => {
     return c.json({ error: 'forbidden' }, 403)
   }
 
-  let msgId = dequeueHumanMessage(agentId)
-
-  if (!msgId) {
-    // Fall back to MongoDB if in-memory queue is empty (after API restart)
-    try {
-      const claimed = await (await humanMessages()).findOneAndUpdate(
-        { agentId, status: 'pending' },
-        { $set: { status: 'processing' } },
-        { sort: { createdAt: 1 }, new: false },
-      ).lean()
-      if (!claimed) return c.body(null, 204)
-      const agcSessionId = await resolveAgcSessionId(agentId, claimed.sessionId)
-      if (!agcSessionId) {
-        console.warn(`[runtime] message ${claimed._id} has no Agent Commons sessionId; daemon will fall back to its boot session`)
-      }
-      const messages = await buildMessageHistory(agentId, claimed.sessionId, claimed._id, claimed.content)
-      console.log(`[runtime] dispatch message ${claimed._id} agcSession=${agcSessionId ?? 'none'} history=${messages.length}`)
-      return c.json({
-        id: claimed._id,
-        content: claimed.content,
-        messages,
-        sessionId: claimed.sessionId ?? null,
-        agcSessionId,
-        source: claimed.source ?? 'human',
-        fromAgentId: claimed.fromAgentId ?? null,
-        axlPeerId: claimed.axlPeerId ?? null,
-        axlMessageId: claimed.axlMessageId ?? null,
-        axlTargetAgentId: claimed.axlTargetAgentId ?? null,
-        axlTargetPeerId: claimed.axlTargetPeerId ?? null,
-      })
-    } catch {
-      return c.json({ error: 'database error' }, 503)
-    }
-  }
-
-  try {
-    const msg = await (await humanMessages()).findOneAndUpdate(
-      { _id: msgId, agentId, status: 'pending' },
-      { $set: { status: 'processing' } },
-      { new: true },
-    ).lean()
-    if (!msg) return c.body(null, 204)
+  async function dispatchMessage(msg: HumanMessageDoc) {
     const agcSessionId = await resolveAgcSessionId(agentId, msg.sessionId)
     if (!agcSessionId) {
-      console.warn(`[runtime] message ${msg._id} has no Agent Commons sessionId; daemon will fall back to its boot session`)
+      console.warn(`[runtime] message ${msg._id} has no Agent Commons sessionId; daemon will use runtime-local session handling`)
     }
     const messages = await buildMessageHistory(agentId, msg.sessionId, msg._id, msg.content)
     console.log(`[runtime] dispatch message ${msg._id} agcSession=${agcSessionId ?? 'none'} history=${messages.length}`)
+    broadcastToFleet(msg.fleetId, {
+      type: 'message_status',
+      agentId,
+      msgId: msg._id,
+      sessionId: msg.sessionId ?? null,
+      status: 'processing',
+      ts: new Date().toISOString(),
+    })
     return c.json({
       id: msg._id,
       content: msg.content,
@@ -357,6 +325,36 @@ router.get('/:agentId/messages/next', async (c) => {
       axlTargetAgentId: msg.axlTargetAgentId ?? null,
       axlTargetPeerId: msg.axlTargetPeerId ?? null,
     })
+  }
+
+  try {
+    const msgId = dequeueHumanMessage(agentId)
+    const now = new Date()
+
+    if (msgId) {
+      const msg = await (await humanMessages()).findOneAndUpdate(
+        { _id: msgId, agentId, status: 'pending' },
+        { $set: { status: 'processing', processingStartedAt: now, updatedAt: now, error: null } },
+        { new: true },
+      ).lean()
+      if (msg) return dispatchMessage(msg as HumanMessageDoc)
+    }
+
+    const staleBefore = new Date(now.getTime() - MESSAGE_RECLAIM_MS)
+    const claimed = await (await humanMessages()).findOneAndUpdate(
+      {
+        agentId,
+        $or: [
+          { status: 'pending' },
+          { status: 'processing', processingStartedAt: { $lte: staleBefore } },
+          { status: 'processing', processingStartedAt: null, createdAt: { $lte: staleBefore } },
+        ],
+      },
+      { $set: { status: 'processing', processingStartedAt: now, updatedAt: now, error: null } },
+      { sort: { createdAt: 1 }, new: true },
+    ).lean()
+    if (!claimed) return c.body(null, 204)
+    return dispatchMessage(claimed as HumanMessageDoc)
   } catch {
     return c.json({ error: 'database error' }, 503)
   }
@@ -406,7 +404,11 @@ router.post('/:agentId/messages/axl', async (c) => {
       content: body.content,
       status: 'pending',
       response: null,
+      error: null,
       respondedAt: null,
+      failedAt: null,
+      processingStartedAt: null,
+      updatedAt: now,
       source: 'axl',
       axlDirection: 'inbound',
       fromAgentId: body.fromAgentId ?? null,
@@ -481,7 +483,11 @@ router.post('/:agentId/messages/axl/outbound', async (c) => {
       content: body.content,
       status: 'processing',
       response: null,
+      error: null,
       respondedAt: null,
+      failedAt: null,
+      processingStartedAt: now,
+      updatedAt: now,
       source: 'axl',
       axlDirection: 'outbound',
       fromAgentId: agentId,
@@ -548,7 +554,7 @@ router.post('/:agentId/messages/axl/response', async (c) => {
     const existing = inReplyTo
       ? await (await humanMessages()).findOneAndUpdate(
         { agentId, axlMessageId: inReplyTo, source: 'axl', axlDirection: 'outbound' },
-        { $set: { status: 'responded', response: body.content, respondedAt: now } },
+        { $set: { status: 'responded', response: body.content, error: null, respondedAt: now, updatedAt: now } },
         { new: true },
       ).lean()
       : null
@@ -584,7 +590,11 @@ router.post('/:agentId/messages/axl/response', async (c) => {
       content: inReplyTo ? `AXL response to ${inReplyTo}` : 'AXL response',
       status: 'responded',
       response: body.content,
+      error: null,
       respondedAt: now,
+      failedAt: null,
+      processingStartedAt: null,
+      updatedAt: now,
       source: 'axl',
       axlDirection: 'inbound',
       fromAgentId: body.fromAgentId ?? null,
@@ -637,7 +647,9 @@ router.post('/:agentId/messages/:msgId/respond', async (c) => {
         $set: {
           status: 'responded',
           response: body.response,
+          error: null,
           respondedAt: now,
+          updatedAt: now,
           ...(!existing?.sessionId && body.agcSessionId ? { sessionId: body.agcSessionId } : {}),
         },
       },
@@ -649,6 +661,7 @@ router.post('/:agentId/messages/:msgId/respond', async (c) => {
       type: 'agent_response',
       agentId,
       msgId,
+      sessionId: msg.sessionId ?? body.agcSessionId ?? null,
       response: body.response,
       ts: now.toISOString(),
     })
@@ -661,6 +674,90 @@ router.post('/:agentId/messages/:msgId/respond', async (c) => {
         { $inc: { messageCount: 1 }, $set: { lastMessageAt: now } },
       ).catch(() => {})
     }
+
+    return c.json({ ok: true })
+  } catch {
+    return c.json({ error: 'database error' }, 503)
+  }
+})
+
+// POST /agents/:agentId/messages/:msgId/event — daemon streams message lifecycle events
+router.post('/:agentId/messages/:msgId/event', async (c) => {
+  if (c.get('authType') !== 'agent') {
+    return c.json({ error: 'agent authorization required' }, 403)
+  }
+  const agentId = c.req.param('agentId')
+  if (c.get('agentId') !== agentId) {
+    return c.json({ error: 'forbidden' }, 403)
+  }
+
+  const body = await c.req.json<{
+    type?: 'message_status' | 'message_delta' | 'tool_call' | 'tool_result'
+    status?: string
+    delta?: string
+    tool?: string
+    label?: string
+  }>().catch(() => ({}))
+  const eventType = body.type ?? 'message_status'
+  if (!['message_status', 'message_delta', 'tool_call', 'tool_result'].includes(eventType)) {
+    return c.json({ error: 'unsupported message event type' }, 400)
+  }
+
+  try {
+    const msg = await (await humanMessages()).findOne(
+      { _id: c.req.param('msgId'), agentId },
+      { fleetId: 1, sessionId: 1 },
+    ).lean()
+    if (!msg) return c.json({ error: 'message not found' }, 404)
+
+    broadcastToFleet(msg.fleetId, {
+      type: eventType,
+      agentId,
+      msgId: c.req.param('msgId'),
+      sessionId: msg.sessionId ?? null,
+      ...(body.status ? { status: body.status } : {}),
+      ...(body.delta ? { delta: body.delta } : {}),
+      ...(body.tool ? { tool: body.tool } : {}),
+      ...(body.label ? { label: body.label } : {}),
+      ts: new Date().toISOString(),
+    })
+    return c.json({ ok: true })
+  } catch {
+    return c.json({ error: 'database error' }, 503)
+  }
+})
+
+// POST /agents/:agentId/messages/:msgId/fail — daemon marks a message failed
+router.post('/:agentId/messages/:msgId/fail', async (c) => {
+  if (c.get('authType') !== 'agent') {
+    return c.json({ error: 'agent authorization required' }, 403)
+  }
+  const agentId = c.req.param('agentId')
+  if (c.get('agentId') !== agentId) {
+    return c.json({ error: 'forbidden' }, 403)
+  }
+
+  const body = await c.req.json<{ error?: string }>().catch(() => ({ error: undefined }))
+  const msgId = c.req.param('msgId')
+  const now = new Date()
+  const error = (body.error ?? 'agent runtime failed').slice(0, 1000)
+
+  try {
+    const msg = await (await humanMessages()).findOneAndUpdate(
+      { _id: msgId, agentId },
+      { $set: { status: 'failed', error, failedAt: now, updatedAt: now } },
+      { new: true },
+    ).lean()
+    if (!msg) return c.json({ error: 'message not found' }, 404)
+
+    broadcastToFleet(msg.fleetId, {
+      type: 'message_failed',
+      agentId,
+      msgId,
+      sessionId: msg.sessionId ?? null,
+      error,
+      ts: now.toISOString(),
+    })
 
     return c.json({ ok: true })
   } catch {

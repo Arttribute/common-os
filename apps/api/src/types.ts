@@ -267,9 +267,13 @@ export interface HumanMessageDoc {
   tenantId: string
   sessionId: string | null
   content: string
-  status: 'pending' | 'processing' | 'responded'
+  status: 'pending' | 'processing' | 'responded' | 'failed'
   response: string | null
+  error?: string | null
   respondedAt: Date | null
+  failedAt?: Date | null
+  processingStartedAt?: Date | null
+  updatedAt?: Date | null
   source?: 'human' | 'axl'
   axlDirection?: 'inbound' | 'outbound' | null
   axlTargetAgentId?: string | null

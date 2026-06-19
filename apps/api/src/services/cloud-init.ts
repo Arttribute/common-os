@@ -201,15 +201,16 @@ exit 127
 	};
 }
 
-function agentContainer(imageUrl: string, envVars: k8s.V1EnvVar[]): k8s.V1Container {
+function agentContainer(opts: LaunchOptions, imageUrl: string, envVars: k8s.V1EnvVar[]): k8s.V1Container {
+	const openClawBridge = opts.integrationPath === "openclaw";
 	return {
 		name:            "agent",
 		image:           imageUrl,
 		imagePullPolicy: "Always",
 		env:             envVars,
 		resources: {
-			requests: { cpu: "100m", memory: "128Mi" },
-			limits:   { cpu: "1",    memory: "512Mi"  },
+			requests: { cpu: "100m", memory: openClawBridge ? "256Mi" : "128Mi" },
+			limits:   { cpu: "1",    memory: openClawBridge ? "1Gi" : "512Mi"  },
 		},
 		volumeMounts: [{ name: "agent-storage", mountPath: "/mnt/shared" }],
 	};
@@ -733,7 +734,7 @@ export async function launchAgentPod(
 		spec: {
 			restartPolicy: "Always",
 			containers: [
-				agentContainer(imageUrl, envVars),
+				agentContainer(opts, imageUrl, envVars),
 				...(openClawContainer ? [openClawContainer] : []),
 				...(guestContainer ? [guestContainer] : []),
 			],
@@ -933,7 +934,7 @@ export async function launchAgentPodEks(opts: LaunchOptions): Promise<LaunchedSe
 			spec: {
 				restartPolicy: "Always",
 				containers: [
-					agentContainer(imageUrl, envVars),
+					agentContainer(opts, imageUrl, envVars),
 					...(openClawContainer ? [openClawContainer] : []),
 					...(guestContainer ? [guestContainer] : []),
 				],

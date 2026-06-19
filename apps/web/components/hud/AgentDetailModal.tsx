@@ -27,6 +27,9 @@ interface SessionEntry {
   content?: string
   response?: string | null
   respondedAt?: string | null
+  failedAt?: string | null
+  updatedAt?: string | null
+  runtimeStatus?: string | null
   source?: 'human' | 'axl'
   axlDirection?: 'inbound' | 'outbound' | null
   fromAgentId?: string | null
@@ -244,8 +247,8 @@ function SessionsView({
             </span>
           )}
           {session && !session.agcSessionId && (
-            <span style={{ fontSize: 10, color: '#ef4444', fontFamily: 'monospace' }}>
-              missing agc session
+            <span style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace' }}>
+              local session
             </span>
           )}
         </div>
@@ -390,8 +393,8 @@ function SessionRow({ session, onClick }: { session: AgentSession; onClick: () =
           </span>
         )}
         {!session.agcSessionId && (
-          <span style={{ fontSize: 10, color: '#ef4444', fontFamily: 'monospace' }}>
-            missing agc id
+          <span style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace' }}>
+            local
           </span>
         )}
       </div>
@@ -401,6 +404,13 @@ function SessionRow({ session, onClick }: { session: AgentSession; onClick: () =
 
 function SessionCard({ entry }: { entry: SessionEntry }) {
   const [expanded, setExpanded] = useState(false)
+  const waitingLabel = entry.runtimeStatus === 'waiting_for_openclaw'
+    ? 'waiting for OpenClaw…'
+    : entry.runtimeStatus === 'waiting_for_openclaw_cli'
+      ? 'waiting for OpenClaw CLI…'
+      : entry.runtimeStatus?.startsWith('tool:')
+        ? entry.runtimeStatus.replace(/^tool:/, '')
+        : 'waiting for agent…'
 
   if (entry.kind === 'message') {
     const isAxl = entry.source === 'axl'
@@ -466,13 +476,22 @@ function SessionCard({ entry }: { entry: SessionEntry }) {
                 </button>
               )}
               <div style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace', marginTop: 2 }}>
-                {relativeTime(entry.respondedAt)}
+                {entry.status === 'processing' ? waitingLabel : relativeTime(entry.respondedAt)}
               </div>
             </div>
           </div>
         ) : entry.status === 'processing' ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingLeft: 28 }}>
-            <span style={{ fontSize: 11, color: '#f59e0b', fontFamily: 'monospace' }}>processing…</span>
+            <span style={{ fontSize: 11, color: '#f59e0b', fontFamily: 'monospace' }}>{waitingLabel}</span>
+          </div>
+        ) : entry.status === 'failed' ? (
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, paddingLeft: 28 }}>
+            <span style={{ fontSize: 11, color: '#ef4444', fontFamily: 'monospace' }}>failed</span>
+            {entry.error && (
+              <span style={{ fontSize: 10, color: '#fca5a5', fontFamily: 'monospace', lineHeight: 1.5, wordBreak: 'break-word' }}>
+                {entry.error}
+              </span>
+            )}
           </div>
         ) : null}
       </div>
@@ -1458,6 +1477,66 @@ export function AgentDetailModal() {
     const id = setInterval(() => { void fetchWallet() }, 15_000)
     return () => clearInterval(id)
   }, [isOpen, tab, fetchWallet])
+
+  useEffect(() => {
+    if (!isOpen || !selectedId) return
+
+    function patchMessage(msgId: string, patch: Partial<SessionEntry>) {
+      const update = (entry: SessionEntry): SessionEntry => (
+        entry.kind === 'message' && entry.id === msgId ? { ...entry, ...patch } : entry
+      )
+      setAllMessages((items) => items.map(update))
+      setSessionMessages((items) => items.map(update))
+    }
+
+    function onFleetEvent(event: Event) {
+      const data = (event as CustomEvent<Record<string, unknown>>).detail
+      if (!data || data.agentId !== selectedId) return
+      const msgId = typeof data.msgId === 'string' ? data.msgId : null
+      if (!msgId) return
+      const ts = typeof data.ts === 'string' ? data.ts : new Date().toISOString()
+
+      if (data.type === 'message_status' && data.status === 'processing') {
+        patchMessage(msgId, { status: 'processing', runtimeStatus: 'processing', updatedAt: ts })
+      } else if (data.type === 'message_status' && typeof data.status === 'string') {
+        patchMessage(msgId, { status: 'processing', runtimeStatus: data.status, updatedAt: ts })
+      } else if (data.type === 'message_delta' && typeof data.delta === 'string') {
+        const appendDelta = (entry: SessionEntry): SessionEntry => (
+          entry.kind === 'message' && entry.id === msgId
+            ? { ...entry, status: 'processing', response: `${entry.response ?? ''}${data.delta as string}`, updatedAt: ts }
+            : entry
+        )
+        setAllMessages((items) => items.map(appendDelta))
+        setSessionMessages((items) => items.map(appendDelta))
+      } else if (data.type === 'tool_call') {
+        const label = typeof data.label === 'string'
+          ? data.label
+          : typeof data.tool === 'string'
+            ? `waiting on ${data.tool}`
+            : 'waiting on tool'
+        patchMessage(msgId, { status: 'processing', runtimeStatus: `tool:${label}`, updatedAt: ts })
+      } else if (data.type === 'agent_response') {
+        patchMessage(msgId, {
+          status: 'responded',
+          response: typeof data.response === 'string' ? data.response : '',
+          runtimeStatus: null,
+          respondedAt: ts,
+          updatedAt: ts,
+        })
+      } else if (data.type === 'message_failed') {
+        patchMessage(msgId, {
+          status: 'failed',
+          error: typeof data.error === 'string' ? data.error : 'agent runtime failed',
+          runtimeStatus: null,
+          failedAt: ts,
+          updatedAt: ts,
+        })
+      }
+    }
+
+    window.addEventListener('commonos:fleet-event', onFleetEvent)
+    return () => window.removeEventListener('commonos:fleet-event', onFleetEvent)
+  }, [isOpen, selectedId])
 
   // Close on Escape
   useEffect(() => {

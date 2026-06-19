@@ -11,7 +11,11 @@ const HumanMessageSchema = new Schema<HumanMessageDoc>(
     content: { type: String, required: true },
     status: { type: String, default: 'pending' },
     response: String,
+    error: { type: String, default: null },
     respondedAt: Date,
+    failedAt: { type: Date, default: null },
+    processingStartedAt: { type: Date, default: null },
+    updatedAt: { type: Date, default: null },
     source: { type: String, default: 'human' },
     axlDirection: { type: String, default: null },
     axlTargetAgentId: { type: String, default: null },
@@ -26,6 +30,7 @@ const HumanMessageSchema = new Schema<HumanMessageDoc>(
 )
 
 HumanMessageSchema.index({ agentId: 1, status: 1, createdAt: 1 })
+HumanMessageSchema.index({ agentId: 1, status: 1, processingStartedAt: 1 })
 HumanMessageSchema.index({ fleetId: 1, createdAt: -1 })
 HumanMessageSchema.index({ sessionId: 1, createdAt: -1 })
 HumanMessageSchema.index({ agentId: 1, axlMessageId: 1 })

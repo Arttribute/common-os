@@ -1070,10 +1070,21 @@ async function handleMessage(msg: {
   await agent.emit({ type: "state_change", payload: { status: "working" } });
 
   try {
-    const runResult = await executeTask(msg.content, msg.agcSessionId ?? undefined, msg.messages, {
-      axlTargetAgentId: msg.axlTargetAgentId,
-      axlTargetPeerId: msg.axlTargetPeerId,
-    });
+    await postMessageEvent(msg.id, { type: "message_status", status: "waiting_for_runtime" }).catch(() => {});
+    const runResult = await executeTask(
+      msg.content,
+      msg.agcSessionId ?? undefined,
+      msg.messages,
+      {
+        axlTargetAgentId: msg.axlTargetAgentId,
+        axlTargetPeerId: msg.axlTargetPeerId,
+      },
+      {
+        onStatus: (status) => postMessageEvent(msg.id, { type: "message_status", status }),
+        onDelta: createDeltaEmitter(msg.id),
+        onToolCall: (tool) => postMessageEvent(msg.id, { type: "tool_call", tool, label: `waiting on ${toolName(tool)}` }),
+      },
+    );
     const response = typeof runResult === "string" ? runResult : runResult.response;
 
     await fetch(
@@ -1106,10 +1117,77 @@ async function handleMessage(msg: {
       });
     }
   } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
     console.error(`[daemon] message ${msg.id} error:`, err);
+    await markMessageFailed(msg.id, detail).catch((failErr) => {
+      console.warn("[daemon] message fail report error:", failErr instanceof Error ? failErr.message : failErr);
+    });
   } finally {
     await agent.emit({ type: "state_change", payload: { status: "idle" } });
   }
+}
+
+async function markMessageFailed(msgId: string, error: string): Promise<void> {
+  const res = await fetch(
+    `${config.apiUrl}/agents/${config.agentId}/messages/${msgId}/fail`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.agentToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ error }),
+      signal: AbortSignal.timeout(10_000),
+    },
+  );
+  if (!res.ok) throw new Error(`message fail report failed: ${res.status}`);
+}
+
+type MessageEventPayload =
+  | { type: "message_status"; status: string }
+  | { type: "message_delta"; delta: string }
+  | { type: "tool_call" | "tool_result"; tool: string; label?: string };
+
+interface MessageRunHooks {
+  onStatus?: (status: string) => Promise<void>;
+  onDelta?: (delta: string) => Promise<void>;
+  onToolCall?: (tool: string) => Promise<void>;
+}
+
+async function postMessageEvent(msgId: string, payload: MessageEventPayload): Promise<void> {
+  const res = await fetch(
+    `${config.apiUrl}/agents/${config.agentId}/messages/${msgId}/event`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.agentToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(5_000),
+    },
+  );
+  if (!res.ok) throw new Error(`message event failed: ${res.status}`);
+}
+
+function createDeltaEmitter(msgId: string): (delta: string) => Promise<void> {
+  let pending = "";
+  let lastFlush = 0;
+  let chain = Promise.resolve();
+
+  return async (delta: string) => {
+    if (!delta) return;
+    pending += delta;
+    const now = Date.now();
+    if (now - lastFlush < 80 && pending.length < 120) return;
+    const chunk = pending;
+    pending = "";
+    lastFlush = now;
+    chain = chain
+      .then(() => postMessageEvent(msgId, { type: "message_delta", delta: chunk }))
+      .catch((err) => console.warn("[daemon] message delta event failed:", err instanceof Error ? err.message : err));
+    await chain;
+  };
 }
 
 // ─── Task polling loop ─────────────────────────────────────────────────────
@@ -1193,10 +1271,11 @@ async function executeTask(
   agcSessionId?: string,
   messages?: AgcMessage[],
   routing?: AxlRoutingContext,
+  hooks?: MessageRunHooks,
 ): Promise<string | { response: string; agcSessionId?: string }> {
-  if (config.integrationPath === "openclaw") return await runViaOpenClaw(description, messages);
+  if (config.integrationPath === "openclaw") return await runViaOpenClaw(description, messages, hooks);
   if (config.integrationPath === "native") {
-    const result = await runViaNative(description, agcSessionId, messages, routing);
+    const result = await runViaNative(description, agcSessionId, messages, routing, hooks);
 
     if (result.response.trim()) return result;
 
@@ -1591,6 +1670,7 @@ async function runViaNative(
   agcSessionId?: string,
   messages?: AgcMessage[],
   routing?: AxlRoutingContext,
+  hooks?: MessageRunHooks,
 ): Promise<{ response: string; agcSessionId?: string; axlToolCalled: boolean }> {
   const sessionIdToUse = agcSessionId ?? agentSessionId;
   const agentId = config.commonsAgentId || config.agentId;
@@ -1647,6 +1727,7 @@ async function runViaNative(
 
     if (event.type === "token" && typeof event.content === "string") {
       output += event.content;
+      await hooks?.onDelta?.(event.content).catch(() => {});
       return;
     }
 
@@ -1654,6 +1735,7 @@ async function runViaNative(
       toolRequestCount += 1;
       const requestId = typeof event.requestId === "string" ? event.requestId : "";
       const requestedTool = String(event.tool ?? "");
+      await hooks?.onToolCall?.(requestedTool).catch(() => {});
       if (toolName(requestedTool) === "send_axl_message") axlToolCalled = true;
       const args = (event.args && typeof event.args === "object" ? event.args : {}) as Record<string, unknown>;
       let result: string;
@@ -1705,9 +1787,10 @@ async function runViaNative(
   return { response, axlToolCalled, ...(observedSessionId ? { agcSessionId: observedSessionId } : {}) };
 }
 
-async function runViaOpenClaw(description: string, messages?: AgcMessage[]): Promise<string> {
+async function runViaOpenClaw(description: string, messages?: AgcMessage[], hooks?: MessageRunHooks): Promise<string> {
   const message = buildRunPrompt(description, messages);
   try {
+    await hooks?.onStatus?.("waiting_for_openclaw").catch(() => {});
     const res = await fetch(`${config.openclawGatewayUrl}/v1/responses`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1741,6 +1824,7 @@ async function runViaOpenClaw(description: string, messages?: AgcMessage[]): Pro
     console.warn("[daemon] OpenClaw responses API unavailable; falling back to CLI:", err instanceof Error ? err.message : err);
   }
 
+  await hooks?.onStatus?.("waiting_for_openclaw_cli").catch(() => {});
   const agentId = config.agentId.replace(/[^a-zA-Z0-9_-]/g, "-");
   const { spawn } = await import("child_process");
   const child = spawn("openclaw", [
