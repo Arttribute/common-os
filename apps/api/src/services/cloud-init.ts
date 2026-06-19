@@ -135,10 +135,10 @@ function openClawModelId(opts: LaunchOptions): string {
 	const provider = opts.openclawConfig?.modelProvider ?? process.env.OPENCLAW_MODEL_PROVIDER ?? "openai";
 	return process.env.OPENCLAW_MODEL_ID ?? (
 		provider === "anthropic" ? "anthropic/claude-opus-4-6" :
-		provider === "openrouter" ? "openrouter/openai/gpt-4o-mini" :
+		provider === "openrouter" ? "openrouter/openai/gpt-5.4-mini" :
 		provider === "google" ? "google/gemini-3.1-pro" :
 		provider === "groq" ? "groq/openai/gpt-oss-120b" :
-		"openai/gpt-4o-mini"
+		"openai/gpt-5.4-mini"
 	);
 }
 
