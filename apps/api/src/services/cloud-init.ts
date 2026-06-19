@@ -96,6 +96,9 @@ function buildOpenClawGatewayConfig(opts: LaunchOptions): Record<string, unknown
 
 	return {
 		gateway: {
+			mode: "local",
+			bind: "lan",
+			port: 18789,
 			auth: { mode: "none" },
 			http: {
 				endpoints: {
@@ -174,7 +177,7 @@ if [ -n "\${OPENCLAW_CONFIG_JSON:-}" ]; then
   printf '%s' "$OPENCLAW_CONFIG_JSON" > "$HOME/.openclaw/openclaw.json"
 fi
 if command -v openclaw >/dev/null 2>&1; then
-  exec openclaw gateway
+  exec openclaw gateway run --auth none --bind lan --port "\${OPENCLAW_GATEWAY_PORT:-18789}"
 fi
 echo "openclaw binary not found in image" >&2
 exit 127
