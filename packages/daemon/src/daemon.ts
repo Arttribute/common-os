@@ -28,8 +28,9 @@ const AXL_INBOX_MS   = 5_000;
 const WORKSPACE_DIR  = process.env.COMMONOS_WORKSPACE ?? config.workspaceDir;
 const AXL_API_URL    = process.env.AXL_API_URL ?? "http://localhost:9002";
 const AXL_LISTEN_PORT = process.env.AXL_LISTEN_PORT ?? "9001";
+const AXL_MODE = (process.env.AXL_MODE ?? "explicit").toLowerCase();
 const ETH_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
-const DAEMON_RUNTIME = "common-os-daemon/agc-direct-stream-v8-axl-response-routing";
+const DAEMON_RUNTIME = "common-os-daemon/agc-direct-stream-v9-explicit-axl";
 const AGENT_IMAGE    = process.env.COMMONOS_AGENT_IMAGE ?? "";
 const COMMIT_SHA     = process.env.COMMONOS_COMMIT_SHA ?? "";
 
@@ -45,10 +46,51 @@ type AxlEnvelope = {
   inReplyTo?: string;
 };
 
+type FleetOrchestration = {
+  topology?: string;
+  managerRole?: string | null;
+  communicationCadence?: string;
+  defaultChannel?: string;
+  axlPolicy?: string;
+  taskSharing?: {
+    assignment?: string;
+    handoffProtocol?: string;
+    dependencies?: string;
+  };
+  reporting?: {
+    statusFormat?: string;
+    reportToRole?: string | null;
+    onTaskStart?: boolean;
+    onTaskComplete?: boolean;
+    onBlocked?: boolean;
+  };
+  checkIns?: {
+    enabled?: boolean;
+    cadenceMinutes?: number;
+    checkOnBlockedTasks?: boolean;
+    checkOnStaleTasksMinutes?: number;
+  };
+  escalation?: {
+    blockedAfterMinutes?: number;
+    escalateToRole?: string | null;
+    requireHumanOnConflict?: boolean;
+  };
+  customInstructions?: string;
+};
+
 // Session ID is created once at startup and persisted so the agent remembers
 // all previous conversations across daemon restarts.
 let agentSessionId: string | null = null;
 let agcReady = false;
+let fleetOrchestration: FleetOrchestration | null = null;
+
+function axlEnabled(): boolean {
+  return AXL_MODE !== "off" && AXL_MODE !== "disabled";
+}
+
+function axlAutoMode(): boolean {
+  return AXL_MODE === "auto";
+}
 
 // ─── World state ──────────────────────────────────────────────────────────
 
@@ -303,20 +345,32 @@ async function main() {
 
   // Push initial workspace snapshot so the UI can show the pod filesystem immediately
   await emitWorkspaceSnapshot().catch(() => {});
+  await refreshFleetOrchestration().catch(() => {});
 
-  void registerAxlPeer();
-  void discoverFleetPeers();
+  if (axlEnabled()) {
+    void registerAxlPeer();
+    void discoverFleetPeers();
+  } else {
+    console.log("[daemon] AXL disabled");
+  }
   void startAgcBootstrapRetryLoop();
 
   setInterval(() => {
     emitHeartbeat();
   }, HEARTBEAT_MS);
+  setInterval(() => {
+    refreshFleetOrchestration().catch(() => {});
+  }, 60_000);
 
   startFileWatcher();
   startHealthMonitor();
-  void startAxlInboxLoop();
+  if (axlAutoMode()) {
+    void startAxlInboxLoop();
+  } else if (axlEnabled()) {
+    console.log("[daemon] AXL explicit mode: P2P is available only when cli_send_axl_message is called");
+  }
   if (config.integrationPath === "guest") {
-    console.log("[daemon] guest runtime owns task/message execution; daemon will monitor workspace, heartbeat, AXL, and status");
+    console.log("[daemon] guest runtime owns task/message execution; daemon will monitor workspace, heartbeat, and status");
     return;
   }
   void pollMessages();
@@ -324,6 +378,67 @@ async function main() {
 }
 
 // ─── Workspace snapshot ────────────────────────────────────────────────────
+
+async function refreshFleetOrchestration(): Promise<void> {
+  if (!config.apiUrl || !config.fleetId) return;
+  const res = await fetch(`${config.apiUrl}/fleets/${config.fleetId}`, {
+    headers: { Authorization: `Bearer ${config.agentToken}` },
+    signal: AbortSignal.timeout(5_000),
+  });
+  if (!res.ok) return;
+  const fleet = await res.json() as { orchestration?: FleetOrchestration | null };
+  fleetOrchestration = fleet.orchestration ?? null;
+}
+
+function orchestrationContext(): string {
+  if (!fleetOrchestration) {
+    return [
+      "## Fleet Coordination",
+      "No fleet orchestration policy is configured. Coordinate conservatively: keep task ownership clear, summarize handoffs, and ask for clarification before interrupting other agents.",
+    ].join("\n");
+  }
+
+  const o = fleetOrchestration;
+  const lines = [
+    "## Fleet Coordination Policy",
+    `Topology: ${o.topology ?? "manager-led"}`,
+    `Manager role: ${o.managerRole ?? "manager"}`,
+    `Default communication channel: ${o.defaultChannel ?? "control-plane"}`,
+    `Communication cadence: ${o.communicationCadence ?? "task-boundary"}`,
+    `AXL/P2P policy: ${o.axlPolicy ?? "explicit-only"}`,
+    "",
+    "Task sharing:",
+    `- Assignment: ${o.taskSharing?.assignment ?? "manager-assigns"}`,
+    `- Dependencies: ${o.taskSharing?.dependencies ?? "explicit"}`,
+    `- Handoff protocol: ${o.taskSharing?.handoffProtocol ?? "Summarize context, current state, blockers, required inputs, and next action."}`,
+    "",
+    "Reporting:",
+    `- Format: ${o.reporting?.statusFormat ?? "structured"}`,
+    `- Report to role: ${o.reporting?.reportToRole ?? o.managerRole ?? "manager"}`,
+    `- On task start: ${o.reporting?.onTaskStart === false ? "no" : "yes"}`,
+    `- On task complete: ${o.reporting?.onTaskComplete === false ? "no" : "yes"}`,
+    `- On blocked: ${o.reporting?.onBlocked === false ? "no" : "yes"}`,
+    "",
+    "Check-ins and escalation:",
+    `- Check-ins: ${o.checkIns?.enabled === false ? "disabled" : `every ${o.checkIns?.cadenceMinutes ?? 30} minutes`}`,
+    `- Check blocked tasks: ${o.checkIns?.checkOnBlockedTasks === false ? "no" : "yes"}`,
+    `- Stale task threshold: ${o.checkIns?.checkOnStaleTasksMinutes ?? 60} minutes`,
+    `- Escalate blocked work after: ${o.escalation?.blockedAfterMinutes ?? 30} minutes`,
+    `- Escalate to role: ${o.escalation?.escalateToRole ?? o.managerRole ?? "manager"}`,
+    `- Human required on conflict: ${o.escalation?.requireHumanOnConflict === false ? "no" : "yes"}`,
+  ];
+
+  if (o.customInstructions?.trim()) {
+    lines.push("", "Custom coordination instructions:", o.customInstructions.trim());
+  }
+
+  lines.push(
+    "",
+    "Follow this policy when deciding when to share status, hand off work, ask another agent for help, or escalate. Do not interrupt other agents outside this policy unless the user explicitly requests it.",
+  );
+
+  return lines.join("\n");
+}
 
 async function emitWorkspaceSnapshot(): Promise<void> {
   const snapshot = buildWorkspaceSnapshot(WORKSPACE_DIR);
@@ -541,7 +656,7 @@ function axlPeerDirectory(): string {
     });
 
   if (rows.length === 0) {
-    return "No fleet AXL peers are cached yet. Use cli_send_axl_message anyway; it will refresh peer discovery before sending.";
+    return "No fleet AXL peers are cached yet. The optional AXL tool refreshes peer discovery only when it is called.";
   }
 
   return [
@@ -721,6 +836,7 @@ async function sendAxlMessage(
   content: string,
   options: { type?: "request" | "response"; inReplyTo?: string } = {},
 ): Promise<void> {
+  if (!axlEnabled()) throw new Error("AXL is disabled for this agent");
   const axlMessageId = `axlmsg_${Date.now().toString(36)}${randomBytes(4).toString("hex")}`;
   const res = await fetch(`${AXL_API_URL}/send`, {
     method: "POST",
@@ -978,7 +1094,7 @@ async function handleMessage(msg: {
 
     console.log(`[daemon] message ${msg.id} responded`);
 
-    if (msg.source === "axl" && msg.axlPeerId) {
+    if (axlAutoMode() && msg.source === "axl" && msg.axlPeerId) {
       await sendAxlMessage(
         msg.axlPeerId,
         msg.fromAgentId ?? msg.axlPeerId.slice(0, 16),
@@ -1048,7 +1164,7 @@ async function handleTask(
 
     console.log(`[daemon] task ${task.id} complete`);
 
-    if (axlReply?.replyToPeerId && axlReply.replyToAgentId) {
+    if (axlAutoMode() && axlReply?.replyToPeerId && axlReply.replyToAgentId) {
       await sendAxlMessage(
         axlReply.replyToPeerId,
         axlReply.replyToAgentId,
@@ -1082,17 +1198,7 @@ async function executeTask(
   if (config.integrationPath === "native") {
     const result = await runViaNative(description, agcSessionId, messages, routing);
 
-    // Safety net: if AXL routing was requested but the agent didn't call the tool, send via fallback
-    if ((routing?.axlTargetAgentId || routing?.axlTargetPeerId) && !result.axlToolCalled) {
-      await maybeSendAxlFallback(description, messages, routing).catch((err) => {
-        console.warn("[daemon] AXL safety-net send failed:", err instanceof Error ? err.message : err);
-      });
-    }
-
     if (result.response.trim()) return result;
-
-    const axlFallback = result.axlToolCalled ? null : await maybeSendAxlFallback(description, messages, routing);
-    if (axlFallback) return { response: axlFallback, ...(result.agcSessionId ? { agcSessionId: result.agcSessionId } : {}) };
 
     const markdownFallback = await maybeWriteMarkdownFallback(description, messages);
     if (markdownFallback) return { response: markdownFallback, ...(result.agcSessionId ? { agcSessionId: result.agcSessionId } : {}) };
@@ -1103,40 +1209,6 @@ async function executeTask(
     };
   }
   throw new Error("guest runtime execution is handled by the tenant image");
-}
-
-async function maybeSendAxlFallback(
-  description: string,
-  messages?: AgcMessage[],
-  routing?: AxlRoutingContext,
-): Promise<string | null> {
-  if (!routing?.axlTargetAgentId && !routing?.axlTargetPeerId) return null;
-  const target = routing.axlTargetAgentId ?? routing.axlTargetPeerId ?? "";
-  const resolved = routing.axlTargetAgentId && routing.axlTargetPeerId
-    ? { agentId: routing.axlTargetAgentId, peerId: routing.axlTargetPeerId }
-    : await resolveAxlTarget(target);
-  const content = composeAxlFallbackMessage(description, messages, resolved.agentId);
-  await sendAxlMessage(resolved.peerId, resolved.agentId, content, { type: "request" });
-  return [
-    `Sent via AXL to ${resolved.agentId}.`,
-    `Content: ${content}`,
-  ].join("\n");
-}
-
-function composeAxlFallbackMessage(description: string, messages: AgcMessage[] | undefined, targetAgentId: string): string {
-  const lastAssistant = [...(messages ?? [])].reverse().find((msg) => msg.role === "assistant" && msg.content.trim());
-  const sender = config.role || config.agentId;
-  if (/\b(?:say\s+)?hi\b|\bhello\b|\bhey\b/i.test(description)) {
-    return `Hi, ${sender} says hi.`;
-  }
-  if (lastAssistant?.content) {
-    return [
-      `Hi ${targetAgentId}, ${sender} asked me to share this with you.`,
-      "",
-      lastAssistant.content.trim().slice(0, 8_000),
-    ].join("\n");
-  }
-  return `${sender} asked me to share this request with you: ${description.trim()}`;
 }
 
 async function maybeWriteMarkdownFallback(description: string, messages?: AgcMessage[]): Promise<string | null> {
@@ -1210,7 +1282,7 @@ function cleanAgcOutput(raw: string): string {
 function buildRunPrompt(description: string, messages?: AgcMessage[], routing?: AxlRoutingContext): string {
   const routingContext = buildAxlRoutingPromptContext(routing);
   if (!messages || messages.length <= 1) {
-    return [buildCliContext(), routingContext, description].filter(Boolean).join("\n\n");
+    return [buildCliContext(), orchestrationContext(), routingContext, description].filter(Boolean).join("\n\n");
   }
 
   const transcript = messages
@@ -1220,6 +1292,7 @@ function buildRunPrompt(description: string, messages?: AgcMessage[], routing?: 
 
   return [
     buildCliContext(),
+    orchestrationContext(),
     routingContext,
     "",
     "Continue this CommonOS conversation. Use the prior turns as context, but answer only the latest user request.",
@@ -1231,9 +1304,9 @@ function buildRunPrompt(description: string, messages?: AgcMessage[], routing?: 
 function buildAxlRoutingPromptContext(routing?: AxlRoutingContext): string {
   if (!routing?.axlTargetAgentId && !routing?.axlTargetPeerId) return "";
   return [
-    "### AXL Routing Required",
-    "The user's message targets another agent in this fleet. You MUST call `cli_send_axl_message` to deliver the message — do NOT just respond in text. The message will not reach the target agent unless you call the tool.",
-    "Compose the message content in your own words based on the user's request, then call `cli_send_axl_message` immediately.",
+    "### Optional AXL Target",
+    "The request includes a CommonOS P2P target. Use `cli_send_axl_message` only when the user explicitly asks to use CommonOS P2P/AXL or clearly asks this agent to message another CommonOS agent through the fleet network.",
+    "When normal chat, OpenClaw connectors, or human-facing channels are more appropriate, respond normally and do not call the AXL tool.",
     `Target agentId: ${routing.axlTargetAgentId ?? "(unknown)"}`,
     `Target AXL peerId: ${routing.axlTargetPeerId ?? "(unknown)"}`,
   ].join("\n");
@@ -1243,7 +1316,7 @@ function buildCliContext(): string {
   return `
 ## CLI Local Tools - ACTIVE
 
-You are running inside a CommonOS agent pod with DIRECT access to this pod's workspace and CommonOS AXL messaging. The following cli_* tools are in your tool list and execute inside the pod in real time.
+You are running inside a CommonOS agent pod with DIRECT access to this pod's workspace. The following cli_* tools are in your tool list and execute inside the pod in real time.
 
 **Session root:** ${WORKSPACE_DIR}
 **Agent wallet:** ${config.walletAddress || "(not provisioned yet)"}
@@ -1258,11 +1331,9 @@ ${buildWorkspaceSnapshot(WORKSPACE_DIR)}
 ### MANDATORY RULES - READ CAREFULLY
 
 1. **Call cli_* tools immediately and directly.** Do not create Agent Commons tasks for pod file operations or CommonOS fleet messaging.
-2. **Use AXL for CommonOS agent-to-agent communication by default.** When the user asks you to message, ask, ping, say hi to, or check another agent in this fleet, call \`cli_send_axl_message\`.
-3. **Do not use \`interactWithAgent\` for CommonOS fleet messages** unless the user explicitly asks for Agent Commons native A2A or \`cli_send_axl_message\` returns an error.
-4. **Never say \`cli_send_axl_message\` is unavailable.** It is available in this pod through the local CLI tool bridge.
-5. File operations are sandboxed to the session root. Return the actual path or command output after using a tool.
-6. For markdown file requests, write the .md file with \`cli_write_file\` and return its path.
+2. **Use AXL only when explicitly requested.** OpenClaw and channel connectors are normal messaging surfaces; do not route those conversations through AXL unless the user specifically asks for CommonOS P2P/AXL.
+3. File operations are sandboxed to the session root. Return the actual path or command output after using a tool.
+4. For markdown file requests, write the .md file with \`cli_write_file\` and return its path.
 
 ### Available CLI tools
 
@@ -1273,7 +1344,7 @@ ${buildWorkspaceSnapshot(WORKSPACE_DIR)}
 | \`cli_write_file\` | Write or overwrite a file |
 | \`cli_search_files\` | Find files matching a pattern |
 | \`cli_run_command\` | Run a short command and return its output |
-| \`cli_send_axl_message\` | Send a CommonOS fleet message over AXL and record it for observability |
+| \`cli_send_axl_message\` | Optional: send a CommonOS fleet message over AXL/P2P when explicitly requested |
 | \`cli_wallet_address\` | Return this agent's wallet address |
 | \`cli_wallet_balance\` | Return this agent's Base Sepolia wallet balance |
 | \`cli_wallet_send_transaction\` | Request a policy-checked wallet transaction signed by CommonOS/Privy |
@@ -1635,16 +1706,85 @@ async function runViaNative(
 }
 
 async function runViaOpenClaw(description: string): Promise<string> {
-  const res = await fetch(`${config.openclawGatewayUrl}/api/message`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message: description, agentId: config.agentId }),
+  const message = [orchestrationContext(), description].filter(Boolean).join("\n\n");
+  try {
+    const res = await fetch(`${config.openclawGatewayUrl}/api/message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message, agentId: config.agentId }),
+      signal: AbortSignal.timeout(120_000),
+    });
+
+    if (res.ok) {
+      const data = await res.json() as { output?: string; response?: string };
+      return data.output ?? data.response ?? "done";
+    }
+
+    console.warn(`[daemon] OpenClaw HTTP shim returned ${res.status}; falling back to CLI`);
+  } catch (err) {
+    console.warn("[daemon] OpenClaw HTTP shim unavailable; falling back to CLI:", err instanceof Error ? err.message : err);
+  }
+
+  const agentId = config.agentId.replace(/[^a-zA-Z0-9_-]/g, "-");
+  const { spawn } = await import("child_process");
+  const child = spawn("openclaw", [
+    "agent",
+    "--agent",
+    agentId,
+    "--session-key",
+    `commonos:${config.fleetId}:${config.agentId}`,
+    "--message",
+    message,
+    "--json",
+  ], {
+    env: {
+      ...process.env,
+      OPENCLAW_GATEWAY_URL: config.openclawGatewayUrl,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
   });
 
-  if (!res.ok) throw new Error(`OpenClaw gateway error: ${res.status}`);
+  const stdout: Buffer[] = [];
+  const stderr: Buffer[] = [];
+  child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
+  child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
 
-  const data = await res.json() as { output?: string; response?: string };
-  return data.output ?? data.response ?? "done";
+  const code = await new Promise<number | null>((resolve) => {
+    const timeout = setTimeout(() => {
+      child.kill("SIGTERM");
+      resolve(124);
+    }, 600_000);
+    child.on("close", (exitCode) => {
+      clearTimeout(timeout);
+      resolve(exitCode);
+    });
+  });
+
+  const raw = Buffer.concat(stdout).toString("utf-8").trim();
+  if (code !== 0) {
+    const errText = Buffer.concat(stderr).toString("utf-8").trim();
+    throw new Error(`OpenClaw CLI failed (${code}): ${errText || raw || "no output"}`);
+  }
+
+  try {
+    const data = JSON.parse(raw) as {
+      output?: string;
+      response?: string;
+      text?: string;
+      payloads?: Array<{ text?: string }>;
+      result?: { output?: string; response?: string; text?: string };
+    };
+    return data.output
+      ?? data.response
+      ?? data.text
+      ?? data.result?.output
+      ?? data.result?.response
+      ?? data.result?.text
+      ?? data.payloads?.map((payload) => payload.text).filter(Boolean).join("\n")
+      ?? "done";
+  } catch {
+    return raw || "done";
+  }
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────

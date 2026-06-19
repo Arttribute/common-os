@@ -143,19 +143,21 @@ router.post('/:id/agents/:agentId/human-message', async (c) => {
 
     let axlTargetAgentId: string | null = null
     let axlTargetPeerId: string | null = null
-    try {
-      const target = await resolveMentionTarget(body.content, {
-        agentId,
-        fleetId,
-        tenantId,
-        explicitTargetAgentId: body.axlTargetAgentId ?? null,
-      })
-      axlTargetAgentId = target?.agentId ?? null
-      axlTargetPeerId = target?.peerId ?? null
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'AXL target resolution failed'
-      const status = message.includes('not found') ? 404 : message.includes('peer ID') ? 409 : 400
-      return c.json({ error: message }, status)
+    if (body.axlTargetAgentId) {
+      try {
+        const target = await resolveMentionTarget(body.content, {
+          agentId,
+          fleetId,
+          tenantId,
+          explicitTargetAgentId: body.axlTargetAgentId,
+        })
+        axlTargetAgentId = target?.agentId ?? null
+        axlTargetPeerId = target?.peerId ?? null
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'AXL target resolution failed'
+        const status = message.includes('not found') ? 404 : message.includes('peer ID') ? 409 : 400
+        return c.json({ error: message }, status)
+      }
     }
 
     // Resolve or find the target session — auto-create if none exists

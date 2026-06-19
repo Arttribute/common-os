@@ -23,6 +23,15 @@ interface ProvisionAgentOptions {
 export async function provisionAgent(
 	opts: ProvisionAgentOptions,
 ): Promise<AgentDoc & { agentToken: string }> {
+	if (
+		opts.integrationPath === "openclaw" &&
+		!opts.dockerImage &&
+		!process.env.OPENCLAW_IMAGE_URL &&
+		!process.env.OPENCLAW_GATEWAY_URL
+	) {
+		throw new Error("OpenClaw deploys require OPENCLAW_IMAGE_URL, OPENCLAW_GATEWAY_URL, or a dockerImage override");
+	}
+
 	const agentId = `agt_${Date.now().toString(36)}${randomBytes(4).toString("hex")}`;
 	const agentToken = `cos_agent_${randomBytes(24).toString("hex")}`;
 	const agentTokenHash = createHash("sha256").update(agentToken).digest("hex");
@@ -202,6 +211,8 @@ async function launchCloudInstance(
 		commonsApiKey: commonsApiKey ?? "",
 		commonsAgentId: agentDoc.commons.agentId ?? "",
 		walletAddress: agentDoc.wallet?.address ?? agentDoc.commons.walletAddress ?? "",
+		openclawConfig: opts.openclawConfig,
+		openclawGatewayUrl: process.env.OPENCLAW_GATEWAY_URL,
 		runnerUrl: process.env.RUNNER_URL,
 		axlPeers,
 		worldRoom: agentDoc.world.room,

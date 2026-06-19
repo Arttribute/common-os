@@ -43,10 +43,43 @@ export interface FleetDoc {
       bounds: { x: number; y: number; w: number; h: number }
     }>
   }
+  orchestration: FleetOrchestration
   status: 'active' | 'stopped'
   agentCount: number
   createdAt: Date
   updatedAt: Date
+}
+
+export interface FleetOrchestration {
+  topology: 'manager-led' | 'peer-to-peer' | 'hub-and-spoke' | 'custom'
+  managerRole: string | null
+  communicationCadence: 'as-needed' | 'task-boundary' | 'hourly' | 'daily'
+  defaultChannel: 'control-plane' | 'openclaw' | 'axl'
+  axlPolicy: 'explicit-only' | 'allowed-by-policy' | 'disabled'
+  taskSharing: {
+    assignment: 'manager-assigns' | 'self-serve' | 'round-robin' | 'manual'
+    handoffProtocol: string
+    dependencies: 'explicit' | 'loose' | 'none'
+  }
+  reporting: {
+    statusFormat: 'brief' | 'structured' | 'narrative'
+    reportToRole: string | null
+    onTaskStart: boolean
+    onTaskComplete: boolean
+    onBlocked: boolean
+  }
+  checkIns: {
+    enabled: boolean
+    cadenceMinutes: number
+    checkOnBlockedTasks: boolean
+    checkOnStaleTasksMinutes: number
+  }
+  escalation: {
+    blockedAfterMinutes: number
+    escalateToRole: string | null
+    requireHumanOnConflict: boolean
+  }
+  customInstructions: string
 }
 
 export interface AgentDoc {
@@ -89,7 +122,7 @@ export interface AgentDoc {
     openclawConfig: {
       modelProvider: string | null        // 'anthropic' | 'openai' | 'google' | 'openrouter' | etc.
       modelApiKey: string | null
-      channels: Record<string, Record<string, string>> | null  // channel id → channel config tokens
+      channels: Record<string, Record<string, unknown>> | null  // channel id → channel config tokens/settings
       plugins: string[] | null            // e.g. ['@openclaw/browser', '@openclaw/voice-call']
       dmPolicy: 'pairing' | 'allowlist' | 'open' | 'disabled' | null
     } | null

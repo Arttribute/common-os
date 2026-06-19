@@ -26,7 +26,7 @@ router.post("/:id/agents", async (c) => {
 		openclawConfig?: {
 			modelProvider?: string;
 			modelApiKey?: string;
-			channels?: Record<string, Record<string, string>>;
+			channels?: Record<string, Record<string, unknown>>;
 			plugins?: string[];
 			dmPolicy?: "pairing" | "allowlist" | "open" | "disabled";
 		};

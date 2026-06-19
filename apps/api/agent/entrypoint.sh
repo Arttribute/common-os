@@ -38,7 +38,9 @@ echo "CommonOS image build date: ${COMMONOS_BUILD_DATE:-unknown}"
 #   tls://HOST:PORT  (e.g. provided by Gensyn or a fleet bootstrap node)
 # Leave empty to run in isolated mode (no external connectivity).
 
-if command -v axl-node &>/dev/null; then
+if [ "${AXL_MODE:-explicit}" = "off" ] || [ "${AXL_MODE:-explicit}" = "disabled" ]; then
+  echo "AXL disabled by AXL_MODE=${AXL_MODE:-explicit}"
+elif command -v axl-node &>/dev/null; then
   AXL_CONFIG_DIR=/etc/axl
 
   # Generate a fresh ed25519 identity key for this pod lifecycle

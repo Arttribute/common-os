@@ -23,6 +23,13 @@ export interface LaunchOptions {
 	commonsApiKey: string;
 	commonsAgentId: string;
 	walletAddress?: string;
+	openclawConfig?: {
+		modelProvider: string | null;
+		modelApiKey: string | null;
+		channels: Record<string, Record<string, unknown>> | null;
+		plugins: string[] | null;
+		dmPolicy: "pairing" | "allowlist" | "open" | "disabled" | null;
+	} | null;
 	openclawGatewayUrl?: string;
 	workspaceDir?: string;
 	runnerUrl?: string;
@@ -39,6 +46,7 @@ export interface LaunchedService {
 }
 
 function commonRuntimeEnv(opts: LaunchOptions, imageUrl: string): k8s.V1EnvVar[] {
+	const openclawConfigJson = JSON.stringify(buildOpenClawGatewayConfig(opts));
 	return [
 		{ name: "AGENT_ID",              value: opts.agentId },
 		{ name: "AGENT_TOKEN",           value: opts.agentToken },
@@ -52,18 +60,109 @@ function commonRuntimeEnv(opts: LaunchOptions, imageUrl: string): k8s.V1EnvVar[]
 		{ name: "WALLET_ADDRESS",        value: opts.walletAddress ?? "" },
 		{ name: "AGENT_WALLET_CHAIN_ID", value: process.env.AGENT_WALLET_DEFAULT_CHAIN_ID ?? "84532" },
 		{ name: "AGC_INITIATOR",         value: process.env.AGC_INITIATOR ?? process.env.AGENTCOMMONS_INITIATOR ?? "" },
-		{ name: "OPENCLAW_GATEWAY_URL",  value: opts.openclawGatewayUrl ?? "http://localhost:18789" },
+		{ name: "OPENCLAW_GATEWAY_URL",  value: opts.openclawGatewayUrl ?? process.env.OPENCLAW_GATEWAY_URL ?? "http://localhost:18789" },
+		{ name: "OPENCLAW_MODEL_PROVIDER", value: opts.openclawConfig?.modelProvider ?? process.env.OPENCLAW_MODEL_PROVIDER ?? "openai" },
+		{ name: "OPENCLAW_MODEL_API_KEY", value: opts.openclawConfig?.modelApiKey ?? process.env.OPENCLAW_MODEL_API_KEY ?? "" },
+		{ name: "OPENCLAW_CHANNELS_JSON", value: JSON.stringify(opts.openclawConfig?.channels ?? {}) },
+		{ name: "OPENCLAW_CONFIG_JSON", value: openclawConfigJson },
+		{ name: "OPENCLAW_PLUGINS", value: (opts.openclawConfig?.plugins ?? []).join(",") },
+		{ name: "OPENCLAW_DM_POLICY", value: opts.openclawConfig?.dmPolicy ?? "pairing" },
 		{ name: "WORKSPACE_DIR",         value: opts.workspaceDir ?? "/mnt/shared" },
 		{ name: "COMMONOS_WORKSPACE",    value: opts.workspaceDir ?? "/mnt/shared" },
 		{ name: "COMMONOS_AGENT_IMAGE",  value: imageUrl },
 		{ name: "DOCKER_IMAGE",          value: opts.dockerImage ?? "" },
 		{ name: "RUNNER_URL",            value: opts.runnerUrl ?? process.env.RUNNER_URL ?? "" },
 		{ name: "AXL_PEERS",             value: opts.axlPeers ?? process.env.AXL_PEERS ?? "" },
+		{ name: "AXL_MODE",              value: process.env.AXL_MODE ?? "explicit" },
 		{ name: "POD_IP",                valueFrom: { fieldRef: { fieldPath: "status.podIP" } } },
 		{ name: "WORLD_ROOM",            value: opts.worldRoom ?? "dev-room" },
 		{ name: "WORLD_X",               value: String(opts.worldX ?? 2) },
 		{ name: "WORLD_Y",               value: String(opts.worldY ?? 2) },
 	];
+}
+
+function buildOpenClawGatewayConfig(opts: LaunchOptions): Record<string, unknown> {
+	const config = opts.openclawConfig;
+	const provider = config?.modelProvider ?? process.env.OPENCLAW_MODEL_PROVIDER ?? "openai";
+	const apiKey = config?.modelApiKey ?? process.env.OPENCLAW_MODEL_API_KEY ?? "";
+	const envKeyByProvider: Record<string, string> = {
+		openai: "OPENAI_API_KEY",
+		anthropic: "ANTHROPIC_API_KEY",
+		openrouter: "OPENROUTER_API_KEY",
+		google: "GOOGLE_API_KEY",
+		groq: "GROQ_API_KEY",
+	};
+	const providerEnvKey = envKeyByProvider[provider] ?? `${provider.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`;
+	const agentRuntimeId = opts.agentId.replace(/[^a-zA-Z0-9_-]/g, "-");
+
+	return {
+		env: {
+			vars: apiKey ? { [providerEnvKey]: apiKey } : {},
+		},
+		channels: config?.channels ?? {},
+		agents: {
+			list: [
+				{
+					id: agentRuntimeId,
+					default: true,
+					workspace: "/mnt/shared",
+				},
+			],
+		},
+		messages: {
+			groupChat: {
+				mentionPatterns: ["@openclaw", `@${opts.role.replace(/\s+/g, "-").toLowerCase()}`],
+			},
+		},
+	};
+}
+
+function openClawRuntimeContainer(opts: LaunchOptions, envVars: k8s.V1EnvVar[]): k8s.V1Container | null {
+	if (opts.integrationPath !== "openclaw") return null;
+	if (process.env.OPENCLAW_GATEWAY_URL && !opts.dockerImage && !process.env.OPENCLAW_IMAGE_URL) {
+		return null;
+	}
+
+	const image = opts.dockerImage ?? process.env.OPENCLAW_IMAGE_URL;
+	if (!image) {
+		throw new Error("openclaw integration path requires OPENCLAW_IMAGE_URL, dockerImage, or OPENCLAW_GATEWAY_URL");
+	}
+
+	return {
+		name: "openclaw-runtime",
+		image,
+		imagePullPolicy: "Always",
+		command: ["/bin/sh", "-lc"],
+		args: [`
+set -eu
+export HOME=/mnt/shared/openclaw
+mkdir -p "$HOME/.openclaw" "$HOME/logs"
+if [ -n "\${OPENCLAW_CONFIG_JSON:-}" ]; then
+  printf '%s' "$OPENCLAW_CONFIG_JSON" > "$HOME/.openclaw/openclaw.json"
+fi
+if command -v openclaw >/dev/null 2>&1; then
+  exec openclaw gateway start --headless
+fi
+echo "openclaw binary not found in image" >&2
+exit 127
+`],
+		env: [
+			...envVars,
+			{ name: "COMMONOS_RUNTIME_ROLE", value: "openclaw" },
+			{ name: "OPENCLAW_HEADLESS", value: "true" },
+			{ name: "OPENCLAW_GATEWAY_HOST", value: "0.0.0.0" },
+			{ name: "OPENCLAW_GATEWAY_PORT", value: "18789" },
+			{ name: "OPENCLAW_DATA_DIR", value: "/mnt/shared/openclaw" },
+			{ name: "OPENCLAW_LOG_DIR", value: "/mnt/shared/openclaw/logs" },
+			{ name: "HOME", value: "/mnt/shared/openclaw" },
+		],
+		ports: [{ name: "openclaw", containerPort: 18789 }],
+		resources: {
+			requests: { cpu: "250m", memory: "256Mi" },
+			limits: { cpu: "2", memory: "2Gi" },
+		},
+		volumeMounts: [{ name: "agent-storage", mountPath: "/mnt/shared" }],
+	};
 }
 
 function agentContainer(imageUrl: string, envVars: k8s.V1EnvVar[]): k8s.V1Container {
@@ -581,6 +680,7 @@ export async function launchAgentPod(
 		await ensureAgentStorage(projectId, bucketName, opts.agentId, sessionId);
 	}
 
+	const openClawContainer = openClawRuntimeContainer(opts, envVars);
 	const guestContainer = guestRuntimeContainer(opts, envVars);
 	const podBody: k8s.V1Pod = {
 		metadata: {
@@ -598,6 +698,7 @@ export async function launchAgentPod(
 			restartPolicy: "Always",
 			containers: [
 				agentContainer(imageUrl, envVars),
+				...(openClawContainer ? [openClawContainer] : []),
 				...(guestContainer ? [guestContainer] : []),
 			],
 			volumes: [volume],
@@ -606,7 +707,7 @@ export async function launchAgentPod(
 
 	await ensurePodWithRetry(projectId, region, clusterName, namespace, podBody);
 
-	console.log(`[cloud-init] pod ${podName} created in namespace ${namespace} using image ${imageUrl}${opts.dockerImage ? ` guest=${opts.dockerImage}` : ""}`);
+	console.log(`[cloud-init] pod ${podName} created in namespace ${namespace} using image ${imageUrl}${openClawContainer ? ` openclaw=${openClawContainer.image}` : ""}${guestContainer ? ` guest=${opts.dockerImage}` : ""}`);
 	return { serviceId: namespace, sessionId };
 }
 
@@ -754,6 +855,7 @@ export async function launchAgentPodEks(opts: LaunchOptions): Promise<LaunchedSe
 	}
 
 	const envVars = commonRuntimeEnv(opts, imageUrl);
+	const openClawContainer = openClawRuntimeContainer(opts, envVars);
 	const guestContainer = guestRuntimeContainer(opts, envVars);
 
 	if (efsId) {
@@ -796,6 +898,7 @@ export async function launchAgentPodEks(opts: LaunchOptions): Promise<LaunchedSe
 				restartPolicy: "Always",
 				containers: [
 					agentContainer(imageUrl, envVars),
+					...(openClawContainer ? [openClawContainer] : []),
 					...(guestContainer ? [guestContainer] : []),
 				],
 				volumes: [volume],
@@ -803,7 +906,7 @@ export async function launchAgentPodEks(opts: LaunchOptions): Promise<LaunchedSe
 		},
 	});
 
-	console.log(`[cloud-init] EKS pod ${podName} created in namespace ${namespace} using image ${imageUrl}${opts.dockerImage ? ` guest=${opts.dockerImage}` : ""}`);
+	console.log(`[cloud-init] EKS pod ${podName} created in namespace ${namespace} using image ${imageUrl}${openClawContainer ? ` openclaw=${openClawContainer.image}` : ""}${guestContainer ? ` guest=${opts.dockerImage}` : ""}`);
 	return { serviceId: namespace, sessionId };
 }
 

@@ -21,9 +21,14 @@ The API reads from `apps/api/.env.local` during local development.
 | `GKE_CLUSTER` | GCP | Cluster name, default `common-os-agents`. |
 | `AGENT_IMAGE_URL` | Provisioning | Container image used for agent pods. |
 | `RUNNER_URL` | Native runtime | Cloud Run runner URL used by native agents. |
+| `AXL_MODE` | Optional | P2P mode for agent pods. Defaults to `explicit`, which exposes the AXL tool but does not run background inbox routing. Use `auto` for automatic inbound AXL polling/replies, or `off` to skip AXL entirely. |
 | `AGENTCOMMONS_API_KEY` | Native runtime | Platform key for Agent Commons registration and bootstrap. |
 | `AGC_API_URL` | Optional | Agent Commons API base URL. |
 | `AGC_INITIATOR` | Optional | Initiator header/value for Agent Commons calls. |
+| `OPENCLAW_IMAGE_URL` | OpenClaw runtime | Image used for the per-agent OpenClaw Gateway sidecar. Required for one-click OpenClaw deploys unless `OPENCLAW_GATEWAY_URL` is set. |
+| `OPENCLAW_GATEWAY_URL` | OpenClaw runtime | Existing OpenClaw Gateway URL. When set without an image, CommonOS targets this Gateway instead of launching a sidecar. |
+| `OPENCLAW_MODEL_PROVIDER` | OpenClaw runtime | Default provider injected for OpenClaw agents. |
+| `OPENCLAW_MODEL_API_KEY` | OpenClaw runtime | Default model provider key injected for OpenClaw agents. |
 | `AWS_REGION` | AWS | Region for EKS operations. |
 | `EKS_CLUSTER` | AWS | EKS cluster name. |
 

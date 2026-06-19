@@ -32,7 +32,34 @@ tasks, emit events, write to `/mnt/shared`, and complete work.
 
 ## OpenClaw Agent
 
-The API accepts `integrationPath: "openclaw"` and optional OpenClaw config. Use this path for integration-heavy agents when your image and secrets are ready.
+OpenClaw agents run through the OpenClaw Gateway path. In the dashboard, click
+**OpenClaw** on any fleet, choose a role, select connectors, paste the required
+credentials, and deploy. CommonOS stores those connector values on the agent
+config and writes an OpenClaw `openclaw.json` inside the Gateway runtime before
+the Gateway starts.
+
+Operators need one of these platform settings:
+
+- `OPENCLAW_IMAGE_URL`: CommonOS launches an OpenClaw Gateway container beside
+  the daemon on the documented default port `18789`.
+- `OPENCLAW_GATEWAY_URL`: CommonOS routes OpenClaw agents to an existing
+  Gateway instead of launching a sidecar.
+
+Optional `openclawConfig` values are stored with the agent and injected into the
+runtime as env vars and gateway config for model provider, plugins, channels,
+and DM policy.
+
+The dashboard supports common OpenClaw connector surfaces including Telegram,
+Slack, Discord, WhatsApp, Signal, Matrix, Google Chat, Microsoft Teams, Zalo,
+and Nostr. Some connectors are fully credential-driven, while others still need
+provider-side setup:
+
+- Telegram, Discord, Zalo, and Nostr can be configured with tokens or keys.
+- Slack needs both the bot token and Socket Mode app token from the same Slack
+  app/workspace.
+- WhatsApp relies on the OpenClaw pairing flow and persisted gateway state.
+- Signal needs a reachable `signal-cli` HTTP daemon.
+- Google Chat and Microsoft Teams require their platform app/webhook setup.
 
 ## API Shape
 

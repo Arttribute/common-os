@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { usePrivy } from '@privy-io/react-auth'
 import {
   Box,
+  Bot,
   ChevronDown,
   ChevronRight,
   CirclePlus,
@@ -42,6 +43,7 @@ interface Fleet {
   agentCount: number
   createdAt: string
   worldConfig: { rooms: Array<{ id: string; label: string }> }
+  orchestration?: FleetOrchestration
 }
 
 interface Agent {
@@ -55,6 +57,282 @@ interface Agent {
   permissionTier: 'manager' | 'worker'
   status: string
   createdAt: string
+}
+
+type OpenClawDmPolicy = 'pairing' | 'allowlist' | 'open' | 'disabled'
+type ConnectorId =
+  | 'telegram'
+  | 'slack'
+  | 'discord'
+  | 'whatsapp'
+  | 'signal'
+  | 'matrix'
+  | 'googlechat'
+  | 'msteams'
+  | 'zalo'
+  | 'nostr'
+
+type ConnectorValues = Record<string, string>
+type ConnectorState = Record<ConnectorId, { enabled: boolean; values: ConnectorValues }>
+
+interface FleetOrchestration {
+  topology: 'manager-led' | 'peer-to-peer' | 'hub-and-spoke' | 'custom'
+  managerRole: string | null
+  communicationCadence: 'as-needed' | 'task-boundary' | 'hourly' | 'daily'
+  defaultChannel: 'control-plane' | 'openclaw' | 'axl'
+  axlPolicy: 'explicit-only' | 'allowed-by-policy' | 'disabled'
+  taskSharing: {
+    assignment: 'manager-assigns' | 'self-serve' | 'round-robin' | 'manual'
+    handoffProtocol: string
+    dependencies: 'explicit' | 'loose' | 'none'
+  }
+  reporting: {
+    statusFormat: 'brief' | 'structured' | 'narrative'
+    reportToRole: string | null
+    onTaskStart: boolean
+    onTaskComplete: boolean
+    onBlocked: boolean
+  }
+  checkIns: {
+    enabled: boolean
+    cadenceMinutes: number
+    checkOnBlockedTasks: boolean
+    checkOnStaleTasksMinutes: number
+  }
+  escalation: {
+    blockedAfterMinutes: number
+    escalateToRole: string | null
+    requireHumanOnConflict: boolean
+  }
+  customInstructions: string
+}
+
+interface ConnectorField {
+  key: string
+  label: string
+  placeholder?: string
+  type?: 'text' | 'password' | 'url'
+}
+
+interface ConnectorSpec {
+  id: ConnectorId
+  label: string
+  description: string
+  fields: ConnectorField[]
+  build: (values: ConnectorValues, dmPolicy: OpenClawDmPolicy) => Record<string, unknown>
+}
+
+const connectorSpecs: ConnectorSpec[] = [
+  {
+    id: 'telegram',
+    label: 'Telegram',
+    description: 'Fast bot-token setup through BotFather.',
+    fields: [{ key: 'botToken', label: 'Bot token', placeholder: '123456:ABC...', type: 'password' }],
+    build: (values, dmPolicy) => ({
+      enabled: true,
+      botToken: values.botToken,
+      dmPolicy,
+      groups: { '*': { requireMention: true } },
+    }),
+  },
+  {
+    id: 'slack',
+    label: 'Slack',
+    description: 'Socket Mode app token plus bot token.',
+    fields: [
+      { key: 'botToken', label: 'Bot User OAuth token', placeholder: 'xoxb-...', type: 'password' },
+      { key: 'appToken', label: 'App-level token', placeholder: 'xapp-...', type: 'password' },
+    ],
+    build: (values) => ({
+      enabled: true,
+      mode: 'socket',
+      botToken: values.botToken,
+      appToken: values.appToken,
+      groupPolicy: 'open',
+      requireMention: false,
+    }),
+  },
+  {
+    id: 'discord',
+    label: 'Discord',
+    description: 'Bot token for server channels and DMs.',
+    fields: [{ key: 'token', label: 'Bot token', placeholder: 'Discord bot token', type: 'password' }],
+    build: (values, dmPolicy) => ({
+      enabled: true,
+      token: values.token,
+      dmPolicy,
+      dm: { enabled: dmPolicy !== 'disabled' },
+      groupPolicy: 'allowlist',
+    }),
+  },
+  {
+    id: 'whatsapp',
+    label: 'WhatsApp',
+    description: 'Gateway pairing flow; optional allowlist.',
+    fields: [{ key: 'allowFrom', label: 'Allowed numbers', placeholder: '+15555550123, +15555550124' }],
+    build: (values) => ({
+      enabled: true,
+      allowFrom: splitCsv(values.allowFrom),
+      groups: { '*': { requireMention: true } },
+    }),
+  },
+  {
+    id: 'signal',
+    label: 'Signal',
+    description: 'Connect to an existing signal-cli HTTP daemon.',
+    fields: [
+      { key: 'signalNumber', label: 'Signal number', placeholder: '+15555550123' },
+      { key: 'httpUrl', label: 'signal-cli HTTP URL', placeholder: 'http://signal-cli:8080', type: 'url' },
+    ],
+    build: (values) => ({
+      enabled: true,
+      signalNumber: values.signalNumber,
+      httpUrl: values.httpUrl,
+    }),
+  },
+  {
+    id: 'matrix',
+    label: 'Matrix',
+    description: 'Homeserver login or access-token setup.',
+    fields: [
+      { key: 'homeserver', label: 'Homeserver', placeholder: 'https://matrix.org', type: 'url' },
+      { key: 'userId', label: 'User ID', placeholder: '@agent:matrix.org' },
+      { key: 'accessToken', label: 'Access token', placeholder: 'syt_...', type: 'password' },
+    ],
+    build: (values) => ({
+      enabled: true,
+      homeserver: values.homeserver,
+      userId: values.userId,
+      accessToken: values.accessToken,
+    }),
+  },
+  {
+    id: 'googlechat',
+    label: 'Google Chat',
+    description: 'Webhook-based Google Chat ingress.',
+    fields: [
+      { key: 'webhookPath', label: 'Webhook path', placeholder: '/google-chat' },
+      { key: 'webhookUrl', label: 'Webhook URL', placeholder: 'https://chat.googleapis.com/...', type: 'url' },
+    ],
+    build: (values) => ({
+      enabled: true,
+      webhookPath: values.webhookPath,
+      webhookUrl: values.webhookUrl,
+    }),
+  },
+  {
+    id: 'msteams',
+    label: 'Microsoft Teams',
+    description: 'Bot Framework app credentials.',
+    fields: [
+      { key: 'appId', label: 'App ID', placeholder: 'Microsoft app ID' },
+      { key: 'appPassword', label: 'App password', placeholder: 'Microsoft app password', type: 'password' },
+    ],
+    build: (values) => ({
+      enabled: true,
+      appId: values.appId,
+      appPassword: values.appPassword,
+    }),
+  },
+  {
+    id: 'zalo',
+    label: 'Zalo',
+    description: 'Zalo Bot Platform token.',
+    fields: [{ key: 'botToken', label: 'Bot token', placeholder: 'numeric_id:secret', type: 'password' }],
+    build: (values, dmPolicy) => ({
+      enabled: true,
+      botToken: values.botToken,
+      dmPolicy,
+    }),
+  },
+  {
+    id: 'nostr',
+    label: 'Nostr',
+    description: 'Private key plus relay URLs.',
+    fields: [
+      { key: 'privateKey', label: 'Private key', placeholder: 'nsec...', type: 'password' },
+      { key: 'relayUrls', label: 'Relay URLs', placeholder: 'wss://relay.damus.io, wss://nos.lol' },
+    ],
+    build: (values) => ({
+      enabled: true,
+      privateKey: values.privateKey,
+      relayUrls: splitCsv(values.relayUrls),
+    }),
+  },
+]
+
+function emptyConnectorState(): ConnectorState {
+  return Object.fromEntries(
+    connectorSpecs.map((spec) => [spec.id, { enabled: false, values: {} }]),
+  ) as ConnectorState
+}
+
+function splitCsv(value: string | undefined): string[] {
+  return (value ?? '').split(',').map((item) => item.trim()).filter(Boolean)
+}
+
+function pruneEmpty(value: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => {
+      if (Array.isArray(entry)) return entry.length > 0
+      if (entry && typeof entry === 'object') return true
+      return entry !== ''
+    }),
+  )
+}
+
+function buildOpenClawChannels(connectors: ConnectorState, dmPolicy: OpenClawDmPolicy) {
+  return Object.fromEntries(
+    connectorSpecs
+      .filter((spec) => connectors[spec.id]?.enabled)
+      .map((spec) => [spec.id, pruneEmpty(spec.build(connectors[spec.id]?.values ?? {}, dmPolicy))]),
+  )
+}
+
+function defaultOrchestration(): FleetOrchestration {
+  return {
+    topology: 'manager-led',
+    managerRole: 'manager',
+    communicationCadence: 'task-boundary',
+    defaultChannel: 'control-plane',
+    axlPolicy: 'explicit-only',
+    taskSharing: {
+      assignment: 'manager-assigns',
+      handoffProtocol: 'Summarize context, current state, blockers, required inputs, and next action.',
+      dependencies: 'explicit',
+    },
+    reporting: {
+      statusFormat: 'structured',
+      reportToRole: 'manager',
+      onTaskStart: true,
+      onTaskComplete: true,
+      onBlocked: true,
+    },
+    checkIns: {
+      enabled: true,
+      cadenceMinutes: 30,
+      checkOnBlockedTasks: true,
+      checkOnStaleTasksMinutes: 60,
+    },
+    escalation: {
+      blockedAfterMinutes: 30,
+      escalateToRole: 'manager',
+      requireHumanOnConflict: true,
+    },
+    customInstructions: '',
+  }
+}
+
+function mergeOrchestration(value?: Partial<FleetOrchestration>): FleetOrchestration {
+  const defaults = defaultOrchestration()
+  return {
+    ...defaults,
+    ...(value ?? {}),
+    taskSharing: { ...defaults.taskSharing, ...(value?.taskSharing ?? {}) },
+    reporting: { ...defaults.reporting, ...(value?.reporting ?? {}) },
+    checkIns: { ...defaults.checkIns, ...(value?.checkIns ?? {}) },
+    escalation: { ...defaults.escalation, ...(value?.escalation ?? {}) },
+  }
 }
 
 const statusTone: Record<string, 'success' | 'warning' | 'destructive' | 'secondary'> = {
@@ -95,12 +373,20 @@ export default function DashboardPage() {
   const [fleetName, setFleetName] = useState('')
   const [fleetWorld, setFleetWorld] = useState('office')
   const [creatingFleet, setCreatingFleet] = useState(false)
+  const [orchestrationFleet, setOrchestrationFleet] = useState<Fleet | null>(null)
+  const [orchestrationForm, setOrchestrationForm] = useState<FleetOrchestration>(() => defaultOrchestration())
+  const [savingOrchestration, setSavingOrchestration] = useState(false)
 
   const [agentForm, setAgentForm] = useState<string | null>(null)
   const [agentRole, setAgentRole] = useState('')
   const [agentPrompt, setAgentPrompt] = useState('')
   const [agentTier, setAgentTier] = useState<'manager' | 'worker'>('worker')
   const [agentPath, setAgentPath] = useState<'native' | 'openclaw'>('native')
+  const [openclawModelProvider, setOpenclawModelProvider] = useState('openai')
+  const [openclawModelApiKey, setOpenclawModelApiKey] = useState('')
+  const [openclawPlugins, setOpenclawPlugins] = useState('')
+  const [openclawDmPolicy, setOpenclawDmPolicy] = useState<OpenClawDmPolicy>('pairing')
+  const [openclawConnectors, setOpenclawConnectors] = useState<ConnectorState>(() => emptyConnectorState())
   const [deployingAgent, setDeployingAgent] = useState(false)
 
   useEffect(() => {
@@ -144,6 +430,46 @@ export default function DashboardPage() {
     }
   }
 
+  const resetAgentForm = () => {
+    setAgentForm(null)
+    setAgentRole('')
+    setAgentPrompt('')
+    setAgentTier('worker')
+    setAgentPath('native')
+    setOpenclawModelProvider('openai')
+    setOpenclawModelApiKey('')
+    setOpenclawPlugins('')
+    setOpenclawDmPolicy('pairing')
+    setOpenclawConnectors(emptyConnectorState())
+  }
+
+  const openAgentForm = (fleetId: string, path: 'native' | 'openclaw') => {
+    setAgentForm(fleetId)
+    setAgentPath(path)
+  }
+
+  const openOrchestrationForm = (fleet: Fleet) => {
+    setOrchestrationFleet(fleet)
+    setOrchestrationForm(mergeOrchestration(fleet.orchestration))
+  }
+
+  const setConnectorEnabled = (connector: ConnectorId, enabled: boolean) => {
+    setOpenclawConnectors((prev) => ({
+      ...prev,
+      [connector]: { ...prev[connector], enabled },
+    }))
+  }
+
+  const setConnectorValue = (connector: ConnectorId, key: string, value: string) => {
+    setOpenclawConnectors((prev) => ({
+      ...prev,
+      [connector]: {
+        ...prev[connector],
+        values: { ...prev[connector].values, [key]: value },
+      },
+    }))
+  }
+
   const createFleet = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!fleetName.trim()) return
@@ -177,6 +503,20 @@ export default function DashboardPage() {
           systemPrompt: agentPrompt.trim() || `You are a ${agentRole.trim()} agent.`,
           permissionTier: agentTier,
           integrationPath: agentPath,
+          ...(agentPath === 'openclaw'
+            ? {
+                openclawConfig: {
+                  modelProvider: openclawModelProvider,
+                  modelApiKey: openclawModelApiKey.trim() || undefined,
+                  channels: buildOpenClawChannels(openclawConnectors, openclawDmPolicy),
+                  plugins: openclawPlugins
+                    .split(',')
+                    .map((plugin) => plugin.trim())
+                    .filter(Boolean),
+                  dmPolicy: openclawDmPolicy,
+                },
+              }
+            : {}),
         }),
       })
       if (res.ok) {
@@ -190,9 +530,10 @@ export default function DashboardPage() {
             f._id === fleetId ? { ...f, agentCount: f.agentCount + 1 } : f,
           ),
         )
-        setAgentForm(null)
-        setAgentRole('')
-        setAgentPrompt('')
+        resetAgentForm()
+      } else {
+        const body = await res.json().catch(() => null) as { error?: string } | null
+        setError(body?.error ?? `Could not deploy agent (${res.status}).`)
       }
     } finally {
       setDeployingAgent(false)
@@ -214,6 +555,32 @@ export default function DashboardPage() {
         f._id === fleetId ? { ...f, agentCount: Math.max(0, f.agentCount - 1) } : f,
       ),
     )
+  }
+
+  const saveOrchestration = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!orchestrationFleet) return
+    setSavingOrchestration(true)
+    try {
+      const res = await apiFetch(`/fleets/${orchestrationFleet._id}/orchestration`, {
+        method: 'PATCH',
+        body: JSON.stringify(orchestrationForm),
+      })
+      if (res.ok) {
+        const saved = await res.json() as FleetOrchestration
+        setFleets((prev) =>
+          prev.map((fleet) =>
+            fleet._id === orchestrationFleet._id ? { ...fleet, orchestration: saved } : fleet,
+          ),
+        )
+        setOrchestrationFleet(null)
+      } else {
+        const body = await res.json().catch(() => null) as { error?: string } | null
+        setError(body?.error ?? `Could not save orchestration (${res.status}).`)
+      }
+    } finally {
+      setSavingOrchestration(false)
+    }
   }
 
   if (!ready || (!authenticated && !onboarding)) {
@@ -315,7 +682,8 @@ export default function DashboardPage() {
                   expanded={expandedFleet === fleet._id}
                   onToggle={() => void toggleFleet(fleet._id)}
                   onOpenWorld={() => router.push(`/world?fleet=${fleet._id}`)}
-                  onDeployAgent={() => setAgentForm(fleet._id)}
+                  onDeployAgent={(path) => openAgentForm(fleet._id, path)}
+                  onConfigureOrchestration={() => openOrchestrationForm(fleet)}
                   onTerminateAgent={(agentId) => void terminateAgent(fleet._id, agentId)}
                 />
               ))}
@@ -378,19 +746,17 @@ export default function DashboardPage() {
 
       <Dialog open={Boolean(agentForm)} onOpenChange={(open) => {
         if (!open) {
-          setAgentForm(null)
-          setAgentRole('')
-          setAgentPrompt('')
+          resetAgentForm()
         }
       }}>
-        <DialogContent>
+        <DialogContent className={agentPath === 'openclaw' ? 'max-h-[90vh] max-w-3xl overflow-y-auto' : undefined}>
           {agentForm && (
             <form onSubmit={(e) => void deployAgent(e, agentForm)} className="space-y-5">
               <DialogHeader>
                 <DialogTitle>Deploy agent</DialogTitle>
                 <DialogDescription>
                   {activeAgentFleet
-                    ? `Add a runtime to ${activeAgentFleet.name}.`
+                    ? `Add a ${agentPath === 'openclaw' ? 'OpenClaw' : 'native'} runtime to ${activeAgentFleet.name}.`
                     : 'Add a runtime to this fleet.'}
                 </DialogDescription>
               </DialogHeader>
@@ -431,6 +797,104 @@ export default function DashboardPage() {
                   </select>
                 </div>
               </div>
+              {agentPath === 'openclaw' && (
+                <div className="rounded-md border bg-muted/20 p-4">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="openclaw-model-provider">Model provider</Label>
+                      <select
+                        id="openclaw-model-provider"
+                        className={selectClass}
+                        value={openclawModelProvider}
+                        onChange={(e) => setOpenclawModelProvider(e.target.value)}
+                      >
+                        <option value="openai">OpenAI</option>
+                        <option value="anthropic">Anthropic</option>
+                        <option value="openrouter">OpenRouter</option>
+                        <option value="google">Google</option>
+                        <option value="groq">Groq</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="openclaw-model-api-key">Model API key</Label>
+                      <Input
+                        id="openclaw-model-api-key"
+                        type="password"
+                        placeholder="Provider API key"
+                        value={openclawModelApiKey}
+                        onChange={(e) => setOpenclawModelApiKey(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="openclaw-dm-policy">DM policy</Label>
+                      <select
+                        id="openclaw-dm-policy"
+                        className={selectClass}
+                        value={openclawDmPolicy}
+                        onChange={(e) => setOpenclawDmPolicy(e.target.value as 'pairing' | 'allowlist' | 'open' | 'disabled')}
+                      >
+                        <option value="pairing">Pairing</option>
+                        <option value="allowlist">Allowlist</option>
+                        <option value="open">Open</option>
+                        <option value="disabled">Disabled</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="openclaw-plugins">Plugins</Label>
+                      <Input
+                        id="openclaw-plugins"
+                        placeholder="slack, telegram, github"
+                        value={openclawPlugins}
+                        onChange={(e) => setOpenclawPlugins(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <div className="mt-5">
+                    <div className="mb-3 text-sm font-medium">Connectors</div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {connectorSpecs.map((connector) => {
+                        const state = openclawConnectors[connector.id]
+                        return (
+                          <div key={connector.id} className="rounded-md border bg-background p-3">
+                            <label className="flex items-start gap-3">
+                              <input
+                                type="checkbox"
+                                className="mt-1 size-4"
+                                checked={state.enabled}
+                                onChange={(e) => setConnectorEnabled(connector.id, e.target.checked)}
+                              />
+                              <span className="min-w-0">
+                                <span className="block text-sm font-medium">{connector.label}</span>
+                                <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                                  {connector.description}
+                                </span>
+                              </span>
+                            </label>
+                            {state.enabled && (
+                              <div className="mt-3 space-y-3">
+                                {connector.fields.map((field) => (
+                                  <div key={field.key} className="space-y-1.5">
+                                    <Label htmlFor={`${connector.id}-${field.key}`} className="text-xs">
+                                      {field.label}
+                                    </Label>
+                                    <Input
+                                      id={`${connector.id}-${field.key}`}
+                                      type={field.type ?? 'text'}
+                                      placeholder={field.placeholder}
+                                      value={state.values[field.key] ?? ''}
+                                      onChange={(e) => setConnectorValue(connector.id, field.key, e.target.value)}
+                                    />
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
               <div className="space-y-2">
                 <Label htmlFor="agent-prompt">System prompt</Label>
                 <Textarea
@@ -441,12 +905,217 @@ export default function DashboardPage() {
                 />
               </div>
               <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => setAgentForm(null)}>
+                <Button type="button" variant="outline" onClick={resetAgentForm}>
                   Cancel
                 </Button>
                 <Button type="submit" disabled={deployingAgent}>
                   {deployingAgent && <Loader2 className="animate-spin" />}
-                  Deploy agent
+                  {agentPath === 'openclaw' ? 'Deploy OpenClaw' : 'Deploy agent'}
+                </Button>
+              </DialogFooter>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(orchestrationFleet)} onOpenChange={(open) => {
+        if (!open) setOrchestrationFleet(null)
+      }}>
+        <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+          {orchestrationFleet && (
+            <form onSubmit={(e) => void saveOrchestration(e)} className="space-y-5">
+              <DialogHeader>
+                <DialogTitle>Fleet orchestration</DialogTitle>
+                <DialogDescription>
+                  Define how agents in {orchestrationFleet.name} coordinate, report, hand off work, and escalate blockers.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <SelectField
+                  label="Topology"
+                  value={orchestrationForm.topology}
+                  onChange={(value) => setOrchestrationForm((prev) => ({ ...prev, topology: value as FleetOrchestration['topology'] }))}
+                  options={[
+                    ['manager-led', 'Manager led'],
+                    ['peer-to-peer', 'Peer to peer'],
+                    ['hub-and-spoke', 'Hub and spoke'],
+                    ['custom', 'Custom'],
+                  ]}
+                />
+                <div className="space-y-2">
+                  <Label htmlFor="orch-manager-role">Manager role</Label>
+                  <Input
+                    id="orch-manager-role"
+                    value={orchestrationForm.managerRole ?? ''}
+                    onChange={(e) => setOrchestrationForm((prev) => ({ ...prev, managerRole: e.target.value || null }))}
+                    placeholder="manager"
+                  />
+                </div>
+                <SelectField
+                  label="Default channel"
+                  value={orchestrationForm.defaultChannel}
+                  onChange={(value) => setOrchestrationForm((prev) => ({ ...prev, defaultChannel: value as FleetOrchestration['defaultChannel'] }))}
+                  options={[
+                    ['control-plane', 'Control plane'],
+                    ['openclaw', 'OpenClaw connectors'],
+                    ['axl', 'AXL P2P'],
+                  ]}
+                />
+                <SelectField
+                  label="Communication cadence"
+                  value={orchestrationForm.communicationCadence}
+                  onChange={(value) => setOrchestrationForm((prev) => ({ ...prev, communicationCadence: value as FleetOrchestration['communicationCadence'] }))}
+                  options={[
+                    ['as-needed', 'As needed'],
+                    ['task-boundary', 'Task boundary'],
+                    ['hourly', 'Hourly'],
+                    ['daily', 'Daily'],
+                  ]}
+                />
+                <SelectField
+                  label="AXL policy"
+                  value={orchestrationForm.axlPolicy}
+                  onChange={(value) => setOrchestrationForm((prev) => ({ ...prev, axlPolicy: value as FleetOrchestration['axlPolicy'] }))}
+                  options={[
+                    ['explicit-only', 'Explicit only'],
+                    ['allowed-by-policy', 'Allowed by policy'],
+                    ['disabled', 'Disabled'],
+                  ]}
+                />
+                <SelectField
+                  label="Task assignment"
+                  value={orchestrationForm.taskSharing.assignment}
+                  onChange={(value) => setOrchestrationForm((prev) => ({
+                    ...prev,
+                    taskSharing: { ...prev.taskSharing, assignment: value as FleetOrchestration['taskSharing']['assignment'] },
+                  }))}
+                  options={[
+                    ['manager-assigns', 'Manager assigns'],
+                    ['self-serve', 'Self serve'],
+                    ['round-robin', 'Round robin'],
+                    ['manual', 'Manual'],
+                  ]}
+                />
+                <SelectField
+                  label="Dependency style"
+                  value={orchestrationForm.taskSharing.dependencies}
+                  onChange={(value) => setOrchestrationForm((prev) => ({
+                    ...prev,
+                    taskSharing: { ...prev.taskSharing, dependencies: value as FleetOrchestration['taskSharing']['dependencies'] },
+                  }))}
+                  options={[
+                    ['explicit', 'Explicit'],
+                    ['loose', 'Loose'],
+                    ['none', 'None'],
+                  ]}
+                />
+                <SelectField
+                  label="Status format"
+                  value={orchestrationForm.reporting.statusFormat}
+                  onChange={(value) => setOrchestrationForm((prev) => ({
+                    ...prev,
+                    reporting: { ...prev.reporting, statusFormat: value as FleetOrchestration['reporting']['statusFormat'] },
+                  }))}
+                  options={[
+                    ['brief', 'Brief'],
+                    ['structured', 'Structured'],
+                    ['narrative', 'Narrative'],
+                  ]}
+                />
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-3">
+                <NumberField
+                  label="Check-in minutes"
+                  value={orchestrationForm.checkIns.cadenceMinutes}
+                  onChange={(value) => setOrchestrationForm((prev) => ({
+                    ...prev,
+                    checkIns: { ...prev.checkIns, cadenceMinutes: value },
+                  }))}
+                />
+                <NumberField
+                  label="Stale task minutes"
+                  value={orchestrationForm.checkIns.checkOnStaleTasksMinutes}
+                  onChange={(value) => setOrchestrationForm((prev) => ({
+                    ...prev,
+                    checkIns: { ...prev.checkIns, checkOnStaleTasksMinutes: value },
+                  }))}
+                />
+                <NumberField
+                  label="Escalate after minutes"
+                  value={orchestrationForm.escalation.blockedAfterMinutes}
+                  onChange={(value) => setOrchestrationForm((prev) => ({
+                    ...prev,
+                    escalation: { ...prev.escalation, blockedAfterMinutes: value },
+                  }))}
+                />
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <ToggleField
+                  label="Report on task start"
+                  checked={orchestrationForm.reporting.onTaskStart}
+                  onChange={(checked) => setOrchestrationForm((prev) => ({
+                    ...prev,
+                    reporting: { ...prev.reporting, onTaskStart: checked },
+                  }))}
+                />
+                <ToggleField
+                  label="Report on task complete"
+                  checked={orchestrationForm.reporting.onTaskComplete}
+                  onChange={(checked) => setOrchestrationForm((prev) => ({
+                    ...prev,
+                    reporting: { ...prev.reporting, onTaskComplete: checked },
+                  }))}
+                />
+                <ToggleField
+                  label="Report blockers"
+                  checked={orchestrationForm.reporting.onBlocked}
+                  onChange={(checked) => setOrchestrationForm((prev) => ({
+                    ...prev,
+                    reporting: { ...prev.reporting, onBlocked: checked },
+                  }))}
+                />
+                <ToggleField
+                  label="Human approval on conflict"
+                  checked={orchestrationForm.escalation.requireHumanOnConflict}
+                  onChange={(checked) => setOrchestrationForm((prev) => ({
+                    ...prev,
+                    escalation: { ...prev.escalation, requireHumanOnConflict: checked },
+                  }))}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="orch-handoff">Handoff protocol</Label>
+                <Textarea
+                  id="orch-handoff"
+                  value={orchestrationForm.taskSharing.handoffProtocol}
+                  onChange={(e) => setOrchestrationForm((prev) => ({
+                    ...prev,
+                    taskSharing: { ...prev.taskSharing, handoffProtocol: e.target.value },
+                  }))}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="orch-custom">Custom instructions</Label>
+                <Textarea
+                  id="orch-custom"
+                  value={orchestrationForm.customInstructions}
+                  onChange={(e) => setOrchestrationForm((prev) => ({ ...prev, customInstructions: e.target.value }))}
+                  placeholder="Add fleet-specific coordination rules."
+                />
+              </div>
+
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setOrchestrationFleet(null)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={savingOrchestration}>
+                  {savingOrchestration && <Loader2 className="animate-spin" />}
+                  Save orchestration
                 </Button>
               </DialogFooter>
             </form>
@@ -490,6 +1159,76 @@ function MetricCard({ label, value }: { label: string; value: number }) {
   )
 }
 
+function SelectField({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string
+  value: string
+  options: Array<[string, string]>
+  onChange: (value: string) => void
+}) {
+  const id = `select-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={id}>{label}</Label>
+      <select id={id} className={selectClass} value={value} onChange={(e) => onChange(e.target.value)}>
+        {options.map(([optionValue, optionLabel]) => (
+          <option key={optionValue} value={optionValue}>{optionLabel}</option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
+function NumberField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string
+  value: number
+  onChange: (value: number) => void
+}) {
+  const id = `number-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={id}>{label}</Label>
+      <Input
+        id={id}
+        type="number"
+        min={0}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value) || 0)}
+      />
+    </div>
+  )
+}
+
+function ToggleField({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string
+  checked: boolean
+  onChange: (checked: boolean) => void
+}) {
+  return (
+    <label className="flex items-center gap-3 rounded-md border bg-muted/20 p-3 text-sm">
+      <input
+        type="checkbox"
+        className="size-4"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      {label}
+    </label>
+  )
+}
+
 function FleetCard({
   fleet,
   agents,
@@ -497,6 +1236,7 @@ function FleetCard({
   onToggle,
   onOpenWorld,
   onDeployAgent,
+  onConfigureOrchestration,
   onTerminateAgent,
 }: {
   fleet: Fleet
@@ -504,7 +1244,8 @@ function FleetCard({
   expanded: boolean
   onToggle: () => void
   onOpenWorld: () => void
-  onDeployAgent: () => void
+  onDeployAgent: (path: 'native' | 'openclaw') => void
+  onConfigureOrchestration: () => void
   onTerminateAgent: (agentId: string) => void
 }) {
   return (
@@ -546,14 +1287,38 @@ function FleetCard({
             </Button>
             <Button
               type="button"
+              variant="outline"
               size="sm"
               onClick={(e) => {
                 e.stopPropagation()
-                onDeployAgent()
+                onConfigureOrchestration()
+              }}
+            >
+              <Settings />
+              Orchestration
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation()
+                onDeployAgent('openclaw')
+              }}
+            >
+              <Bot />
+              OpenClaw
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation()
+                onDeployAgent('native')
               }}
             >
               <UserPlus />
-              Deploy agent
+              Native
             </Button>
           </div>
         </button>
