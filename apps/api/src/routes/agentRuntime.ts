@@ -86,9 +86,9 @@ async function resolveAgcSessionId(agentId: string, sessionId: string | null | u
       { agentId, $or: [{ _id: sessionId }, { agcSessionId: sessionId }] },
       { _id: 1, agcSessionId: 1 },
     ).lean()
-    return sess?.agcSessionId ?? sessionId
+    return sess?.agcSessionId ?? null
   } catch {
-    return sessionId
+    return null
   }
 }
 

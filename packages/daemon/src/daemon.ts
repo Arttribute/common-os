@@ -1194,7 +1194,7 @@ async function executeTask(
   messages?: AgcMessage[],
   routing?: AxlRoutingContext,
 ): Promise<string | { response: string; agcSessionId?: string }> {
-  if (config.integrationPath === "openclaw") return await runViaOpenClaw(description);
+  if (config.integrationPath === "openclaw") return await runViaOpenClaw(description, messages);
   if (config.integrationPath === "native") {
     const result = await runViaNative(description, agcSessionId, messages, routing);
 
@@ -1705,8 +1705,8 @@ async function runViaNative(
   return { response, axlToolCalled, ...(observedSessionId ? { agcSessionId: observedSessionId } : {}) };
 }
 
-async function runViaOpenClaw(description: string): Promise<string> {
-  const message = [orchestrationContext(), description].filter(Boolean).join("\n\n");
+async function runViaOpenClaw(description: string, messages?: AgcMessage[]): Promise<string> {
+  const message = buildRunPrompt(description, messages);
   try {
     const res = await fetch(`${config.openclawGatewayUrl}/v1/responses`, {
       method: "POST",

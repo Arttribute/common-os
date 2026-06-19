@@ -1,42 +1,7 @@
 import { Hono } from 'hono'
 import { agents, agentSessions, humanMessages } from '../db/mongo.js'
-import { persistNormalizedCommonsIdentity } from '../services/agentCommonsIdentity.js'
+import { createRuntimeSession, sessionTitle } from '../services/runtimeSessions.js'
 import type { Env } from '../types.js'
-
-const AGC_BASE_URL = (process.env.AGC_API_URL ?? 'https://api.agentcommons.io').replace(/\/$/, '')
-const AGC_INITIATOR = process.env.AGC_INITIATOR ?? process.env.AGENTCOMMONS_INITIATOR ?? null
-
-async function createAgcSession(commonsAgentId: string, title: string): Promise<string> {
-  const apiKey = process.env.AGENTCOMMONS_API_KEY
-  if (!apiKey) throw new Error('AGENTCOMMONS_API_KEY is not configured')
-  if (!commonsAgentId) throw new Error('agent is not registered with Agent Commons')
-  try {
-    const res = await fetch(`${AGC_BASE_URL}/v1/sessions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-        'x-api-key': apiKey,
-        ...(AGC_INITIATOR ? { 'x-initiator': AGC_INITIATOR } : {}),
-      },
-      body: JSON.stringify({
-        agentId: commonsAgentId,
-        title,
-        source: 'commonos',
-        ...(AGC_INITIATOR ? { initiator: AGC_INITIATOR } : {}),
-      }),
-      signal: AbortSignal.timeout(10_000),
-    })
-    if (!res.ok) throw new Error(`Agent Commons session create failed: ${res.status}`)
-    const raw = await res.json() as Record<string, unknown>
-    const data = (raw.data ?? raw) as Record<string, unknown>
-    const sessionId = (data.sessionId ?? data.id ?? null) as string | null
-    if (!sessionId) throw new Error('Agent Commons session create response did not include sessionId')
-    return sessionId
-  } catch (err) {
-    throw err instanceof Error ? err : new Error(String(err))
-  }
-}
 
 const router = new Hono<Env>()
 
@@ -68,27 +33,11 @@ router.post('/:id/agents/:agentId/sessions', async (c) => {
     const agent = await (await agents()).findOne({ _id: agentId, fleetId, tenantId }).lean()
     if (!agent) return c.json({ error: 'agent not found' }, 404)
 
-    const title = body.title?.trim() || `Session ${new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`
-    const commons = await persistNormalizedCommonsIdentity(agent)
-    const agcSessionId = await createAgcSession(commons.agentId ?? '', title)
-
-    const now = new Date()
-    const doc = {
-      _id: agcSessionId,
-      agentId,
-      fleetId,
-      tenantId,
-      agcSessionId,
-      title,
-      isDefault: true,
-      messageCount: 0,
-      lastMessageAt: null,
-      createdAt: now,
-    }
+    const title = body.title?.trim() || sessionTitle('Session')
 
     // Clear old default
     await (await agentSessions()).updateMany({ agentId, isDefault: true }, { $set: { isDefault: false } })
-    await (await agentSessions()).create(doc as never)
+    const doc = await createRuntimeSession(agent, { title, isDefault: true })
 
     return c.json(doc, 201)
   } catch (err) {
