@@ -1708,21 +1708,37 @@ async function runViaNative(
 async function runViaOpenClaw(description: string): Promise<string> {
   const message = [orchestrationContext(), description].filter(Boolean).join("\n\n");
   try {
-    const res = await fetch(`${config.openclawGatewayUrl}/api/message`, {
+    const res = await fetch(`${config.openclawGatewayUrl}/v1/responses`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, agentId: config.agentId }),
+      body: JSON.stringify({
+        model: `openclaw/${config.agentId.replace(/[^a-zA-Z0-9_-]/g, "-")}`,
+        input: message,
+        user: `commonos:${config.fleetId}:${config.agentId}`,
+      }),
       signal: AbortSignal.timeout(120_000),
     });
 
     if (res.ok) {
-      const data = await res.json() as { output?: string; response?: string };
-      return data.output ?? data.response ?? "done";
+      const data = await res.json() as {
+        output_text?: string;
+        output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }>; text?: string }>;
+        response?: string;
+        text?: string;
+      };
+      const outputText = data.output_text
+        ?? data.text
+        ?? data.response
+        ?? data.output?.flatMap((item) => [
+          item.text,
+          ...(item.content?.map((content) => content.text) ?? []),
+        ]).filter(Boolean).join("\n");
+      return outputText || "done";
     }
 
-    console.warn(`[daemon] OpenClaw HTTP shim returned ${res.status}; falling back to CLI`);
+    console.warn(`[daemon] OpenClaw responses API returned ${res.status}; falling back to CLI`);
   } catch (err) {
-    console.warn("[daemon] OpenClaw HTTP shim unavailable; falling back to CLI:", err instanceof Error ? err.message : err);
+    console.warn("[daemon] OpenClaw responses API unavailable; falling back to CLI:", err instanceof Error ? err.message : err);
   }
 
   const agentId = config.agentId.replace(/[^a-zA-Z0-9_-]/g, "-");

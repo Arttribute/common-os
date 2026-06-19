@@ -82,6 +82,14 @@ Resources:
             ValueFrom: !Sub "${RuntimeSecretArn}:AGENTCOMMONS_API_KEY::"
           - Name: PRIVY_APP_ID
             ValueFrom: !Sub "${RuntimeSecretArn}:PRIVY_APP_ID::"
+          - Name: OPENCLAW_IMAGE_URL
+            ValueFrom: !Sub "${RuntimeSecretArn}:OPENCLAW_IMAGE_URL::"
+          - Name: OPENCLAW_MODEL_PROVIDER
+            ValueFrom: !Sub "${RuntimeSecretArn}:OPENCLAW_MODEL_PROVIDER::"
+          - Name: OPENCLAW_MODEL_ID
+            ValueFrom: !Sub "${RuntimeSecretArn}:OPENCLAW_MODEL_ID::"
+          - Name: OPENCLAW_MODEL_API_KEY
+            ValueFrom: !Sub "${RuntimeSecretArn}:OPENCLAW_MODEL_API_KEY::"
       ScalingTarget:
         MinTaskCount: 1
         MaxTaskCount: 4

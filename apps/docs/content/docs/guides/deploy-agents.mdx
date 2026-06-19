@@ -49,6 +49,12 @@ Optional `openclawConfig` values are stored with the agent and injected into the
 runtime as env vars and gateway config for model provider, plugins, channels,
 and DM policy.
 
+For one-click hosted OpenClaw deploys, production should provide
+`OPENCLAW_IMAGE_URL`, `OPENCLAW_MODEL_PROVIDER`, `OPENCLAW_MODEL_ID`, and
+`OPENCLAW_MODEL_API_KEY`. CommonOS enables OpenClaw's private in-pod
+OpenResponses endpoint and sends tasks through `/v1/responses`; the Gateway is
+not exposed publicly.
+
 The dashboard supports common OpenClaw connector surfaces including Telegram,
 Slack, Discord, WhatsApp, Signal, Matrix, Google Chat, Microsoft Teams, Zalo,
 and Nostr. Some connectors are fully credential-driven, while others still need

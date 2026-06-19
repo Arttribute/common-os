@@ -47,6 +47,9 @@ export interface LaunchedService {
 
 function commonRuntimeEnv(opts: LaunchOptions, imageUrl: string): k8s.V1EnvVar[] {
 	const openclawConfigJson = JSON.stringify(buildOpenClawGatewayConfig(opts));
+	const openclawModel = openClawModelId(opts);
+	const openclawModelApiKey = opts.openclawConfig?.modelApiKey ?? process.env.OPENCLAW_MODEL_API_KEY ?? "";
+	const providerEnvKey = openClawProviderEnvKey(opts.openclawConfig?.modelProvider ?? process.env.OPENCLAW_MODEL_PROVIDER ?? "openai");
 	return [
 		{ name: "AGENT_ID",              value: opts.agentId },
 		{ name: "AGENT_TOKEN",           value: opts.agentToken },
@@ -62,7 +65,9 @@ function commonRuntimeEnv(opts: LaunchOptions, imageUrl: string): k8s.V1EnvVar[]
 		{ name: "AGC_INITIATOR",         value: process.env.AGC_INITIATOR ?? process.env.AGENTCOMMONS_INITIATOR ?? "" },
 		{ name: "OPENCLAW_GATEWAY_URL",  value: opts.openclawGatewayUrl ?? process.env.OPENCLAW_GATEWAY_URL ?? "http://localhost:18789" },
 		{ name: "OPENCLAW_MODEL_PROVIDER", value: opts.openclawConfig?.modelProvider ?? process.env.OPENCLAW_MODEL_PROVIDER ?? "openai" },
-		{ name: "OPENCLAW_MODEL_API_KEY", value: opts.openclawConfig?.modelApiKey ?? process.env.OPENCLAW_MODEL_API_KEY ?? "" },
+		{ name: "OPENCLAW_MODEL_ID", value: openclawModel },
+		{ name: "OPENCLAW_MODEL_API_KEY", value: openclawModelApiKey },
+		{ name: providerEnvKey, value: openclawModelApiKey },
 		{ name: "OPENCLAW_CHANNELS_JSON", value: JSON.stringify(opts.openclawConfig?.channels ?? {}) },
 		{ name: "OPENCLAW_CONFIG_JSON", value: openclawConfigJson },
 		{ name: "OPENCLAW_PLUGINS", value: (opts.openclawConfig?.plugins ?? []).join(",") },
@@ -85,22 +90,28 @@ function buildOpenClawGatewayConfig(opts: LaunchOptions): Record<string, unknown
 	const config = opts.openclawConfig;
 	const provider = config?.modelProvider ?? process.env.OPENCLAW_MODEL_PROVIDER ?? "openai";
 	const apiKey = config?.modelApiKey ?? process.env.OPENCLAW_MODEL_API_KEY ?? "";
-	const envKeyByProvider: Record<string, string> = {
-		openai: "OPENAI_API_KEY",
-		anthropic: "ANTHROPIC_API_KEY",
-		openrouter: "OPENROUTER_API_KEY",
-		google: "GOOGLE_API_KEY",
-		groq: "GROQ_API_KEY",
-	};
-	const providerEnvKey = envKeyByProvider[provider] ?? `${provider.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`;
+	const model = openClawModelId(opts);
+	const providerEnvKey = openClawProviderEnvKey(provider);
 	const agentRuntimeId = opts.agentId.replace(/[^a-zA-Z0-9_-]/g, "-");
 
 	return {
+		gateway: {
+			auth: { mode: "none" },
+			http: {
+				endpoints: {
+					chatCompletions: { enabled: true },
+					responses: { enabled: true },
+				},
+			},
+		},
 		env: {
 			vars: apiKey ? { [providerEnvKey]: apiKey } : {},
 		},
 		channels: config?.channels ?? {},
 		agents: {
+			defaults: {
+				model: { primary: model },
+			},
 			list: [
 				{
 					id: agentRuntimeId,
@@ -115,6 +126,28 @@ function buildOpenClawGatewayConfig(opts: LaunchOptions): Record<string, unknown
 			},
 		},
 	};
+}
+
+function openClawModelId(opts: LaunchOptions): string {
+	const provider = opts.openclawConfig?.modelProvider ?? process.env.OPENCLAW_MODEL_PROVIDER ?? "openai";
+	return process.env.OPENCLAW_MODEL_ID ?? (
+		provider === "anthropic" ? "anthropic/claude-opus-4-6" :
+		provider === "openrouter" ? "openrouter/openai/gpt-5.5" :
+		provider === "google" ? "google/gemini-3.1-pro" :
+		provider === "groq" ? "groq/openai/gpt-oss-120b" :
+		"openai/gpt-5.5"
+	);
+}
+
+function openClawProviderEnvKey(provider: string): string {
+	const envKeyByProvider: Record<string, string> = {
+		openai: "OPENAI_API_KEY",
+		anthropic: "ANTHROPIC_API_KEY",
+		openrouter: "OPENROUTER_API_KEY",
+		google: "GOOGLE_API_KEY",
+		groq: "GROQ_API_KEY",
+	};
+	return envKeyByProvider[provider] ?? `${provider.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`;
 }
 
 function openClawRuntimeContainer(opts: LaunchOptions, envVars: k8s.V1EnvVar[]): k8s.V1Container | null {
