@@ -2,6 +2,7 @@ import { createMiddleware } from 'hono/factory'
 
 const WINDOW_MS = 60_000
 const LIMIT = 200
+const AGENT_LIMIT = 2_000
 
 const counts = new Map<string, { count: number; resetAt: number }>()
 
@@ -21,10 +22,11 @@ export const rateLimitMiddleware = createMiddleware(async (c, next) => {
 
   const now = Date.now()
   const entry = counts.get(key)
+  const limit = c.req.header('Authorization')?.startsWith('Bearer cos_agent_') ? AGENT_LIMIT : LIMIT
 
   if (!entry || entry.resetAt < now) {
     counts.set(key, { count: 1, resetAt: now + WINDOW_MS })
-  } else if (entry.count >= LIMIT) {
+  } else if (entry.count >= limit) {
     return c.json({ error: 'rate limit exceeded' }, 429)
   } else {
     entry.count++

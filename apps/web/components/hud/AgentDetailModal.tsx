@@ -410,7 +410,9 @@ function SessionCard({ entry }: { entry: SessionEntry }) {
       ? 'waiting for OpenClaw CLI…'
       : entry.runtimeStatus?.startsWith('tool:')
         ? entry.runtimeStatus.replace(/^tool:/, '')
-        : 'waiting for agent…'
+        : entry.status === 'pending'
+          ? 'queued for agent…'
+          : 'waiting for agent…'
 
   if (entry.kind === 'message') {
     const isAxl = entry.source === 'axl'
@@ -480,7 +482,7 @@ function SessionCard({ entry }: { entry: SessionEntry }) {
               </div>
             </div>
           </div>
-        ) : entry.status === 'processing' ? (
+        ) : entry.status === 'processing' || entry.status === 'pending' ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingLeft: 28 }}>
             <span style={{ fontSize: 11, color: '#f59e0b', fontFamily: 'monospace' }}>{waitingLabel}</span>
           </div>
@@ -1485,8 +1487,25 @@ export function AgentDetailModal() {
       const update = (entry: SessionEntry): SessionEntry => (
         entry.kind === 'message' && entry.id === msgId ? { ...entry, ...patch } : entry
       )
-      setAllMessages((items) => items.map(update))
-      setSessionMessages((items) => items.map(update))
+      const placeholder: SessionEntry = {
+        kind: 'message',
+        id: msgId,
+        createdAt: typeof patch.updatedAt === 'string' ? patch.updatedAt : new Date().toISOString(),
+        content: '',
+        status: 'processing',
+        response: null,
+        respondedAt: null,
+        source: 'human',
+        axlDirection: null,
+        ...patch,
+      }
+      const apply = (items: SessionEntry[]): SessionEntry[] => (
+        items.some((entry) => entry.kind === 'message' && entry.id === msgId)
+          ? items.map(update)
+          : [...items, placeholder]
+      )
+      setAllMessages(apply)
+      setSessionMessages(apply)
     }
 
     function upsertMessage(entry: SessionEntry, sessionId?: string | null) {
@@ -1535,13 +1554,29 @@ export function AgentDetailModal() {
       } else if (data.type === 'message_status' && typeof data.status === 'string') {
         patchMessage(msgId, { status: 'processing', runtimeStatus: data.status, updatedAt: ts })
       } else if (data.type === 'message_delta' && typeof data.delta === 'string') {
-        const appendDelta = (entry: SessionEntry): SessionEntry => (
-          entry.kind === 'message' && entry.id === msgId
-            ? { ...entry, status: 'processing', response: `${entry.response ?? ''}${data.delta as string}`, updatedAt: ts }
-            : entry
+        const delta = data.delta
+        const applyDelta = (items: SessionEntry[]): SessionEntry[] => (
+          items.some((entry) => entry.kind === 'message' && entry.id === msgId)
+            ? items.map((entry) => (
+                entry.kind === 'message' && entry.id === msgId
+                  ? { ...entry, status: 'processing', response: `${entry.response ?? ''}${delta}`, updatedAt: ts }
+                  : entry
+              ))
+            : [...items, {
+                kind: 'message',
+                id: msgId,
+                createdAt: ts,
+                content: '',
+                status: 'processing',
+                response: delta,
+                respondedAt: null,
+                source: 'human',
+                axlDirection: null,
+                updatedAt: ts,
+              }]
         )
-        setAllMessages((items) => items.map(appendDelta))
-        setSessionMessages((items) => items.map(appendDelta))
+        setAllMessages(applyDelta)
+        setSessionMessages(applyDelta)
       } else if (data.type === 'tool_call') {
         const label = typeof data.label === 'string'
           ? data.label

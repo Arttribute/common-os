@@ -22,7 +22,7 @@ const agent = new CommonOSAgentClient({
 
 const HEARTBEAT_MS   = 30_000;
 const POLL_MS        = 5_000;
-const MSG_POLL_MS    = 3_000;
+const MSG_POLL_MS    = Number(process.env.MSG_POLL_MS ?? 750);
 const HEALTH_MS      = 10_000;
 const AXL_INBOX_MS   = 5_000;
 const WORKSPACE_DIR  = process.env.COMMONOS_WORKSPACE ?? config.workspaceDir;
@@ -1202,7 +1202,7 @@ function createDeltaStream(msgId: string): {
     if (!delta) return;
     pending += delta;
     const now = Date.now();
-    if (now - lastFlush < 80 && pending.length < 120) return;
+    if (now - lastFlush < 250 && pending.length < 240) return;
     await flush();
   }
 
@@ -1212,12 +1212,12 @@ function createDeltaStream(msgId: string): {
 async function streamFinalResponse(msgId: string, response: string): Promise<void> {
   const text = response.trim();
   if (!text) return;
-  const chunks = text.match(/[\s\S]{1,80}/g) ?? [text];
+  const chunks = text.match(/[\s\S]{1,180}/g) ?? [text];
   for (const chunk of chunks) {
     await postMessageEvent(msgId, { type: "message_delta", delta: chunk }).catch((err) => {
       console.warn("[daemon] final response stream failed:", err instanceof Error ? err.message : err);
     });
-    await sleep(18);
+    await sleep(90);
   }
 }
 
@@ -1828,12 +1828,18 @@ async function runViaOpenClaw(description: string, messages?: AgcMessage[], hook
       body: JSON.stringify({
         model: `openclaw/${config.agentId.replace(/[^a-zA-Z0-9_-]/g, "-")}`,
         input: message,
+        stream: true,
         user: `commonos:${config.fleetId}:${config.agentId}`,
       }),
       signal: AbortSignal.timeout(120_000),
     });
 
     if (res.ok) {
+      const contentType = res.headers.get("content-type") ?? "";
+      if (contentType.includes("text/event-stream") || contentType.includes("application/x-ndjson")) {
+        const streamed = await readOpenClawStream(res, hooks);
+        if (streamed.trim()) return streamed;
+      }
       const data = await res.json() as {
         output_text?: string;
         output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }>; text?: string }>;
@@ -1916,6 +1922,64 @@ async function runViaOpenClaw(description: string, messages?: AgcMessage[], hook
   } catch {
     return raw || "done";
   }
+}
+
+async function readOpenClawStream(res: Response, hooks?: MessageRunHooks): Promise<string> {
+  if (!res.body) return "";
+  const decoder = new TextDecoder();
+  const reader = res.body.getReader();
+  let buffer = "";
+  let output = "";
+
+  async function handlePayload(raw: string): Promise<void> {
+    const payload = raw.trim();
+    if (!payload || payload === "[DONE]") return;
+    let event: Record<string, unknown>;
+    try {
+      event = JSON.parse(payload) as Record<string, unknown>;
+    } catch {
+      return;
+    }
+    const delta = openClawDeltaFromEvent(event);
+    if (delta) {
+      output += delta;
+      await hooks?.onDelta?.(delta).catch(() => {});
+    }
+  }
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (value) buffer += decoder.decode(value, { stream: !done });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      await handlePayload(trimmed.startsWith("data:") ? trimmed.slice(5) : trimmed);
+    }
+    if (done) break;
+  }
+  await handlePayload(buffer.startsWith("data:") ? buffer.slice(5) : buffer);
+  return output;
+}
+
+function openClawDeltaFromEvent(event: Record<string, unknown>): string | null {
+  for (const key of ["delta", "text", "output_text", "response"]) {
+    const value = event[key];
+    if (typeof value === "string") return value;
+  }
+  const nestedDelta = event.delta && typeof event.delta === "object"
+    ? (event.delta as Record<string, unknown>).text
+    : null;
+  if (typeof nestedDelta === "string") return nestedDelta;
+  const item = event.item && typeof event.item === "object" ? event.item as Record<string, unknown> : null;
+  if (typeof item?.text === "string") return item.text;
+  const content = Array.isArray(item?.content) ? item.content : [];
+  const text = content
+    .map((part) => part && typeof part === "object" ? (part as Record<string, unknown>).text : null)
+    .filter((part): part is string => typeof part === "string")
+    .join("");
+  return text || null;
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
