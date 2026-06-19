@@ -1489,14 +1489,48 @@ export function AgentDetailModal() {
       setSessionMessages((items) => items.map(update))
     }
 
+    function upsertMessage(entry: SessionEntry, sessionId?: string | null) {
+      const insert = (items: SessionEntry[]): SessionEntry[] => (
+        items.some((item) => item.kind === 'message' && item.id === entry.id)
+          ? items.map((item) => item.kind === 'message' && item.id === entry.id ? { ...item, ...entry } : item)
+          : [...items, entry]
+      )
+      setAllMessages(insert)
+      if (!activeSessionId || sessionId === activeSessionId) setSessionMessages(insert)
+      if (sessionId) {
+        setSessions((items) => items.map((session) => (
+          session._id === sessionId || session.agcSessionId === sessionId
+            ? {
+                ...session,
+                lastMessageAt: entry.createdAt,
+              }
+            : session
+        )))
+      }
+    }
+
     function onFleetEvent(event: Event) {
       const data = (event as CustomEvent<Record<string, unknown>>).detail
       if (!data || data.agentId !== selectedId) return
       const msgId = typeof data.msgId === 'string' ? data.msgId : null
       if (!msgId) return
       const ts = typeof data.ts === 'string' ? data.ts : new Date().toISOString()
+      const sessionId = typeof data.sessionId === 'string' ? data.sessionId : null
 
-      if (data.type === 'message_status' && data.status === 'processing') {
+      if (data.type === 'human_message') {
+        upsertMessage({
+          kind: 'message',
+          id: msgId,
+          createdAt: ts,
+          content: typeof data.content === 'string' ? data.content : '',
+          status: 'pending',
+          response: null,
+          respondedAt: null,
+          source: data.source === 'axl' ? 'axl' : 'human',
+          axlDirection: null,
+          runtimeStatus: null,
+        }, sessionId)
+      } else if (data.type === 'message_status' && data.status === 'processing') {
         patchMessage(msgId, { status: 'processing', runtimeStatus: 'processing', updatedAt: ts })
       } else if (data.type === 'message_status' && typeof data.status === 'string') {
         patchMessage(msgId, { status: 'processing', runtimeStatus: data.status, updatedAt: ts })
@@ -1536,7 +1570,7 @@ export function AgentDetailModal() {
 
     window.addEventListener('commonos:fleet-event', onFleetEvent)
     return () => window.removeEventListener('commonos:fleet-event', onFleetEvent)
-  }, [isOpen, selectedId])
+  }, [activeSessionId, isOpen, selectedId])
 
   // Close on Escape
   useEffect(() => {

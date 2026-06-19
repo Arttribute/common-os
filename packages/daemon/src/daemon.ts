@@ -1070,6 +1070,7 @@ async function handleMessage(msg: {
   await agent.emit({ type: "state_change", payload: { status: "working" } });
 
   try {
+    const deltaStream = createDeltaStream(msg.id);
     await postMessageEvent(msg.id, { type: "message_status", status: "waiting_for_runtime" }).catch(() => {});
     const runResult = await executeTask(
       msg.content,
@@ -1081,11 +1082,16 @@ async function handleMessage(msg: {
       },
       {
         onStatus: (status) => postMessageEvent(msg.id, { type: "message_status", status }),
-        onDelta: createDeltaEmitter(msg.id),
+        onDelta: deltaStream.emit,
         onToolCall: (tool) => postMessageEvent(msg.id, { type: "tool_call", tool, label: `waiting on ${toolName(tool)}` }),
       },
     );
     const response = typeof runResult === "string" ? runResult : runResult.response;
+    if (deltaStream.emittedLength() > 0) {
+      await deltaStream.flush();
+    } else {
+      await streamFinalResponse(msg.id, response);
+    }
 
     await fetch(
       `${config.apiUrl}/agents/${config.agentId}/messages/${msg.id}/respond`,
@@ -1170,24 +1176,49 @@ async function postMessageEvent(msgId: string, payload: MessageEventPayload): Pr
   if (!res.ok) throw new Error(`message event failed: ${res.status}`);
 }
 
-function createDeltaEmitter(msgId: string): (delta: string) => Promise<void> {
+function createDeltaStream(msgId: string): {
+  emit: (delta: string) => Promise<void>;
+  flush: () => Promise<void>;
+  emittedLength: () => number;
+} {
   let pending = "";
   let lastFlush = 0;
   let chain = Promise.resolve();
+  let emitted = 0;
 
-  return async (delta: string) => {
-    if (!delta) return;
-    pending += delta;
-    const now = Date.now();
-    if (now - lastFlush < 80 && pending.length < 120) return;
+  async function flush(): Promise<void> {
+    if (!pending) return;
     const chunk = pending;
     pending = "";
-    lastFlush = now;
+    lastFlush = Date.now();
+    emitted += chunk.length;
     chain = chain
       .then(() => postMessageEvent(msgId, { type: "message_delta", delta: chunk }))
       .catch((err) => console.warn("[daemon] message delta event failed:", err instanceof Error ? err.message : err));
     await chain;
-  };
+  }
+
+  async function emit(delta: string): Promise<void> {
+    if (!delta) return;
+    pending += delta;
+    const now = Date.now();
+    if (now - lastFlush < 80 && pending.length < 120) return;
+    await flush();
+  }
+
+  return { emit, flush, emittedLength: () => emitted + pending.length };
+}
+
+async function streamFinalResponse(msgId: string, response: string): Promise<void> {
+  const text = response.trim();
+  if (!text) return;
+  const chunks = text.match(/[\s\S]{1,80}/g) ?? [text];
+  for (const chunk of chunks) {
+    await postMessageEvent(msgId, { type: "message_delta", delta: chunk }).catch((err) => {
+      console.warn("[daemon] final response stream failed:", err instanceof Error ? err.message : err);
+    });
+    await sleep(18);
+  }
 }
 
 // ─── Task polling loop ─────────────────────────────────────────────────────
