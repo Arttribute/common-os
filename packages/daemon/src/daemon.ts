@@ -23,6 +23,9 @@ const agent = new CommonOSAgentClient({
 const HEARTBEAT_MS   = 30_000;
 const POLL_MS        = 5_000;
 const MSG_POLL_MS    = Number(process.env.MSG_POLL_MS ?? 750);
+const MESSAGE_RUN_TIMEOUT_MS = Number(process.env.MESSAGE_RUN_TIMEOUT_MS ?? 180_000);
+const OPENCLAW_RESPONSE_TIMEOUT_MS = Number(process.env.OPENCLAW_RESPONSE_TIMEOUT_MS ?? 90_000);
+const OPENCLAW_CLI_TIMEOUT_MS = Number(process.env.OPENCLAW_CLI_TIMEOUT_MS ?? 30_000);
 const HEALTH_MS      = 10_000;
 const AXL_INBOX_MS   = 5_000;
 const WORKSPACE_DIR  = process.env.COMMONOS_WORKSPACE ?? config.workspaceDir;
@@ -1072,19 +1075,23 @@ async function handleMessage(msg: {
   try {
     const deltaStream = createDeltaStream(msg.id);
     await postMessageEvent(msg.id, { type: "message_status", status: "waiting_for_runtime" }).catch(() => {});
-    const runResult = await executeTask(
-      msg.content,
-      msg.agcSessionId ?? undefined,
-      msg.messages,
-      {
-        axlTargetAgentId: msg.axlTargetAgentId,
-        axlTargetPeerId: msg.axlTargetPeerId,
-      },
-      {
-        onStatus: (status) => postMessageEvent(msg.id, { type: "message_status", status }),
-        onDelta: deltaStream.emit,
-        onToolCall: (tool) => postMessageEvent(msg.id, { type: "tool_call", tool, label: `waiting on ${toolName(tool)}` }),
-      },
+    const runResult = await withTimeout(
+      executeTask(
+        msg.content,
+        msg.agcSessionId ?? undefined,
+        msg.messages,
+        {
+          axlTargetAgentId: msg.axlTargetAgentId,
+          axlTargetPeerId: msg.axlTargetPeerId,
+        },
+        {
+          onStatus: (status) => postMessageEvent(msg.id, { type: "message_status", status }),
+          onDelta: deltaStream.emit,
+          onToolCall: (tool) => postMessageEvent(msg.id, { type: "tool_call", tool, label: `waiting on ${toolName(tool)}` }),
+        },
+      ),
+      MESSAGE_RUN_TIMEOUT_MS,
+      "agent runtime",
     );
     const response = typeof runResult === "string" ? runResult : runResult.response;
     if (deltaStream.emittedLength() > 0) {
@@ -1831,7 +1838,7 @@ async function runViaOpenClaw(description: string, messages?: AgcMessage[], hook
         stream: true,
         user: `commonos:${config.fleetId}:${config.agentId}`,
       }),
-      signal: AbortSignal.timeout(120_000),
+      signal: AbortSignal.timeout(OPENCLAW_RESPONSE_TIMEOUT_MS),
     });
 
     if (res.ok) {
@@ -1890,7 +1897,7 @@ async function runViaOpenClaw(description: string, messages?: AgcMessage[], hook
     const timeout = setTimeout(() => {
       child.kill("SIGTERM");
       resolve(124);
-    }, 600_000);
+    }, OPENCLAW_CLI_TIMEOUT_MS);
     child.on("close", (exitCode) => {
       clearTimeout(timeout);
       resolve(exitCode);
@@ -1990,6 +1997,24 @@ function truncate(s: string, max: number): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)}s`));
+    }, timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timeout);
+        reject(err);
+      },
+    );
+  });
 }
 
 // ─── Boot ──────────────────────────────────────────────────────────────────
