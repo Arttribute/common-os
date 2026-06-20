@@ -1771,7 +1771,7 @@ const TOOL_CATALOG: ToolCatalogEntry[] = [
   { name: "read_file", description: "Read the full contents of a file in this pod's workspace.", parameters: { type: "object", properties: { path: { type: "string", description: "File path relative to session root" } }, required: ["path"] } },
   { name: "write_file", description: "Write or overwrite a file in this pod's workspace. Creates parent directories if needed.", parameters: { type: "object", properties: { path: { type: "string", description: "File path relative to session root" }, content: { type: "string", description: "Content to write" } }, required: ["path", "content"] } },
   { name: "search_files", description: "Find files matching a glob-style pattern in this pod's workspace. Returns up to 50 matches.", parameters: { type: "object", properties: { pattern: { type: "string", description: "Glob-style filename pattern (e.g. \"*.ts\")" }, directory: { type: "string", description: "Directory to search (default: session root)" } }, required: ["pattern"] } },
-  { name: "run_command", description: "Run a short command (up to 5 minutes) in this pod's workspace and return its output.", parameters: { type: "object", properties: { command: { type: "string", description: "Command to run" }, args: { type: "array", items: { type: "string" }, description: "Arguments array" }, cwd: { type: "string", description: "Working directory (default: session root)" }, timeout_seconds: { type: "number", description: "Max seconds to wait (default 120, max 300)" } }, required: ["command"] } },
+  { name: "run_command", description: "Run a short shell command (up to 5 minutes) in this pod's workspace and return its output. Use this for node, npm, npx, pnpm, git, tests, build scripts, and dev servers.", parameters: { type: "object", properties: { command: { type: "string", description: "Command to run, e.g. node, npm, npx, sh, git" }, args: { type: "array", items: { type: "string" }, description: "Arguments array, e.g. [\"--version\"] or [\"create\", \"vite@latest\", \"site\", \"--\", \"--template\", \"react-ts\"]" }, cwd: { type: "string", description: "Working directory (default: session root)" }, timeout_seconds: { type: "number", description: "Max seconds to wait (default 120, max 300)" } }, required: ["command"] } },
   { name: "browser_open", description: "Launch this pod's shared Chromium browser and navigate to a URL.", parameters: { type: "object", properties: { url: { type: "string", description: "URL to open" } }, required: ["url"] } },
   { name: "browser_status", description: "Return the shared browser's on/off state, current URL, page title, and latest screenshot.", parameters: { type: "object", properties: {}, required: [] } },
   { name: "browser_screenshot", description: "Refresh and return the latest screenshot of the shared browser.", parameters: { type: "object", properties: {}, required: [] } },
@@ -1817,12 +1817,24 @@ ${buildWorkspaceSnapshot(WORKSPACE_DIR)}
 2. **Use AXL only when explicitly requested.** OpenClaw and channel connectors are normal messaging surfaces; do not route those conversations through AXL unless the user specifically asks for CommonOS P2P/AXL.
 3. File operations are sandboxed to the session root. Return the actual path or command output after using a tool.
 4. For markdown file requests, write the .md file with \`cli_write_file\` and return its path.
+5. For website, app, package, build, install, test, or localhost/dev-server requests, use \`cli_run_command\`. Standard agent pods include Node.js, npm, npx, and git unless a command check proves otherwise.
+6. Never say npm, node, npx, git, package managers, files, terminal commands, or localhost are unavailable until you have called \`cli_run_command\` to verify, such as \`node --version\`, \`npm --version\`, \`which npm\`, or the requested command itself.
+7. If the user asks you to create and run an app/site, create the files, install dependencies as needed, run the dev server with \`cli_run_command\`, and report the localhost URL plus any command output or errors.
 
 ### Available CLI tools
 
 | Tool | What it does |
 |------|-------------|
 ${toolTable}
+
+### cli_run_command examples
+
+\`\`\`json
+{"command":"node","args":["--version"]}
+{"command":"npm","args":["--version"]}
+{"command":"npm","args":["create","vite@latest","site","--","--template","react-ts"]}
+{"command":"npm","args":["run","dev","--","--host","0.0.0.0"],"cwd":"site","timeout_seconds":5}
+\`\`\`
 
 ### Cached AXL peers in this fleet
 
