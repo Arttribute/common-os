@@ -268,10 +268,6 @@ function ExpensesView({
 }
 
 function ExpensesPanel({ report }: { report: FleetCostReport }) {
-  const actualTotal = report.usageComparison.actual.totalTokens
-  const estimatedTotal = report.usageComparison.estimated.totalTokens
-  const actualPercent = estimatedTotal > 0 ? Math.min(100, (actualTotal / estimatedTotal) * 100) : 0
-  const overage = estimatedTotal > 0 && actualTotal > estimatedTotal
   const costBreakdown = [
     { label: 'Model', value: report.totals.tokens, icon: Gauge },
     { label: 'Compute', value: report.totals.compute, icon: Cpu },
@@ -282,40 +278,15 @@ function ExpensesPanel({ report }: { report: FleetCostReport }) {
   return (
     <div className="space-y-4">
       <div className="rounded-md border border-white/10 bg-background/90">
-        <div className="grid gap-5 border-b border-white/10 p-5 lg:grid-cols-[1fr_auto] lg:items-center">
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-base font-semibold">Usage against estimate</h2>
-              <Badge variant={report.confidence === 'estimated' ? 'warning' : 'success'}>{report.confidence}</Badge>
-              <Badge variant="outline">Month to date</Badge>
-            </div>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {formatCompact(actualTotal)} actual tokens this month of {formatCompact(estimatedTotal)} expected for the month.
-            </p>
+        <div className="grid gap-5 p-5 lg:grid-cols-[1fr_auto] lg:items-center">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-base font-semibold">This month</h2>
+            <Badge variant={report.confidence === 'estimated' ? 'warning' : 'success'}>{report.confidence}</Badge>
+            <Badge variant="outline">Month to date</Badge>
           </div>
           <div className="min-w-44 rounded-md border border-white/10 bg-muted/20 px-4 py-3">
             <div className="text-xs text-muted-foreground">Customer price</div>
             <div className="mt-1 text-2xl font-semibold">{formatCurrency(report.totals.billed)}</div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              Raw {formatCurrency(report.totals.raw)} + {Math.round(report.markupRate * 100)}%
-            </div>
-          </div>
-        </div>
-
-        <div className="p-5">
-          <div className="mb-2 flex items-center justify-between text-sm">
-            <span>Actual usage</span>
-            <span className={overage ? 'font-medium text-amber-300' : 'text-muted-foreground'}>
-              {estimatedTotal > 0 ? `${Math.round((actualTotal / estimatedTotal) * 100)}% of estimate` : 'No estimate baseline'}
-            </span>
-          </div>
-          <div className="relative h-5 overflow-hidden rounded-full bg-muted">
-            <div className="h-full rounded-full bg-emerald-500" style={{ width: `${actualPercent}%` }} />
-            {overage && <div className="absolute inset-y-0 right-0 w-1 bg-amber-300" />}
-          </div>
-          <div className="mt-2 flex justify-between text-xs text-muted-foreground">
-            <span>0</span>
-            <span>Monthly estimate: {formatCompact(estimatedTotal)}</span>
           </div>
         </div>
       </div>
@@ -337,11 +308,10 @@ function ExpensesPanel({ report }: { report: FleetCostReport }) {
 
       <div className="overflow-x-auto rounded-md border border-white/10 bg-background/90">
         <div className="min-w-[860px]">
-          <div className="grid grid-cols-[1.1fr_0.9fr_1fr_1fr_0.8fr_0.8fr] gap-3 border-b border-white/10 bg-muted/30 px-4 py-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          <div className="grid grid-cols-[1.1fr_0.9fr_1fr_0.8fr_0.8fr] gap-3 border-b border-white/10 bg-muted/30 px-4 py-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
             <span>Agent</span>
             <span>Model</span>
             <span>Usage</span>
-            <span>Actual vs estimate</span>
             <span>Infra</span>
             <span className="text-right">Price</span>
           </div>
@@ -355,11 +325,8 @@ function ExpensesPanel({ report }: { report: FleetCostReport }) {
 }
 
 function AgentExpenseRow({ agent }: { agent: AgentCost }) {
-  const actual = agent.usageComparison.actualTokens
-  const estimated = agent.usageComparison.estimatedTokens
-  const percent = estimated > 0 ? Math.min(100, (actual / estimated) * 100) : 0
   return (
-    <div className="grid grid-cols-[1.1fr_0.9fr_1fr_1fr_0.8fr_0.8fr] items-center gap-3 border-b border-white/10 px-4 py-3 text-sm last:border-b-0">
+    <div className="grid grid-cols-[1.1fr_0.9fr_1fr_0.8fr_0.8fr] items-center gap-3 border-b border-white/10 px-4 py-3 text-sm last:border-b-0">
       <div className="min-w-0">
         <div className="truncate font-medium capitalize">{agent.role}</div>
         <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
@@ -376,12 +343,6 @@ function AgentExpenseRow({ agent }: { agent: AgentCost }) {
       <div className="text-xs">
         <div>{formatCompact(agent.tokens.inputTokens)} in / {formatCompact(agent.tokens.outputTokens)} out</div>
         <div className="mt-1 text-muted-foreground">{formatCompact(agent.tokens.requestCount)} requests</div>
-      </div>
-      <div>
-        <div className="h-2 overflow-hidden rounded-full bg-muted">
-          <div className="h-full rounded-full bg-emerald-500" style={{ width: `${percent}%` }} />
-        </div>
-        <div className="mt-1 text-xs text-muted-foreground">{formatCompact(actual)} / {formatCompact(estimated)}</div>
       </div>
       <div className="text-xs">
         <div>{agent.resources.cpuRequestCores} CPU</div>
