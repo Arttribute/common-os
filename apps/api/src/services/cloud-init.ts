@@ -25,6 +25,7 @@ export interface LaunchOptions {
 	walletAddress?: string;
 	openclawConfig?: {
 		modelProvider: string | null;
+		modelId: string | null;
 		modelApiKey: string | null;
 		channels: Record<string, Record<string, unknown>> | null;
 		plugins: string[] | null;
@@ -191,7 +192,7 @@ function buildOpenClawGatewayConfig(opts: LaunchOptions): Record<string, unknown
 
 function openClawModelId(opts: LaunchOptions): string {
 	const provider = opts.openclawConfig?.modelProvider ?? process.env.OPENCLAW_MODEL_PROVIDER ?? "openai";
-	return process.env.OPENCLAW_MODEL_ID ?? (
+	return opts.openclawConfig?.modelId ?? process.env.OPENCLAW_MODEL_ID ?? (
 		provider === "anthropic" ? "anthropic/claude-opus-4-6" :
 		provider === "openrouter" ? "openrouter/openai/gpt-5.4-mini" :
 		provider === "google" ? "google/gemini-3.1-pro" :

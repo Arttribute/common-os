@@ -25,6 +25,7 @@ router.post("/:id/agents", async (c) => {
 		dockerImage?: string;
 		openclawConfig?: {
 			modelProvider?: string;
+			modelId?: string;
 			modelApiKey?: string;
 			channels?: Record<string, Record<string, unknown>>;
 			plugins?: string[];
@@ -59,6 +60,7 @@ router.post("/:id/agents", async (c) => {
 			openclawConfig: body.openclawConfig
 				? {
 						modelProvider: body.openclawConfig.modelProvider ?? null,
+						modelId: body.openclawConfig.modelId ?? null,
 						modelApiKey: body.openclawConfig.modelApiKey ?? null,
 						channels: body.openclawConfig.channels ?? null,
 						plugins: body.openclawConfig.plugins ?? null,

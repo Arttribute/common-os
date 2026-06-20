@@ -73,6 +73,7 @@ function normalizeProvider(value: string | null | undefined, integrationPath?: s
 
 function defaultModel(provider: ProviderId, integrationPath: AgentDoc["config"]["integrationPath"]): string {
 	if (integrationPath === "native") return "gpt-4o";
+	if (integrationPath === "openclaw") return (process.env.OPENCLAW_MODEL_ID ?? "openai/gpt-5.4-mini").replace(/^openai\//, "").replace(/^anthropic\//, "").replace(/^google\//, "");
 	if (provider === "anthropic") return "claude-sonnet-4-6";
 	if (provider === "google") return "gemini-2.5-flash-lite";
 	if (provider === "openai") return "gpt-4o";
@@ -206,7 +207,14 @@ export async function fleetCostReport(opts: { fleetId: string; tenantId: string;
 			usageByAgent.get(agent._id)?.provider ?? agent.config.hermesConfig?.modelProvider ?? agent.config.openclawConfig?.modelProvider,
 			agent.config.integrationPath,
 		);
-		const model = normalizeModel(usageByAgent.get(agent._id)?.model ?? agent.config.hermesConfig?.modelId, provider, agent.config.integrationPath);
+		const model = normalizeModel(
+			usageByAgent.get(agent._id)?.model
+				?? agent.config.hermesConfig?.modelId
+				?? agent.config.openclawConfig?.modelId
+				?? (agent.config.integrationPath === "openclaw" ? process.env.OPENCLAW_MODEL_ID : undefined),
+			provider,
+			agent.config.integrationPath,
+		);
 		const rate = rateFor(provider, model);
 		const usage = usageByAgent.get(agent._id);
 		const estimatedTokens = estimateTokens(agent, hours);

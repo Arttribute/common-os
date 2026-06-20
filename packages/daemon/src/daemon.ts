@@ -2267,7 +2267,7 @@ async function runViaOpenClaw(description: string, messages?: AgcMessage[], hook
     hooks,
     usageDefaults: {
       provider: process.env.OPENCLAW_MODEL_PROVIDER ?? "openclaw",
-      model: undefined,
+      model: process.env.OPENCLAW_MODEL_ID,
       source: "openclaw-stream",
     },
     timeoutMs: OPENCLAW_RESPONSE_TIMEOUT_MS,

@@ -121,6 +121,7 @@ export interface AgentDoc {
     dockerImage: string | null
     openclawConfig: {
       modelProvider: string | null        // 'anthropic' | 'openai' | 'google' | 'openrouter' | etc.
+      modelId: string | null
       modelApiKey: string | null
       channels: Record<string, Record<string, unknown>> | null  // channel id → channel config tokens/settings
       plugins: string[] | null            // e.g. ['@openclaw/browser', '@openclaw/voice-call']

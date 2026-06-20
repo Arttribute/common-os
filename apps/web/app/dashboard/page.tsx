@@ -481,6 +481,7 @@ export default function DashboardPage() {
   const [agentTier, setAgentTier] = useState<'manager' | 'worker'>('worker')
   const [agentPath, setAgentPath] = useState<AgentPath>('native')
   const [openclawModelProvider, setOpenclawModelProvider] = useState('openai')
+  const [openclawModelId, setOpenclawModelId] = useState('')
   const [openclawModelApiKey, setOpenclawModelApiKey] = useState('')
   const [openclawPlugins, setOpenclawPlugins] = useState('')
   const [openclawDmPolicy, setOpenclawDmPolicy] = useState<OpenClawDmPolicy>('pairing')
@@ -574,6 +575,7 @@ export default function DashboardPage() {
     setAgentTier('worker')
     setAgentPath('native')
     setOpenclawModelProvider('openai')
+    setOpenclawModelId('')
     setOpenclawModelApiKey('')
     setOpenclawPlugins('')
     setOpenclawDmPolicy('pairing')
@@ -648,6 +650,7 @@ export default function DashboardPage() {
             ? {
                 openclawConfig: {
                   modelProvider: openclawModelProvider,
+                  modelId: openclawModelId.trim() || undefined,
                   modelApiKey: openclawModelApiKey.trim() || undefined,
                   channels: buildOpenClawChannels(openclawConnectors, openclawDmPolicy),
                   plugins: openclawPlugins
@@ -972,6 +975,15 @@ export default function DashboardPage() {
                         <option value="google">Google</option>
                         <option value="groq">Groq</option>
                       </select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="openclaw-model-id">Model ID</Label>
+                      <Input
+                        id="openclaw-model-id"
+                        placeholder="openai/gpt-5.4-mini"
+                        value={openclawModelId}
+                        onChange={(e) => setOpenclawModelId(e.target.value)}
+                      />
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="openclaw-model-api-key">Model API key</Label>

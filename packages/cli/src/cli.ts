@@ -163,7 +163,7 @@ agentCmd.addCommand(
     .option("--image <image>",    "Docker image URI (enables guest path)")
     .option("--runtime <runtime>", "Runtime: native, openclaw, hermes, or guest")
     .option("--model-provider <provider>", "Model provider for OpenClaw/Hermes", "openai")
-    .option("--model <model>", "Model ID for Hermes")
+    .option("--model <model>", "Model ID for OpenClaw/Hermes")
     .option("--model-api-key <key>", "Model provider API key for OpenClaw/Hermes")
     .option("--gateway-api-key <key>", "Gateway API key for Hermes")
     .option("--plugins <plugins>", "Comma-separated OpenClaw plugins")
@@ -194,6 +194,7 @@ agentCmd.addCommand(
             ? {
                 openclawConfig: {
                   modelProvider: opts.modelProvider,
+                  modelId: opts.model,
                   modelApiKey: opts.modelApiKey,
                   plugins: opts.plugins?.split(",").map((plugin) => plugin.trim()).filter(Boolean) ?? [],
                 },
