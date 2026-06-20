@@ -15,9 +15,10 @@ interface ProvisionAgentOptions {
 	systemPrompt: string;
 	permissionTier: "manager" | "worker";
 	room: string;
-	integrationPath: "native" | "openclaw" | "guest";
+	integrationPath: "native" | "openclaw" | "hermes" | "guest";
 	dockerImage: string | null;
 	openclawConfig: AgentDoc["config"]["openclawConfig"];
+	hermesConfig: AgentDoc["config"]["hermesConfig"];
 }
 
 export async function provisionAgent(
@@ -30,6 +31,14 @@ export async function provisionAgent(
 		!process.env.OPENCLAW_GATEWAY_URL
 	) {
 		throw new Error("OpenClaw deploys require OPENCLAW_IMAGE_URL, OPENCLAW_GATEWAY_URL, or a dockerImage override");
+	}
+	if (
+		opts.integrationPath === "hermes" &&
+		!opts.dockerImage &&
+		!process.env.HERMES_IMAGE_URL &&
+		!process.env.HERMES_GATEWAY_URL
+	) {
+		throw new Error("Hermes deploys require HERMES_IMAGE_URL, HERMES_GATEWAY_URL, or a dockerImage override");
 	}
 
 	const agentId = `agt_${Date.now().toString(36)}${randomBytes(4).toString("hex")}`;
@@ -47,7 +56,7 @@ export async function provisionAgent(
 		: process.env.GCP_REGION ?? process.env.CLOUD_REGION ?? "europe-west1";
 
 	const commons =
-		opts.integrationPath === "openclaw"
+		opts.integrationPath === "openclaw" || opts.integrationPath === "hermes"
 			? { agentId: null, apiKey: null, walletAddress: null, registryAgentId: null }
 			: await registerWithAgentCommons(agentId, opts.role, opts.systemPrompt);
 
@@ -74,6 +83,7 @@ export async function provisionAgent(
 			integrationPath: opts.integrationPath,
 			dockerImage: opts.dockerImage,
 			openclawConfig: opts.openclawConfig ?? null,
+			hermesConfig: opts.hermesConfig ?? null,
 			tools: [],
 		},
 			world: { room: opts.room, x: startX, y: startY, facing: "south" },
@@ -213,6 +223,8 @@ async function launchCloudInstance(
 		walletAddress: agentDoc.wallet?.address ?? agentDoc.commons.walletAddress ?? "",
 		openclawConfig: opts.openclawConfig,
 		openclawGatewayUrl: process.env.OPENCLAW_GATEWAY_URL,
+		hermesConfig: opts.hermesConfig,
+		hermesGatewayUrl: process.env.HERMES_GATEWAY_URL,
 		runnerUrl: process.env.RUNNER_URL,
 		axlPeers,
 		worldRoom: agentDoc.world.room,

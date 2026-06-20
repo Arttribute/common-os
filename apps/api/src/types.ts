@@ -117,7 +117,7 @@ export interface AgentDoc {
   config: {
     role: string
     systemPrompt: string
-    integrationPath: 'native' | 'openclaw' | 'guest'
+    integrationPath: 'native' | 'openclaw' | 'hermes' | 'guest'
     dockerImage: string | null
     openclawConfig: {
       modelProvider: string | null        // 'anthropic' | 'openai' | 'google' | 'openrouter' | etc.
@@ -125,6 +125,12 @@ export interface AgentDoc {
       channels: Record<string, Record<string, unknown>> | null  // channel id → channel config tokens/settings
       plugins: string[] | null            // e.g. ['@openclaw/browser', '@openclaw/voice-call']
       dmPolicy: 'pairing' | 'allowlist' | 'open' | 'disabled' | null
+    } | null
+    hermesConfig: {
+      modelProvider: string | null
+      modelId: string | null
+      modelApiKey: string | null
+      gatewayApiKey: string | null
     } | null
     tools: string[]
   }

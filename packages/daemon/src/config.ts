@@ -13,11 +13,12 @@ export interface DaemonConfig {
   walletChainId: number;
   // native path — runner service
   runnerUrl: string;           // URL of the shared runner Cloud Run service
-  // openclaw path
+  // gateway-backed paths
   openclawGatewayUrl: string;  // defaults to http://localhost:18789
+  hermesGatewayUrl: string;    // defaults to http://localhost:17890
   // guest path
   dockerImage: string | null;
-  integrationPath: "native" | "openclaw" | "guest";
+  integrationPath: "native" | "openclaw" | "hermes" | "guest";
   workspaceDir: string;        // where this runtime writes files — watched by file watcher
   role: string;
   worldRoom: string;
@@ -42,6 +43,7 @@ export function loadConfig(path = "/etc/common-os/config.json"): DaemonConfig {
     throw new Error(`daemon: config file at ${path} contains invalid JSON: ${err instanceof Error ? err.message : String(err)}`);
   }
   cfg.openclawGatewayUrl ??= "http://localhost:18789";
+  cfg.hermesGatewayUrl ??= "http://localhost:17890";
   cfg.workspaceDir ??= "/mnt/shared";
   cfg.walletAddress ??= "";
   cfg.walletChainId ??= 84532;

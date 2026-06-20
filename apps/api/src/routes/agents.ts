@@ -21,7 +21,7 @@ router.post("/:id/agents", async (c) => {
 		systemPrompt?: string;
 		permissionTier?: "manager" | "worker";
 		room?: string;
-		integrationPath?: "native" | "openclaw" | "guest";
+		integrationPath?: "native" | "openclaw" | "hermes" | "guest";
 		dockerImage?: string;
 		openclawConfig?: {
 			modelProvider?: string;
@@ -29,6 +29,12 @@ router.post("/:id/agents", async (c) => {
 			channels?: Record<string, Record<string, unknown>>;
 			plugins?: string[];
 			dmPolicy?: "pairing" | "allowlist" | "open" | "disabled";
+		};
+		hermesConfig?: {
+			modelProvider?: string;
+			modelId?: string;
+			modelApiKey?: string;
+			gatewayApiKey?: string;
 		};
 	}>();
 	if (!body.role) return c.json({ error: "role is required" }, 400);
@@ -57,6 +63,14 @@ router.post("/:id/agents", async (c) => {
 						channels: body.openclawConfig.channels ?? null,
 						plugins: body.openclawConfig.plugins ?? null,
 						dmPolicy: body.openclawConfig.dmPolicy ?? "pairing",
+					}
+				: null,
+			hermesConfig: body.hermesConfig
+				? {
+						modelProvider: body.hermesConfig.modelProvider ?? null,
+						modelId: body.hermesConfig.modelId ?? null,
+						modelApiKey: body.hermesConfig.modelApiKey ?? null,
+						gatewayApiKey: body.hermesConfig.gatewayApiKey ?? null,
 					}
 				: null,
 		});

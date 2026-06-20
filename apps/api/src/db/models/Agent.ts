@@ -40,6 +40,7 @@ const AgentSchema = new Schema<AgentDoc>(
       integrationPath: String,
       dockerImage: String,
       openclawConfig: { type: Schema.Types.Mixed, default: null },
+      hermesConfig: { type: Schema.Types.Mixed, default: null },
       tools: [String],
     },
     world: { room: String, x: Number, y: Number, facing: String },

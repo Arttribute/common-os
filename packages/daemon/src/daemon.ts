@@ -26,6 +26,8 @@ const MSG_POLL_MS    = Number(process.env.MSG_POLL_MS ?? 750);
 const MESSAGE_RUN_TIMEOUT_MS = Number(process.env.MESSAGE_RUN_TIMEOUT_MS ?? 180_000);
 const OPENCLAW_RESPONSE_TIMEOUT_MS = Number(process.env.OPENCLAW_RESPONSE_TIMEOUT_MS ?? 90_000);
 const OPENCLAW_READY_TIMEOUT_MS = Number(process.env.OPENCLAW_READY_TIMEOUT_MS ?? 30_000);
+const HERMES_RESPONSE_TIMEOUT_MS = Number(process.env.HERMES_RESPONSE_TIMEOUT_MS ?? 90_000);
+const HERMES_READY_TIMEOUT_MS = Number(process.env.HERMES_READY_TIMEOUT_MS ?? 30_000);
 const HEALTH_MS      = 10_000;
 const AXL_INBOX_MS   = 5_000;
 const WORKSPACE_DIR  = process.env.COMMONOS_WORKSPACE ?? config.workspaceDir;
@@ -497,11 +499,13 @@ function emitFileChange(path: string, op: "create" | "modify" | "delete") {
 let runtimeHealthy = true;
 
 function startHealthMonitor() {
-  if (config.integrationPath !== "openclaw") {
+  if (config.integrationPath !== "openclaw" && config.integrationPath !== "hermes") {
     return;
   }
 
-  const probeUrl = `${config.openclawGatewayUrl}/health`;
+  const probeUrl = config.integrationPath === "hermes"
+    ? `${config.hermesGatewayUrl}/health`
+    : `${config.openclawGatewayUrl}/health`;
 
   setInterval(async () => {
     try {
@@ -1321,6 +1325,7 @@ async function executeTask(
   hooks?: MessageRunHooks,
 ): Promise<string | { response: string; agcSessionId?: string }> {
   if (config.integrationPath === "openclaw") return await runViaOpenClaw(description, messages, hooks);
+  if (config.integrationPath === "hermes") return await runViaHermes(description, messages, hooks);
   if (config.integrationPath === "native") {
     const result = await runViaNative(description, agcSessionId, messages, routing, hooks);
 
@@ -1953,6 +1958,57 @@ async function runViaOpenClaw(description: string, messages?: AgcMessage[], hook
   throw new Error(`OpenClaw gateway failed (${res.status}): ${truncate(detail || res.statusText, 500)}`);
 }
 
+async function runViaHermes(description: string, messages?: AgcMessage[], hooks?: MessageRunHooks): Promise<string> {
+  const message = buildRunPrompt(description, messages);
+  await hooks?.onStatus?.("waiting_for_hermes").catch(() => {});
+  await waitForHermesGateway();
+
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const gatewayKey = process.env.HERMES_GATEWAY_API_KEY;
+  if (gatewayKey) headers.Authorization = `Bearer ${gatewayKey}`;
+
+  const res = await fetch(`${config.hermesGatewayUrl}/v1/responses`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      model: process.env.HERMES_MODEL_ID ?? `hermes/${config.agentId.replace(/[^a-zA-Z0-9_-]/g, "-")}`,
+      input: message,
+      stream: true,
+      user: `commonos:${config.fleetId}:${config.agentId}`,
+    }),
+    signal: AbortSignal.timeout(HERMES_RESPONSE_TIMEOUT_MS),
+  });
+
+  if (res.ok) {
+    const contentType = res.headers.get("content-type") ?? "";
+    if (contentType.includes("text/event-stream") || contentType.includes("application/x-ndjson")) {
+      const streamed = await readGatewayStream(res, hooks, {
+        provider: process.env.HERMES_MODEL_PROVIDER ?? "hermes",
+        model: process.env.HERMES_MODEL_ID,
+        source: "hermes-stream",
+      });
+      if (streamed.trim()) return streamed;
+    }
+    const data = await res.json() as {
+      output_text?: string;
+      output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }>; text?: string }>;
+      response?: string;
+      text?: string;
+    };
+    const outputText = data.output_text
+      ?? data.text
+      ?? data.response
+      ?? data.output?.flatMap((item) => [
+        item.text,
+        ...(item.content?.map((content) => content.text) ?? []),
+      ]).filter(Boolean).join("\n");
+    return outputText || "done";
+  }
+
+  const detail = await res.text().catch(() => "");
+  throw new Error(`Hermes gateway failed (${res.status}): ${truncate(detail || res.statusText, 500)}`);
+}
+
 async function waitForOpenClawGateway(): Promise<void> {
   const deadline = Date.now() + OPENCLAW_READY_TIMEOUT_MS;
   let lastError = "not ready";
@@ -1969,7 +2025,35 @@ async function waitForOpenClawGateway(): Promise<void> {
   throw new Error(`OpenClaw gateway unavailable after ${Math.round(OPENCLAW_READY_TIMEOUT_MS / 1000)}s: ${lastError}`);
 }
 
+async function waitForHermesGateway(): Promise<void> {
+  const deadline = Date.now() + HERMES_READY_TIMEOUT_MS;
+  let lastError = "not ready";
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`${config.hermesGatewayUrl}/health`, { signal: AbortSignal.timeout(3_000) });
+      if (res.ok) return;
+      lastError = `status ${res.status}`;
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+    }
+    await sleep(1_000);
+  }
+  throw new Error(`Hermes gateway unavailable after ${Math.round(HERMES_READY_TIMEOUT_MS / 1000)}s: ${lastError}`);
+}
+
 async function readOpenClawStream(res: Response, hooks?: MessageRunHooks): Promise<string> {
+  return readGatewayStream(res, hooks, {
+    provider: process.env.OPENCLAW_MODEL_PROVIDER ?? "openclaw",
+    model: undefined,
+    source: "openclaw-stream",
+  });
+}
+
+async function readGatewayStream(
+  res: Response,
+  hooks: MessageRunHooks | undefined,
+  usageDefaults: { provider: string; model?: string; source: string },
+): Promise<string> {
   if (!res.body) return "";
   const decoder = new TextDecoder();
   const reader = res.body.getReader();
@@ -1987,9 +2071,9 @@ async function readOpenClawStream(res: Response, hooks?: MessageRunHooks): Promi
       return;
     }
     const maybeUsage = tokenUsageFromEvent(event, {
-      provider: process.env.OPENCLAW_MODEL_PROVIDER ?? "openclaw",
-      model: undefined,
-      source: "openclaw-stream",
+      provider: usageDefaults.provider,
+      model: usageDefaults.model,
+      source: usageDefaults.source,
     });
     if (maybeUsage) observedUsage = maybeUsage;
     const text = openClawDeltaFromEvent(event);

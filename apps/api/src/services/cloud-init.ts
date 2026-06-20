@@ -18,7 +18,7 @@ export interface LaunchOptions {
 	tenantId: string;
 	apiUrl: string;
 	role: string;
-	integrationPath: "native" | "openclaw" | "guest";
+	integrationPath: "native" | "openclaw" | "hermes" | "guest";
 	dockerImage: string | null;
 	commonsApiKey: string;
 	commonsAgentId: string;
@@ -31,6 +31,13 @@ export interface LaunchOptions {
 		dmPolicy: "pairing" | "allowlist" | "open" | "disabled" | null;
 	} | null;
 	openclawGatewayUrl?: string;
+	hermesConfig?: {
+		modelProvider: string | null;
+		modelId: string | null;
+		modelApiKey: string | null;
+		gatewayApiKey: string | null;
+	} | null;
+	hermesGatewayUrl?: string;
 	workspaceDir?: string;
 	runnerUrl?: string;
 	axlPeers?: string;
@@ -50,6 +57,10 @@ function commonRuntimeEnv(opts: LaunchOptions, imageUrl: string): k8s.V1EnvVar[]
 	const openclawModel = openClawModelId(opts);
 	const openclawModelApiKey = opts.openclawConfig?.modelApiKey ?? process.env.OPENCLAW_MODEL_API_KEY ?? "";
 	const providerEnvKey = openClawProviderEnvKey(opts.openclawConfig?.modelProvider ?? process.env.OPENCLAW_MODEL_PROVIDER ?? "openai");
+	const hermesConfigJson = JSON.stringify(buildHermesGatewayConfig(opts));
+	const hermesModel = hermesModelId(opts);
+	const hermesModelApiKey = opts.hermesConfig?.modelApiKey ?? process.env.HERMES_MODEL_API_KEY ?? "";
+	const hermesProviderEnvKey = providerEnvKeyFor(opts.hermesConfig?.modelProvider ?? process.env.HERMES_MODEL_PROVIDER ?? "openai");
 	return [
 		{ name: "AGENT_ID",              value: opts.agentId },
 		{ name: "AGENT_TOKEN",           value: opts.agentToken },
@@ -72,6 +83,13 @@ function commonRuntimeEnv(opts: LaunchOptions, imageUrl: string): k8s.V1EnvVar[]
 		{ name: "OPENCLAW_CONFIG_JSON", value: openclawConfigJson },
 		{ name: "OPENCLAW_PLUGINS", value: (opts.openclawConfig?.plugins ?? []).join(",") },
 		{ name: "OPENCLAW_DM_POLICY", value: opts.openclawConfig?.dmPolicy ?? "pairing" },
+		{ name: "HERMES_GATEWAY_URL", value: opts.hermesGatewayUrl ?? process.env.HERMES_GATEWAY_URL ?? "http://localhost:17890" },
+		{ name: "HERMES_MODEL_PROVIDER", value: opts.hermesConfig?.modelProvider ?? process.env.HERMES_MODEL_PROVIDER ?? "openai" },
+		{ name: "HERMES_MODEL_ID", value: hermesModel },
+		{ name: "HERMES_MODEL_API_KEY", value: hermesModelApiKey },
+		{ name: "HERMES_GATEWAY_API_KEY", value: opts.hermesConfig?.gatewayApiKey ?? process.env.HERMES_GATEWAY_API_KEY ?? "" },
+		{ name: hermesProviderEnvKey, value: hermesModelApiKey },
+		{ name: "HERMES_CONFIG_JSON", value: hermesConfigJson },
 		{ name: "WORKSPACE_DIR",         value: opts.workspaceDir ?? "/mnt/shared" },
 		{ name: "COMMONOS_WORKSPACE",    value: opts.workspaceDir ?? "/mnt/shared" },
 		{ name: "COMMONOS_AGENT_IMAGE",  value: imageUrl },
@@ -84,6 +102,46 @@ function commonRuntimeEnv(opts: LaunchOptions, imageUrl: string): k8s.V1EnvVar[]
 		{ name: "WORLD_X",               value: String(opts.worldX ?? 2) },
 		{ name: "WORLD_Y",               value: String(opts.worldY ?? 2) },
 	];
+}
+
+function buildHermesGatewayConfig(opts: LaunchOptions): Record<string, unknown> {
+	const config = opts.hermesConfig;
+	const provider = config?.modelProvider ?? process.env.HERMES_MODEL_PROVIDER ?? "openai";
+	const apiKey = config?.modelApiKey ?? process.env.HERMES_MODEL_API_KEY ?? "";
+	const gatewayApiKey = config?.gatewayApiKey ?? process.env.HERMES_GATEWAY_API_KEY ?? "";
+	const model = hermesModelId(opts);
+	const providerEnvKey = providerEnvKeyFor(provider);
+	const agentRuntimeId = opts.agentId.replace(/[^a-zA-Z0-9_-]/g, "-");
+
+	return {
+		gateway: {
+			mode: "local",
+			bind: "loopback",
+			port: 17890,
+			auth: gatewayApiKey ? { mode: "bearer", env: "HERMES_GATEWAY_API_KEY" } : { mode: "none" },
+			http: { responses: true, chatCompletions: true },
+		},
+		env: {
+			vars: apiKey ? { [providerEnvKey]: apiKey } : {},
+		},
+		agent: {
+			id: agentRuntimeId,
+			name: opts.role,
+			workspace: "/mnt/shared",
+			model: { provider, id: model },
+		},
+	};
+}
+
+function hermesModelId(opts: LaunchOptions): string {
+	const provider = opts.hermesConfig?.modelProvider ?? process.env.HERMES_MODEL_PROVIDER ?? "openai";
+	return opts.hermesConfig?.modelId ?? process.env.HERMES_MODEL_ID ?? (
+		provider === "anthropic" ? "anthropic/claude-sonnet-4-6" :
+		provider === "openrouter" ? "openrouter/openai/gpt-5.4-mini" :
+		provider === "google" ? "google/gemini-3-flash" :
+		provider === "groq" ? "groq/openai/gpt-oss-120b" :
+		"openai/gpt-5.4-mini"
+	);
 }
 
 function buildOpenClawGatewayConfig(opts: LaunchOptions): Record<string, unknown> {
@@ -143,6 +201,10 @@ function openClawModelId(opts: LaunchOptions): string {
 }
 
 function openClawProviderEnvKey(provider: string): string {
+	return providerEnvKeyFor(provider);
+}
+
+function providerEnvKeyFor(provider: string): string {
 	const envKeyByProvider: Record<string, string> = {
 		openai: "OPENAI_API_KEY",
 		anthropic: "ANTHROPIC_API_KEY",
@@ -201,16 +263,64 @@ exit 127
 	};
 }
 
+function hermesRuntimeContainer(opts: LaunchOptions, envVars: k8s.V1EnvVar[]): k8s.V1Container | null {
+	if (opts.integrationPath !== "hermes") return null;
+	if (process.env.HERMES_GATEWAY_URL && !opts.dockerImage && !process.env.HERMES_IMAGE_URL) {
+		return null;
+	}
+
+	const image = opts.dockerImage ?? process.env.HERMES_IMAGE_URL;
+	if (!image) {
+		throw new Error("hermes integration path requires HERMES_IMAGE_URL, dockerImage, or HERMES_GATEWAY_URL");
+	}
+
+	return {
+		name: "hermes-runtime",
+		image,
+		imagePullPolicy: "Always",
+		command: ["/bin/sh", "-lc"],
+		args: [`
+set -eu
+export HOME=/mnt/shared/hermes
+mkdir -p "$HOME/.hermes" "$HOME/logs"
+if [ -n "\${HERMES_CONFIG_JSON:-}" ]; then
+  printf '%s' "$HERMES_CONFIG_JSON" > "$HOME/.hermes/hermes.json"
+fi
+if command -v hermes >/dev/null 2>&1; then
+  exec hermes gateway run --host 0.0.0.0 --port "\${HERMES_GATEWAY_PORT:-17890}"
+fi
+echo "hermes binary not found in image" >&2
+exit 127
+`],
+		env: [
+			...envVars,
+			{ name: "COMMONOS_RUNTIME_ROLE", value: "hermes" },
+			{ name: "HERMES_HEADLESS", value: "true" },
+			{ name: "HERMES_GATEWAY_HOST", value: "0.0.0.0" },
+			{ name: "HERMES_GATEWAY_PORT", value: "17890" },
+			{ name: "HERMES_DATA_DIR", value: "/mnt/shared/hermes" },
+			{ name: "HERMES_LOG_DIR", value: "/mnt/shared/hermes/logs" },
+			{ name: "HOME", value: "/mnt/shared/hermes" },
+		],
+		ports: [{ name: "hermes", containerPort: 17890 }],
+		resources: {
+			requests: { cpu: "250m", memory: "256Mi" },
+			limits: { cpu: "2", memory: "2Gi" },
+		},
+		volumeMounts: [{ name: "agent-storage", mountPath: "/mnt/shared" }],
+	};
+}
+
 function agentContainer(opts: LaunchOptions, imageUrl: string, envVars: k8s.V1EnvVar[]): k8s.V1Container {
-	const openClawBridge = opts.integrationPath === "openclaw";
+	const bridgeRuntime = opts.integrationPath === "openclaw" || opts.integrationPath === "hermes";
 	return {
 		name:            "agent",
 		image:           imageUrl,
 		imagePullPolicy: "Always",
 		env:             envVars,
 		resources: {
-			requests: { cpu: "100m", memory: openClawBridge ? "256Mi" : "128Mi" },
-			limits:   { cpu: "1",    memory: openClawBridge ? "1Gi" : "512Mi"  },
+			requests: { cpu: "100m", memory: bridgeRuntime ? "256Mi" : "128Mi" },
+			limits:   { cpu: "1",    memory: bridgeRuntime ? "1Gi" : "512Mi"  },
 		},
 		volumeMounts: [{ name: "agent-storage", mountPath: "/mnt/shared" }],
 	};
@@ -718,6 +828,7 @@ export async function launchAgentPod(
 	}
 
 	const openClawContainer = openClawRuntimeContainer(opts, envVars);
+	const hermesContainer = hermesRuntimeContainer(opts, envVars);
 	const guestContainer = guestRuntimeContainer(opts, envVars);
 	const podBody: k8s.V1Pod = {
 		metadata: {
@@ -736,6 +847,7 @@ export async function launchAgentPod(
 			containers: [
 				agentContainer(opts, imageUrl, envVars),
 				...(openClawContainer ? [openClawContainer] : []),
+				...(hermesContainer ? [hermesContainer] : []),
 				...(guestContainer ? [guestContainer] : []),
 			],
 			volumes: [volume],
@@ -744,7 +856,7 @@ export async function launchAgentPod(
 
 	await ensurePodWithRetry(projectId, region, clusterName, namespace, podBody);
 
-	console.log(`[cloud-init] pod ${podName} created in namespace ${namespace} using image ${imageUrl}${openClawContainer ? ` openclaw=${openClawContainer.image}` : ""}${guestContainer ? ` guest=${opts.dockerImage}` : ""}`);
+	console.log(`[cloud-init] pod ${podName} created in namespace ${namespace} using image ${imageUrl}${openClawContainer ? ` openclaw=${openClawContainer.image}` : ""}${hermesContainer ? ` hermes=${hermesContainer.image}` : ""}${guestContainer ? ` guest=${opts.dockerImage}` : ""}`);
 	return { serviceId: namespace, sessionId };
 }
 
@@ -893,6 +1005,7 @@ export async function launchAgentPodEks(opts: LaunchOptions): Promise<LaunchedSe
 
 	const envVars = commonRuntimeEnv(opts, imageUrl);
 	const openClawContainer = openClawRuntimeContainer(opts, envVars);
+	const hermesContainer = hermesRuntimeContainer(opts, envVars);
 	const guestContainer = guestRuntimeContainer(opts, envVars);
 
 	if (efsId) {
@@ -936,6 +1049,7 @@ export async function launchAgentPodEks(opts: LaunchOptions): Promise<LaunchedSe
 				containers: [
 					agentContainer(opts, imageUrl, envVars),
 					...(openClawContainer ? [openClawContainer] : []),
+					...(hermesContainer ? [hermesContainer] : []),
 					...(guestContainer ? [guestContainer] : []),
 				],
 				volumes: [volume],
@@ -943,7 +1057,7 @@ export async function launchAgentPodEks(opts: LaunchOptions): Promise<LaunchedSe
 		},
 	});
 
-	console.log(`[cloud-init] EKS pod ${podName} created in namespace ${namespace} using image ${imageUrl}${openClawContainer ? ` openclaw=${openClawContainer.image}` : ""}${guestContainer ? ` guest=${opts.dockerImage}` : ""}`);
+	console.log(`[cloud-init] EKS pod ${podName} created in namespace ${namespace} using image ${imageUrl}${openClawContainer ? ` openclaw=${openClawContainer.image}` : ""}${hermesContainer ? ` hermes=${hermesContainer.image}` : ""}${guestContainer ? ` guest=${opts.dockerImage}` : ""}`);
 	return { serviceId: namespace, sessionId };
 }
 
@@ -975,7 +1089,7 @@ export interface StartupScriptOptions {
 	dockerImage: string | null;
 	commonsApiKey: string;
 	commonsAgentId: string;
-	integrationPath: "native" | "openclaw" | "guest";
+	integrationPath: "native" | "openclaw" | "hermes" | "guest";
 	runnerUrl?: string;
 }
 
@@ -1018,6 +1132,7 @@ cat > /etc/common-os/config.json << 'CONFIGEOF'
   "runnerUrl":         "${opts.runnerUrl ?? ""}",
   "workspaceDir":      "/mnt/shared",
   "openclawGatewayUrl":"http://localhost:18789",
+  "hermesGatewayUrl":  "http://localhost:17890",
   "worldRoom":         "dev-room",
   "worldX":            2,
   "worldY":            2

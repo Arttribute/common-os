@@ -14,6 +14,7 @@ cat > /etc/common-os/config.json << CONFIGEOF
   "walletAddress":      "${WALLET_ADDRESS:-}",
   "walletChainId":      ${AGENT_WALLET_CHAIN_ID:-84532},
   "openclawGatewayUrl": "${OPENCLAW_GATEWAY_URL:-http://localhost:18789}",
+  "hermesGatewayUrl":   "${HERMES_GATEWAY_URL:-http://localhost:17890}",
   "workspaceDir":       "${WORKSPACE_DIR:-/workspace}",
   "integrationPath":    "${INTEGRATION_PATH:-native}",
   "dockerImage":        $([ -n "${DOCKER_IMAGE:-}" ] && printf '"%s"' "${DOCKER_IMAGE}" || echo "null"),

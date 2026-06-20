@@ -94,17 +94,19 @@ function rateFor(provider: ProviderId, model: string): ModelRate | null {
 function resourceProfile(agent: AgentDoc): ResourceProfile {
 	const integration = agent.config.integrationPath;
 	const hasOpenClawRuntime = integration === "openclaw" && !process.env.OPENCLAW_GATEWAY_URL;
+	const hasHermesRuntime = integration === "hermes" && !process.env.HERMES_GATEWAY_URL;
 	const hasGuestRuntime = integration === "guest";
-	const sidecarCpu = hasOpenClawRuntime || hasGuestRuntime ? 0.25 : 0;
-	const sidecarMem = hasOpenClawRuntime || hasGuestRuntime ? 0.25 : 0;
-	const sidecarCpuLimit = hasOpenClawRuntime || hasGuestRuntime ? 2 : 0;
-	const sidecarMemLimit = hasOpenClawRuntime || hasGuestRuntime ? 2 : 0;
+	const sidecarCpu = hasOpenClawRuntime || hasHermesRuntime || hasGuestRuntime ? 0.25 : 0;
+	const sidecarMem = hasOpenClawRuntime || hasHermesRuntime || hasGuestRuntime ? 0.25 : 0;
+	const sidecarCpuLimit = hasOpenClawRuntime || hasHermesRuntime || hasGuestRuntime ? 2 : 0;
+	const sidecarMemLimit = hasOpenClawRuntime || hasHermesRuntime || hasGuestRuntime ? 2 : 0;
+	const bridgeRuntime = integration === "openclaw" || integration === "hermes";
 
 	return {
 		cpuRequestCores: 0.1 + sidecarCpu,
-		memoryRequestGiB: (integration === "openclaw" ? 0.25 : 0.125) + sidecarMem,
+		memoryRequestGiB: (bridgeRuntime ? 0.25 : 0.125) + sidecarMem,
 		cpuLimitCores: 1 + sidecarCpuLimit,
-		memoryLimitGiB: (integration === "openclaw" ? 1 : 0.5) + sidecarMemLimit,
+		memoryLimitGiB: (bridgeRuntime ? 1 : 0.5) + sidecarMemLimit,
 		storageGiB: agent.pod.provider === "aws" && process.env.EFS_FILE_SYSTEM_ID ? 5 : Number(process.env.AGENT_STORAGE_GIB ?? "1"),
 	};
 }
@@ -131,6 +133,7 @@ function estimateTokens(agent: AgentDoc, hours: number) {
 	const intensityByPath: Record<AgentDoc["config"]["integrationPath"], number> = {
 		native: 18_000,
 		openclaw: 26_000,
+		hermes: 22_000,
 		guest: 12_000,
 	};
 	const multiplier = agent.permissionTier === "manager" ? 1.35 : 1;
@@ -175,10 +178,10 @@ export async function fleetCostReport(opts: { fleetId: string; tenantId: string;
 	const agentsWithCosts = agentList.map((agent) => {
 		const hours = activeHours(agent, since, until);
 		const provider = normalizeProvider(
-			usageByAgent.get(agent._id)?.provider ?? agent.config.openclawConfig?.modelProvider,
+			usageByAgent.get(agent._id)?.provider ?? agent.config.hermesConfig?.modelProvider ?? agent.config.openclawConfig?.modelProvider,
 			agent.config.integrationPath,
 		);
-		const model = normalizeModel(usageByAgent.get(agent._id)?.model, provider, agent.config.integrationPath);
+		const model = normalizeModel(usageByAgent.get(agent._id)?.model ?? agent.config.hermesConfig?.modelId, provider, agent.config.integrationPath);
 		const rate = rateFor(provider, model);
 		const usage = usageByAgent.get(agent._id);
 		const tokens = usage ?? estimateTokens(agent, hours);
