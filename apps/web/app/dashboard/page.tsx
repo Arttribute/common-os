@@ -10,7 +10,11 @@ import {
   ChevronDown,
   ChevronRight,
   CirclePlus,
+  Cpu,
+  Database,
+  DollarSign,
   ExternalLink,
+  Gauge,
   Loader2,
   LogOut,
   MonitorUp,
@@ -57,6 +61,60 @@ interface Agent {
   permissionTier: 'manager' | 'worker'
   status: string
   createdAt: string
+}
+
+interface FleetCostReport {
+  fleetId: string
+  fleetName: string
+  period: { since: string; until: string; days: number }
+  markupRate: number
+  confidence: 'actual' | 'mixed' | 'estimated'
+  totals: {
+    tokens: number
+    compute: number
+    storage: number
+    raw: number
+    markup: number
+    billed: number
+    inputTokens: number
+    cachedInputTokens: number
+    outputTokens: number
+    requestCount: number
+  }
+  agents: AgentCost[]
+}
+
+interface AgentCost {
+  agentId: string
+  role: string
+  status: string
+  integrationPath: 'native' | 'openclaw' | 'guest'
+  provider: string
+  model: string
+  rateSource: string
+  confidence: 'actual' | 'estimated'
+  activeHours: number
+  tokens: {
+    inputTokens: number
+    cachedInputTokens: number
+    outputTokens: number
+    requestCount: number
+  }
+  resources: {
+    cpuRequestCores: number
+    memoryRequestGiB: number
+    cpuLimitCores: number
+    memoryLimitGiB: number
+    storageGiB: number
+  }
+  cost: {
+    tokens: number
+    compute: number
+    storage: number
+    raw: number
+    markup: number
+    billed: number
+  }
 }
 
 type OpenClawDmPolicy = 'pairing' | 'allowlist' | 'open' | 'disabled'
@@ -358,6 +416,21 @@ function hasWalletIdentity(value: string | null | undefined): boolean {
   return Boolean(value && /^0x[a-fA-F0-9]{40}$/.test(value))
 }
 
+function formatCurrency(value: number): string {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: value >= 100 ? 0 : 2,
+  }).format(value)
+}
+
+function formatCompact(value: number): string {
+  return new Intl.NumberFormat('en-US', {
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(value)
+}
+
 export default function DashboardPage() {
   const { ready } = usePrivy()
   const { authenticated, tenantId, onboarding, logout, apiFetch } = useAuth()
@@ -365,6 +438,8 @@ export default function DashboardPage() {
 
   const [fleets, setFleets] = useState<Fleet[]>([])
   const [agentsByFleet, setAgentsByFleet] = useState<Record<string, Agent[]>>({})
+  const [costsByFleet, setCostsByFleet] = useState<Record<string, FleetCostReport>>({})
+  const [loadingCostByFleet, setLoadingCostByFleet] = useState<Record<string, boolean>>({})
   const [expandedFleet, setExpandedFleet] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -421,12 +496,26 @@ export default function DashboardPage() {
     }
   }
 
+  const fetchFleetCosts = async (fleetId: string) => {
+    if (costsByFleet[fleetId] || loadingCostByFleet[fleetId]) return
+    setLoadingCostByFleet((prev) => ({ ...prev, [fleetId]: true }))
+    try {
+      const res = await apiFetch(`/fleets/${fleetId}/costs?periodDays=30`)
+      if (res.ok) {
+        const report = await res.json() as FleetCostReport
+        setCostsByFleet((prev) => ({ ...prev, [fleetId]: report }))
+      }
+    } finally {
+      setLoadingCostByFleet((prev) => ({ ...prev, [fleetId]: false }))
+    }
+  }
+
   const toggleFleet = async (fleetId: string) => {
     if (expandedFleet === fleetId) {
       setExpandedFleet(null)
     } else {
       setExpandedFleet(fleetId)
-      await fetchAgents(fleetId)
+      await Promise.all([fetchAgents(fleetId), fetchFleetCosts(fleetId)])
     }
   }
 
@@ -594,6 +683,8 @@ export default function DashboardPage() {
   const activeAgentFleet = agentForm ? fleets.find((f) => f._id === agentForm) : null
   const activeFleets = fleets.filter((fleet) => fleet.status === 'active').length
   const totalAgents = fleets.reduce((sum, fleet) => sum + fleet.agentCount, 0)
+  const loadedCosts = Object.values(costsByFleet)
+  const dashboardCost = loadedCosts.reduce((sum, report) => sum + report.totals.billed, 0)
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -636,10 +727,11 @@ export default function DashboardPage() {
           </Button>
         </div>
 
-        <div className="mt-8 grid gap-4 md:grid-cols-3">
+        <div className="mt-8 grid gap-4 md:grid-cols-4">
           <MetricCard label="Total fleets" value={fleets.length} />
           <MetricCard label="Active fleets" value={activeFleets} />
           <MetricCard label="Agents deployed" value={totalAgents} />
+          <MetricCard label="Loaded 30d cost" value={formatCurrency(dashboardCost)} />
         </div>
 
         {error && (
@@ -679,6 +771,8 @@ export default function DashboardPage() {
                   key={fleet._id}
                   fleet={fleet}
                   agents={agentsByFleet[fleet._id]}
+                  costReport={costsByFleet[fleet._id]}
+                  costLoading={Boolean(loadingCostByFleet[fleet._id])}
                   expanded={expandedFleet === fleet._id}
                   onToggle={() => void toggleFleet(fleet._id)}
                   onOpenWorld={() => router.push(`/world?fleet=${fleet._id}`)}
@@ -1148,7 +1242,7 @@ function UserEmail() {
   )
 }
 
-function MetricCard({ label, value }: { label: string; value: number }) {
+function MetricCard({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <Card>
       <CardContent className="p-5">
@@ -1232,6 +1326,8 @@ function ToggleField({
 function FleetCard({
   fleet,
   agents,
+  costReport,
+  costLoading,
   expanded,
   onToggle,
   onOpenWorld,
@@ -1241,6 +1337,8 @@ function FleetCard({
 }: {
   fleet: Fleet
   agents?: Agent[]
+  costReport?: FleetCostReport
+  costLoading: boolean
   expanded: boolean
   onToggle: () => void
   onOpenWorld: () => void
@@ -1324,7 +1422,8 @@ function FleetCard({
         </button>
 
         {expanded && (
-          <div className="border-t bg-background p-5">
+          <div className="space-y-5 border-t bg-background p-5">
+            <CostPanel report={costReport} loading={costLoading} />
             {!agents ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" />
@@ -1401,6 +1500,114 @@ function FleetCard({
         )}
       </CardContent>
     </Card>
+  )
+}
+
+function CostPanel({ report, loading }: { report?: FleetCostReport; loading: boolean }) {
+  if (loading || !report) {
+    return (
+      <div className="rounded-md border bg-muted/20 p-4">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="size-4 animate-spin" />
+          Loading cost telemetry...
+        </div>
+      </div>
+    )
+  }
+
+  const costBreakdown = [
+    { label: 'Model', value: report.totals.tokens, icon: Gauge },
+    { label: 'Compute', value: report.totals.compute, icon: Cpu },
+    { label: 'Storage', value: report.totals.storage, icon: Database },
+    { label: 'Markup', value: report.totals.markup, icon: DollarSign },
+  ]
+
+  return (
+    <div className="rounded-md border bg-muted/10">
+      <div className="grid gap-4 border-b p-4 lg:grid-cols-[1fr_auto] lg:items-center">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-semibold">Cost monitor</h3>
+            <Badge variant={report.confidence === 'estimated' ? 'warning' : 'success'}>
+              {report.confidence}
+            </Badge>
+            <Badge variant="outline">{report.period.days} days</Badge>
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {formatCompact(report.totals.inputTokens + report.totals.outputTokens)} tokens across {formatCompact(report.totals.requestCount)} requests
+          </div>
+        </div>
+        <div className="min-w-40 rounded-md border bg-background px-4 py-3">
+          <div className="text-xs text-muted-foreground">Customer price</div>
+          <div className="mt-1 text-2xl font-semibold tracking-tight">{formatCurrency(report.totals.billed)}</div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            Raw {formatCurrency(report.totals.raw)} + {Math.round(report.markupRate * 100)}%
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
+        {costBreakdown.map((item) => {
+          const Icon = item.icon
+          return (
+            <div key={item.label} className="rounded-md border bg-background p-3">
+              <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                <span>{item.label}</span>
+                <Icon className="size-4" />
+              </div>
+              <div className="mt-2 text-lg font-semibold">{formatCurrency(item.value)}</div>
+            </div>
+          )
+        })}
+      </div>
+
+      <div className="overflow-x-auto border-t">
+        <div className="min-w-[760px]">
+          <div className="grid grid-cols-[1.2fr_0.9fr_1fr_0.8fr_0.8fr_0.8fr_0.8fr] gap-3 bg-muted/40 px-4 py-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <span>Agent</span>
+            <span>Model</span>
+            <span>Usage</span>
+            <span>Pod</span>
+            <span>Model cost</span>
+            <span>Infra</span>
+            <span className="text-right">Price</span>
+          </div>
+          <div className="max-h-72 overflow-y-auto">
+            {report.agents.map((agent) => (
+              <div
+                key={agent.agentId}
+                className="grid grid-cols-[1.2fr_0.9fr_1fr_0.8fr_0.8fr_0.8fr_0.8fr] items-center gap-3 border-t px-4 py-3 text-sm"
+              >
+                <div className="min-w-0">
+                  <div className="truncate font-medium capitalize">{agent.role}</div>
+                  <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                    <Badge variant={agent.confidence === 'actual' ? 'success' : 'warning'} className="px-1.5 py-0">
+                      {agent.confidence}
+                    </Badge>
+                    {agent.integrationPath}
+                  </div>
+                </div>
+                <div className="min-w-0 text-xs">
+                  <div className="truncate font-mono">{agent.model}</div>
+                  <div className="mt-1 text-muted-foreground">{agent.provider}</div>
+                </div>
+                <div className="text-xs">
+                  <div>{formatCompact(agent.tokens.inputTokens)} in / {formatCompact(agent.tokens.outputTokens)} out</div>
+                  <div className="mt-1 text-muted-foreground">{formatCompact(agent.tokens.cachedInputTokens)} cached</div>
+                </div>
+                <div className="text-xs">
+                  <div>{agent.resources.cpuRequestCores} CPU</div>
+                  <div className="mt-1 text-muted-foreground">{agent.resources.memoryRequestGiB} GiB</div>
+                </div>
+                <span>{formatCurrency(agent.cost.tokens)}</span>
+                <span>{formatCurrency(agent.cost.compute + agent.cost.storage)}</span>
+                <span className="text-right font-medium">{formatCurrency(agent.cost.billed)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
 

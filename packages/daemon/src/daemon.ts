@@ -39,6 +39,15 @@ const COMMIT_SHA     = process.env.COMMONOS_COMMIT_SHA ?? "";
 
 type AgcMessage = { role: "user" | "assistant"; content: string };
 type AxlRoutingContext = { axlTargetAgentId?: string | null; axlTargetPeerId?: string | null };
+type TokenUsagePayload = {
+  provider?: string;
+  model?: string;
+  source?: string;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  requestCount: number;
+};
 
 type AxlEnvelope = {
   type?: "request" | "response";
@@ -1698,6 +1707,74 @@ function sessionIdFromEvent(event: Record<string, unknown>): string | null {
   return typeof id === "string" ? id : null;
 }
 
+function numberFrom(...values: unknown[]): number {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) return Math.round(value);
+  }
+  return 0;
+}
+
+function tokenUsageFromEvent(
+  event: Record<string, unknown>,
+  defaults: { provider?: string; model?: string; source: string },
+): TokenUsagePayload | null {
+  const payload = (event.payload && typeof event.payload === "object" ? event.payload : event) as Record<string, unknown>;
+  const usage = (payload.usage && typeof payload.usage === "object" ? payload.usage : payload) as Record<string, unknown>;
+  const inputDetails = (usage.input_token_details && typeof usage.input_token_details === "object"
+    ? usage.input_token_details
+    : usage.inputTokenDetails && typeof usage.inputTokenDetails === "object"
+      ? usage.inputTokenDetails
+      : {}) as Record<string, unknown>;
+  const promptDetails = (usage.prompt_tokens_details && typeof usage.prompt_tokens_details === "object"
+    ? usage.prompt_tokens_details
+    : usage.promptTokenDetails && typeof usage.promptTokenDetails === "object"
+      ? usage.promptTokenDetails
+      : {}) as Record<string, unknown>;
+
+  const inputTokens = numberFrom(
+    usage.inputTokens,
+    usage.input_tokens,
+    usage.prompt_tokens,
+  );
+  const outputTokens = numberFrom(
+    usage.outputTokens,
+    usage.output_tokens,
+    usage.completion_tokens,
+  );
+  const cachedInputTokens = Math.min(inputTokens, numberFrom(
+    usage.cachedInputTokens,
+    usage.cachedTokens,
+    usage.cached_tokens,
+    usage.cache_read_input_tokens,
+    inputDetails.cache_read,
+    inputDetails.cacheRead,
+    inputDetails.cache_read_input_tokens,
+    promptDetails.cached_tokens,
+  ));
+
+  if (inputTokens + outputTokens === 0) return null;
+
+  return {
+    provider: typeof payload.provider === "string" ? payload.provider : defaults.provider,
+    model: typeof payload.model === "string"
+      ? payload.model
+      : typeof payload.modelId === "string"
+        ? payload.modelId
+        : defaults.model,
+    source: defaults.source,
+    inputTokens,
+    cachedInputTokens,
+    outputTokens,
+    requestCount: numberFrom(usage.requestCount, usage.request_count) || 1,
+  };
+}
+
+async function emitTokenUsage(payload: TokenUsagePayload): Promise<void> {
+  await agent.emit({ type: "token_usage", payload }).catch((err) => {
+    console.warn("[daemon] token usage emit failed:", err instanceof Error ? err.message : String(err));
+  });
+}
+
 // ─── Native execution via Agent Commons stream ─────────────────────────────
 // Mirrors `agc run --local --yes` inside the daemon so world UI messages can
 // execute pod-local filesystem and command tools without depending on an
@@ -1746,6 +1823,7 @@ async function runViaNative(
   let observedSessionId: string | null = sessionIdToUse ?? null;
   let toolRequestCount = 0;
   let axlToolCalled = false;
+  let observedUsage: TokenUsagePayload | null = null;
 
   async function handleEvent(raw: string): Promise<void> {
     const line = raw.trim();
@@ -1762,6 +1840,12 @@ async function runViaNative(
 
     const maybeSessionId = sessionIdFromEvent(event);
     if (maybeSessionId) observedSessionId = maybeSessionId;
+    const maybeUsage = tokenUsageFromEvent(event, {
+      provider: "agent-commons",
+      model: undefined,
+      source: "agent-commons-stream",
+    });
+    if (maybeUsage) observedUsage = maybeUsage;
 
     if (event.type === "token" && typeof event.content === "string") {
       output += event.content;
@@ -1817,6 +1901,7 @@ async function runViaNative(
     void registerSessionWithApi().catch(() => {});
     console.log(`[daemon] session persisted: ${observedSessionId}`);
   }
+  if (observedUsage) await emitTokenUsage(observedUsage);
 
   const response = cleanAgcOutput(finalText ?? output);
   console.log(
@@ -1890,6 +1975,7 @@ async function readOpenClawStream(res: Response, hooks?: MessageRunHooks): Promi
   const reader = res.body.getReader();
   let buffer = "";
   let output = "";
+  let observedUsage: TokenUsagePayload | null = null;
 
   async function handlePayload(raw: string): Promise<void> {
     const payload = raw.trim();
@@ -1900,6 +1986,12 @@ async function readOpenClawStream(res: Response, hooks?: MessageRunHooks): Promi
     } catch {
       return;
     }
+    const maybeUsage = tokenUsageFromEvent(event, {
+      provider: process.env.OPENCLAW_MODEL_PROVIDER ?? "openclaw",
+      model: undefined,
+      source: "openclaw-stream",
+    });
+    if (maybeUsage) observedUsage = maybeUsage;
     const text = openClawDeltaFromEvent(event);
     const delta = nextOpenClawDelta(output, text);
     if (delta) {
@@ -1921,6 +2013,7 @@ async function readOpenClawStream(res: Response, hooks?: MessageRunHooks): Promi
     if (done) break;
   }
   await handlePayload(buffer.startsWith("data:") ? buffer.slice(5) : buffer);
+  if (observedUsage) await emitTokenUsage(observedUsage);
   return output;
 }
 

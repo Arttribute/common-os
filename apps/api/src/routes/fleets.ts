@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { randomBytes } from 'crypto'
 import { fleets, worldStates } from '../db/mongo.js'
+import { fleetCostReport } from '../services/costs.js'
 import type { Env, FleetDoc } from '../types.js'
 
 const DEFAULT_ROOMS: FleetDoc['worldConfig']['rooms'] = [
@@ -132,6 +133,27 @@ router.get('/', async (c) => {
       orchestration: mergeOrchestration(fleet.orchestration),
     })))
   } catch {
+    return c.json({ error: 'database error' }, 503)
+  }
+})
+
+// GET /fleets/:id/costs
+router.get('/:id/costs', async (c) => {
+  if (c.get('authType') === 'agent') {
+    return c.json({ error: 'tenant authorization required' }, 403)
+  }
+
+  const periodDays = Number(c.req.query('periodDays') ?? '30')
+  try {
+    const report = await fleetCostReport({
+      fleetId: c.req.param('id'),
+      tenantId: c.get('tenantId'),
+      periodDays: Number.isFinite(periodDays) ? periodDays : 30,
+    })
+    if (!report) return c.json({ error: 'fleet not found' }, 404)
+    return c.json(report)
+  } catch (err) {
+    console.error('[fleets] cost report failed:', err)
     return c.json({ error: 'database error' }, 503)
   }
 })

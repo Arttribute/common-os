@@ -1,0 +1,249 @@
+import { agents, events, fleets } from "../db/mongo.js";
+import type { AgentDoc } from "../types.js";
+
+const HOURS_PER_MONTH = 730;
+const DEFAULT_MARKUP_RATE = Number(process.env.COST_MARKUP_RATE ?? "0.3");
+
+type ProviderId = "openai" | "anthropic" | "google" | "openrouter" | "groq" | "agent-commons" | "unknown";
+
+interface ModelRate {
+	provider: ProviderId;
+	model: string;
+	inputPerMillion: number;
+	cachedInputPerMillion?: number;
+	outputPerMillion: number;
+	source: string;
+}
+
+interface ResourceProfile {
+	cpuRequestCores: number;
+	memoryRequestGiB: number;
+	cpuLimitCores: number;
+	memoryLimitGiB: number;
+	storageGiB: number;
+}
+
+interface InfraRates {
+	cpuCoreHour: number;
+	memoryGiBHour: number;
+	storageGiBMonth: number;
+	source: string;
+}
+
+const MODEL_RATES: ModelRate[] = [
+	{ provider: "openai", model: "gpt-5.5", inputPerMillion: 5, cachedInputPerMillion: 0.5, outputPerMillion: 30, source: "openai-api-pricing" },
+	{ provider: "openai", model: "gpt-5.4", inputPerMillion: 2.5, cachedInputPerMillion: 0.25, outputPerMillion: 15, source: "openai-api-pricing" },
+	{ provider: "openai", model: "gpt-5.4-mini", inputPerMillion: 0.75, cachedInputPerMillion: 0.075, outputPerMillion: 4.5, source: "openai-api-pricing" },
+	{ provider: "openai", model: "gpt-4o", inputPerMillion: 2.5, cachedInputPerMillion: 1.25, outputPerMillion: 10, source: "openai-api-pricing" },
+	{ provider: "openai", model: "gpt-4o-mini", inputPerMillion: 0.15, cachedInputPerMillion: 0.075, outputPerMillion: 0.6, source: "openai-api-pricing" },
+	{ provider: "anthropic", model: "claude-fable-5", inputPerMillion: 10, cachedInputPerMillion: 1, outputPerMillion: 50, source: "anthropic-api-pricing" },
+	{ provider: "anthropic", model: "claude-opus-4-8", inputPerMillion: 5, cachedInputPerMillion: 0.5, outputPerMillion: 25, source: "anthropic-api-pricing" },
+	{ provider: "anthropic", model: "claude-sonnet-4-6", inputPerMillion: 3, cachedInputPerMillion: 0.3, outputPerMillion: 15, source: "anthropic-api-pricing" },
+	{ provider: "anthropic", model: "claude-haiku-4-5", inputPerMillion: 1, cachedInputPerMillion: 0.1, outputPerMillion: 5, source: "anthropic-api-pricing" },
+	{ provider: "google", model: "gemini-3-pro", inputPerMillion: 2.7, cachedInputPerMillion: 0.27, outputPerMillion: 16.2, source: "gemini-api-pricing" },
+	{ provider: "google", model: "gemini-3-flash", inputPerMillion: 0.5, cachedInputPerMillion: 0.05, outputPerMillion: 3, source: "gemini-api-pricing" },
+	{ provider: "google", model: "gemini-2.5-flash-lite", inputPerMillion: 0.1, cachedInputPerMillion: 0.01, outputPerMillion: 0.4, source: "gemini-api-pricing" },
+];
+
+const DEFAULT_INFRA_RATES: Record<"gcp" | "aws", InfraRates> = {
+	gcp: {
+		cpuCoreHour: Number(process.env.GCP_CPU_CORE_HOUR_USD ?? "0.0316"),
+		memoryGiBHour: Number(process.env.GCP_MEMORY_GIB_HOUR_USD ?? "0.0042"),
+		storageGiBMonth: Number(process.env.GCP_STORAGE_GIB_MONTH_USD ?? "0.026"),
+		source: "env:gcp-rates",
+	},
+	aws: {
+		cpuCoreHour: Number(process.env.AWS_CPU_CORE_HOUR_USD ?? "0.0316"),
+		memoryGiBHour: Number(process.env.AWS_MEMORY_GIB_HOUR_USD ?? "0.0035"),
+		storageGiBMonth: Number(process.env.AWS_STORAGE_GIB_MONTH_USD ?? "0.08"),
+		source: "env:aws-rates",
+	},
+};
+
+function normalizeProvider(value: string | null | undefined, integrationPath?: string): ProviderId {
+	const raw = (value ?? "").toLowerCase();
+	if (raw.includes("anthropic") || raw.includes("claude")) return "anthropic";
+	if (raw.includes("google") || raw.includes("gemini")) return "google";
+	if (raw.includes("openrouter")) return "openrouter";
+	if (raw.includes("groq")) return "groq";
+	if (raw.includes("openai") || raw.includes("gpt")) return "openai";
+	if (integrationPath === "native") return "agent-commons";
+	return "unknown";
+}
+
+function defaultModel(provider: ProviderId, integrationPath: AgentDoc["config"]["integrationPath"]): string {
+	if (integrationPath === "native") return "gpt-4o";
+	if (provider === "anthropic") return "claude-sonnet-4-6";
+	if (provider === "google") return "gemini-2.5-flash-lite";
+	if (provider === "openai") return "gpt-4o";
+	return "unknown";
+}
+
+function normalizeModel(value: string | null | undefined, provider: ProviderId, integrationPath: AgentDoc["config"]["integrationPath"]): string {
+	const raw = (value ?? "").trim().toLowerCase();
+	if (!raw) return defaultModel(provider, integrationPath);
+	return raw.replace(/^openai\//, "").replace(/^anthropic\//, "").replace(/^google\//, "");
+}
+
+function rateFor(provider: ProviderId, model: string): ModelRate | null {
+	return MODEL_RATES.find((rate) => rate.provider === provider && rate.model === model)
+		?? MODEL_RATES.find((rate) => rate.model === model)
+		?? (provider === "agent-commons" ? MODEL_RATES.find((rate) => rate.provider === "openai" && rate.model === "gpt-4o") ?? null : null);
+}
+
+function resourceProfile(agent: AgentDoc): ResourceProfile {
+	const integration = agent.config.integrationPath;
+	const hasOpenClawRuntime = integration === "openclaw" && !process.env.OPENCLAW_GATEWAY_URL;
+	const hasGuestRuntime = integration === "guest";
+	const sidecarCpu = hasOpenClawRuntime || hasGuestRuntime ? 0.25 : 0;
+	const sidecarMem = hasOpenClawRuntime || hasGuestRuntime ? 0.25 : 0;
+	const sidecarCpuLimit = hasOpenClawRuntime || hasGuestRuntime ? 2 : 0;
+	const sidecarMemLimit = hasOpenClawRuntime || hasGuestRuntime ? 2 : 0;
+
+	return {
+		cpuRequestCores: 0.1 + sidecarCpu,
+		memoryRequestGiB: (integration === "openclaw" ? 0.25 : 0.125) + sidecarMem,
+		cpuLimitCores: 1 + sidecarCpuLimit,
+		memoryLimitGiB: (integration === "openclaw" ? 1 : 0.5) + sidecarMemLimit,
+		storageGiB: agent.pod.provider === "aws" && process.env.EFS_FILE_SYSTEM_ID ? 5 : Number(process.env.AGENT_STORAGE_GIB ?? "1"),
+	};
+}
+
+function activeHours(agent: AgentDoc, since: Date, until: Date): number {
+	if (agent.status === "terminated" || agent.status === "failed") {
+		const end = agent.updatedAt && agent.updatedAt < until ? agent.updatedAt : until;
+		return Math.max(0, (end.getTime() - Math.max(agent.createdAt.getTime(), since.getTime())) / 3_600_000);
+	}
+	return Math.max(0, (until.getTime() - Math.max(agent.createdAt.getTime(), since.getTime())) / 3_600_000);
+}
+
+function usageCost(tokens: { inputTokens: number; cachedInputTokens: number; outputTokens: number }, rate: ModelRate | null) {
+	if (!rate) return 0;
+	const billableInput = Math.max(0, tokens.inputTokens - tokens.cachedInputTokens);
+	return (
+		(billableInput / 1_000_000) * rate.inputPerMillion
+		+ (tokens.cachedInputTokens / 1_000_000) * (rate.cachedInputPerMillion ?? rate.inputPerMillion)
+		+ (tokens.outputTokens / 1_000_000) * rate.outputPerMillion
+	);
+}
+
+function estimateTokens(agent: AgentDoc, hours: number) {
+	const intensityByPath: Record<AgentDoc["config"]["integrationPath"], number> = {
+		native: 18_000,
+		openclaw: 26_000,
+		guest: 12_000,
+	};
+	const multiplier = agent.permissionTier === "manager" ? 1.35 : 1;
+	const total = Math.round((intensityByPath[agent.config.integrationPath] ?? 14_000) * hours * multiplier);
+	return {
+		inputTokens: Math.round(total * 0.72),
+		cachedInputTokens: Math.round(total * 0.12),
+		outputTokens: Math.round(total * 0.28),
+		requestCount: Math.max(1, Math.round(hours * (agent.permissionTier === "manager" ? 7 : 4))),
+	};
+}
+
+export async function fleetCostReport(opts: { fleetId: string; tenantId: string; periodDays?: number }) {
+	const periodDays = Math.max(1, Math.min(90, opts.periodDays ?? 30));
+	const until = new Date();
+	const since = new Date(until.getTime() - periodDays * 86_400_000);
+
+	const fleet = await (await fleets()).findOne({ _id: opts.fleetId, tenantId: opts.tenantId }).lean();
+	if (!fleet) return null;
+
+	const agentList = await (await agents()).find({ fleetId: opts.fleetId, tenantId: opts.tenantId }).lean();
+	const usageEvents = await (await events()).find({
+		fleetId: opts.fleetId,
+		tenantId: opts.tenantId,
+		type: "token_usage",
+		createdAt: { $gte: since, $lte: until },
+	}).lean();
+
+	const usageByAgent = new Map<string, { inputTokens: number; cachedInputTokens: number; outputTokens: number; requestCount: number; provider?: string; model?: string }>();
+	for (const event of usageEvents) {
+		const payload = event.payload ?? {};
+		const current = usageByAgent.get(event.agentId) ?? { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, requestCount: 0 };
+		current.inputTokens += Number(payload.inputTokens ?? 0);
+		current.cachedInputTokens += Number(payload.cachedInputTokens ?? 0);
+		current.outputTokens += Number(payload.outputTokens ?? 0);
+		current.requestCount += Number(payload.requestCount ?? 1);
+		if (typeof payload.provider === "string") current.provider = payload.provider;
+		if (typeof payload.model === "string") current.model = payload.model;
+		usageByAgent.set(event.agentId, current);
+	}
+
+	const agentsWithCosts = agentList.map((agent) => {
+		const hours = activeHours(agent, since, until);
+		const provider = normalizeProvider(
+			usageByAgent.get(agent._id)?.provider ?? agent.config.openclawConfig?.modelProvider,
+			agent.config.integrationPath,
+		);
+		const model = normalizeModel(usageByAgent.get(agent._id)?.model, provider, agent.config.integrationPath);
+		const rate = rateFor(provider, model);
+		const usage = usageByAgent.get(agent._id);
+		const tokens = usage ?? estimateTokens(agent, hours);
+		const profile = resourceProfile(agent);
+		const cloudProvider = agent.pod.provider === "aws" ? "aws" : "gcp";
+		const infraRates = DEFAULT_INFRA_RATES[cloudProvider];
+		const computeCost = hours * (
+			profile.cpuRequestCores * infraRates.cpuCoreHour
+			+ profile.memoryRequestGiB * infraRates.memoryGiBHour
+		);
+		const storageCost = (profile.storageGiB * infraRates.storageGiBMonth) * (hours / HOURS_PER_MONTH);
+		const tokenCost = usageCost(tokens, rate);
+		const rawCost = tokenCost + computeCost + storageCost;
+		const billedCost = rawCost * (1 + DEFAULT_MARKUP_RATE);
+
+		return {
+			agentId: agent._id,
+			role: agent.config.role,
+			status: agent.status,
+			integrationPath: agent.config.integrationPath,
+			provider,
+			model,
+			rateSource: rate?.source ?? "unknown-model-rate",
+			confidence: usage ? "actual" : "estimated",
+			activeHours: Number(hours.toFixed(2)),
+			tokens,
+			resources: profile,
+			cost: {
+				tokens: Number(tokenCost.toFixed(4)),
+				compute: Number(computeCost.toFixed(4)),
+				storage: Number(storageCost.toFixed(4)),
+				raw: Number(rawCost.toFixed(4)),
+				markup: Number((billedCost - rawCost).toFixed(4)),
+				billed: Number(billedCost.toFixed(4)),
+			},
+		};
+	});
+
+	const totals = agentsWithCosts.reduce((acc, agent) => {
+		acc.tokens += agent.cost.tokens;
+		acc.compute += agent.cost.compute;
+		acc.storage += agent.cost.storage;
+		acc.raw += agent.cost.raw;
+		acc.markup += agent.cost.markup;
+		acc.billed += agent.cost.billed;
+		acc.inputTokens += agent.tokens.inputTokens;
+		acc.cachedInputTokens += agent.tokens.cachedInputTokens;
+		acc.outputTokens += agent.tokens.outputTokens;
+		acc.requestCount += agent.tokens.requestCount;
+		return acc;
+	}, { tokens: 0, compute: 0, storage: 0, raw: 0, markup: 0, billed: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, requestCount: 0 });
+
+	return {
+		fleetId: fleet._id,
+		fleetName: fleet.name,
+		period: { since: since.toISOString(), until: until.toISOString(), days: periodDays },
+		markupRate: DEFAULT_MARKUP_RATE,
+		confidence: usageEvents.length > 0 ? "mixed" : "estimated",
+		totals: {
+			...Object.fromEntries(Object.entries(totals).map(([key, value]) => [key, Number(value.toFixed(key.endsWith("Tokens") || key === "requestCount" ? 0 : 4))])),
+		},
+		agents: agentsWithCosts,
+		sources: {
+			tokenPricing: ["openai-api-pricing", "anthropic-api-pricing", "gemini-api-pricing"],
+			computePricing: ["env:gcp-rates", "env:aws-rates", "recommended:opencost-or-kubecost-for-actual-allocation"],
+		},
+	};
+}
