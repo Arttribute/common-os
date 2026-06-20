@@ -144,11 +144,13 @@ router.get('/:id/costs', async (c) => {
   }
 
   const periodDays = Number(c.req.query('periodDays') ?? '30')
+  const billingPeriod = c.req.query('billingPeriod') === 'month_to_date' ? 'month_to_date' : 'rolling'
   try {
     const report = await fleetCostReport({
       fleetId: c.req.param('id'),
       tenantId: c.get('tenantId'),
       periodDays: Number.isFinite(periodDays) ? periodDays : 30,
+      billingPeriod,
     })
     if (!report) return c.json({ error: 'fleet not found' }, 404)
     return c.json(report)

@@ -15,7 +15,6 @@ import { Cpu, Database, DollarSign, Gauge, Loader2 } from 'lucide-react'
 const PhaserGame = dynamic(() => import('@/components/PhaserGame'), { ssr: false })
 
 type WorldTab = 'world' | 'expenses'
-type CostPeriodDays = 7 | 30 | 90
 
 interface TokenSummary {
   inputTokens: number
@@ -64,6 +63,8 @@ interface FleetCostReport {
   fleetId: string
   fleetName: string
   period: { since: string; until: string; days: number }
+  billingPeriod?: 'month_to_date' | 'rolling'
+  estimatePeriod?: { since: string; until: string; days: number }
   markupRate: number
   confidence: 'actual' | 'mixed' | 'estimated'
   usageComparison: {
@@ -85,8 +86,6 @@ interface FleetCostReport {
   }
   agents: AgentCost[]
 }
-
-const costPeriodOptions: CostPeriodDays[] = [7, 30, 90]
 
 function formatCurrency(value: number): string {
   return new Intl.NumberFormat('en-US', {
@@ -111,7 +110,6 @@ function WorldContent() {
   const searchParams = useSearchParams()
   const fleetId = searchParams.get('fleet') ?? undefined
   const [tab, setTab] = useState<WorldTab>((searchParams.get('view') === 'expenses' ? 'expenses' : 'world'))
-  const [periodDays, setPeriodDays] = useState<CostPeriodDays>(30)
   const [costReport, setCostReport] = useState<FleetCostReport | null>(null)
   const [costLoading, setCostLoading] = useState(false)
   const [costError, setCostError] = useState<string | null>(null)
@@ -134,7 +132,7 @@ function WorldContent() {
     let cancelled = false
     setCostLoading(true)
     setCostError(null)
-    void apiFetch(`/fleets/${fleetId}/costs?periodDays=${periodDays}`)
+    void apiFetch(`/fleets/${fleetId}/costs?billingPeriod=month_to_date`)
       .then(async (res) => {
         if (!res.ok) throw new Error(`Could not load expenses (${res.status})`)
         const report = await res.json() as FleetCostReport
@@ -149,7 +147,7 @@ function WorldContent() {
     return () => {
       cancelled = true
     }
-  }, [apiFetch, authenticated, fleetId, periodDays, tab])
+  }, [apiFetch, authenticated, fleetId, tab])
 
   if (privyEnabled && (!ready || !authenticated)) {
     return (
@@ -175,8 +173,6 @@ function WorldContent() {
           report={costReport}
           loading={costLoading}
           error={costError}
-          periodDays={periodDays}
-          onPeriodChange={setPeriodDays}
           onBack={() => setTab('world')}
         />
       )}
@@ -218,16 +214,12 @@ function ExpensesView({
   report,
   loading,
   error,
-  periodDays,
-  onPeriodChange,
   onBack,
 }: {
   fleetId?: string
   report: FleetCostReport | null
   loading: boolean
   error: string | null
-  periodDays: CostPeriodDays
-  onPeriodChange: (days: CostPeriodDays) => void
   onBack: () => void
 }) {
   if (!fleetId) {
@@ -252,19 +244,10 @@ function ExpensesView({
               {report?.fleetName ?? 'Expenses'}
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Actual token consumption, estimated plan usage, infrastructure allocation, and customer price.
+              Month-to-date actual usage against the expected monthly usage baseline.
             </p>
           </div>
-          <select
-            className="h-9 w-32 rounded-md border border-input bg-background px-3 text-sm"
-            value={periodDays}
-            onChange={(e) => onPeriodChange(Number(e.target.value) as CostPeriodDays)}
-            aria-label="Expense period"
-          >
-            {costPeriodOptions.map((days) => (
-              <option key={days} value={days}>{days} days</option>
-            ))}
-          </select>
+          <Badge variant="secondary" className="w-fit">Monthly billing</Badge>
         </div>
 
         {loading && (
@@ -304,10 +287,10 @@ function ExpensesPanel({ report }: { report: FleetCostReport }) {
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-base font-semibold">Usage against estimate</h2>
               <Badge variant={report.confidence === 'estimated' ? 'warning' : 'success'}>{report.confidence}</Badge>
-              <Badge variant="outline">{report.period.days} days</Badge>
+              <Badge variant="outline">Month to date</Badge>
             </div>
             <p className="mt-1 text-sm text-muted-foreground">
-              {formatCompact(actualTotal)} actual tokens of {formatCompact(estimatedTotal)} estimated.
+              {formatCompact(actualTotal)} actual tokens this month of {formatCompact(estimatedTotal)} expected for the month.
             </p>
           </div>
           <div className="min-w-44 rounded-md border border-white/10 bg-muted/20 px-4 py-3">
@@ -332,7 +315,7 @@ function ExpensesPanel({ report }: { report: FleetCostReport }) {
           </div>
           <div className="mt-2 flex justify-between text-xs text-muted-foreground">
             <span>0</span>
-            <span>Estimate cap: {formatCompact(estimatedTotal)}</span>
+            <span>Monthly estimate: {formatCompact(estimatedTotal)}</span>
           </div>
         </div>
       </div>

@@ -169,10 +169,23 @@ function roundTokenSummary(tokens: { inputTokens: number; cachedInputTokens: num
 	};
 }
 
-export async function fleetCostReport(opts: { fleetId: string; tenantId: string; periodDays?: number }) {
-	const periodDays = Math.max(1, Math.min(90, opts.periodDays ?? 30));
+function startOfUtcMonth(date: Date): Date {
+	return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+}
+
+function startOfNextUtcMonth(date: Date): Date {
+	return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1));
+}
+
+export async function fleetCostReport(opts: { fleetId: string; tenantId: string; periodDays?: number; billingPeriod?: "month_to_date" | "rolling" }) {
+	const billingPeriod = opts.billingPeriod ?? "rolling";
 	const until = new Date();
-	const since = new Date(until.getTime() - periodDays * 86_400_000);
+	const since = billingPeriod === "month_to_date"
+		? startOfUtcMonth(until)
+		: new Date(until.getTime() - Math.max(1, Math.min(90, opts.periodDays ?? 30)) * 86_400_000);
+	const estimateUntil = billingPeriod === "month_to_date" ? startOfNextUtcMonth(until) : until;
+	const periodDays = Math.max(1, Math.ceil((until.getTime() - since.getTime()) / 86_400_000));
+	const estimateDays = Math.max(1, Math.ceil((estimateUntil.getTime() - since.getTime()) / 86_400_000));
 
 	const fleet = await (await fleets()).findOne({ _id: opts.fleetId, tenantId: opts.tenantId }).lean();
 	if (!fleet) return null;
@@ -203,6 +216,7 @@ export async function fleetCostReport(opts: { fleetId: string; tenantId: string;
 
 	const agentsWithCosts = agentList.map((agent) => {
 		const hours = activeHours(agent, since, until);
+		const estimateHours = activeHours(agent, since, estimateUntil);
 		const provider = normalizeProvider(
 			usageByAgent.get(agent._id)?.provider ?? agent.config.hermesConfig?.modelProvider ?? agent.config.openclawConfig?.modelProvider,
 			agent.config.integrationPath,
@@ -217,11 +231,12 @@ export async function fleetCostReport(opts: { fleetId: string; tenantId: string;
 		);
 		const rate = rateFor(provider, model);
 		const usage = usageByAgent.get(agent._id);
-		const estimatedTokens = estimateTokens(agent, hours);
+		const elapsedEstimatedTokens = estimateTokens(agent, hours);
+		const estimatedTokens = estimateTokens(agent, estimateHours);
 		const actualTokens = usage ?? emptyTokens();
 		addTokens(actualTokenTotals, actualTokens);
 		addTokens(estimatedTokenTotals, estimatedTokens);
-		const tokens = usage ?? estimatedTokens;
+		const tokens = usage ?? elapsedEstimatedTokens;
 		const profile = resourceProfile(agent);
 		const cloudProvider = agent.pod.provider === "aws" ? "aws" : "gcp";
 		const infraRates = DEFAULT_INFRA_RATES[cloudProvider];
@@ -284,6 +299,8 @@ export async function fleetCostReport(opts: { fleetId: string; tenantId: string;
 		fleetId: fleet._id,
 		fleetName: fleet.name,
 		period: { since: since.toISOString(), until: until.toISOString(), days: periodDays },
+		billingPeriod,
+		estimatePeriod: { since: since.toISOString(), until: estimateUntil.toISOString(), days: estimateDays },
 		markupRate: DEFAULT_MARKUP_RATE,
 		confidence: usageEvents.length > 0 ? "mixed" : "estimated",
 		usageComparison: {
