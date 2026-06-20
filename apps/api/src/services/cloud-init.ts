@@ -312,15 +312,18 @@ exit 127
 }
 
 function agentContainer(opts: LaunchOptions, imageUrl: string, envVars: k8s.V1EnvVar[]): k8s.V1Container {
-	const bridgeRuntime = opts.integrationPath === "openclaw" || opts.integrationPath === "hermes";
+	// Every integration path runs the daemon's shared headless Chromium in
+	// this container (browser tool calls are handled here regardless of
+	// integrationPath), so it always needs enough memory for Chromium on top
+	// of the daemon/AXL process — not just the openclaw/hermes bridge paths.
 	return {
 		name:            "agent",
 		image:           imageUrl,
 		imagePullPolicy: "Always",
 		env:             envVars,
 		resources: {
-			requests: { cpu: "100m", memory: bridgeRuntime ? "256Mi" : "128Mi" },
-			limits:   { cpu: "1",    memory: bridgeRuntime ? "1Gi" : "512Mi"  },
+			requests: { cpu: "200m", memory: "512Mi" },
+			limits:   { cpu: "2",    memory: "2Gi"   },
 		},
 		volumeMounts: [{ name: "agent-storage", mountPath: "/mnt/shared" }],
 	};

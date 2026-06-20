@@ -663,44 +663,34 @@ async function closeBrowser(): Promise<void> {
 // ─── Pod-local Agent Tools API ──────────────────────────────────────────────
 //
 // Any sibling container in this pod — a custom/guest runtime the tenant
-// brings, or a future integration path — can drive the shared browser over
-// plain HTTP without needing CommonOS-specific tool-calling plumbing.
-// Containers in the same Kubernetes pod share the loopback interface, so
-// binding to 127.0.0.1 keeps this reachable pod-locally only.
+// brings, or a future integration path — can drive the full TOOL_CATALOG
+// (browser, filesystem, wallet, AXL, and anything added later) over plain
+// HTTP without needing CommonOS-specific tool-calling plumbing. Containers
+// in the same Kubernetes pod share the loopback interface, so binding to
+// 127.0.0.1 keeps this reachable pod-locally only.
 function startAgentToolsServer(): void {
   Bun.serve({
     hostname: "127.0.0.1",
     port: AGENT_TOOLS_PORT,
     async fetch(req) {
       const url = new URL(req.url);
-      const readBody = async (): Promise<Record<string, unknown>> => {
-        try {
-          return await req.json() as Record<string, unknown>;
-        } catch {
-          return {};
-        }
-      };
       try {
         if (req.method === "GET" && url.pathname === "/healthz") {
           return Response.json({ ok: true });
         }
-        if (req.method === "GET" && url.pathname === "/v1/browser/status") {
-          return Response.json({ ok: true, result: await executeLocalTool("browser_status", {}) });
+        // Discovery endpoint — any sibling container can list what this pod
+        // can do without hardcoding tool names on its own side.
+        if (req.method === "GET" && url.pathname === "/v1/tools") {
+          return Response.json({ ok: true, tools: TOOL_CATALOG });
         }
-        if (req.method === "POST" && url.pathname === "/v1/browser/open") {
-          return Response.json({ ok: true, result: await executeLocalTool("browser_open", await readBody()) });
-        }
-        if (req.method === "POST" && url.pathname === "/v1/browser/screenshot") {
-          return Response.json({ ok: true, result: await executeLocalTool("browser_screenshot", {}) });
-        }
-        if (req.method === "POST" && url.pathname === "/v1/browser/click") {
-          return Response.json({ ok: true, result: await executeLocalTool("browser_click", await readBody()) });
-        }
-        if (req.method === "POST" && url.pathname === "/v1/browser/type") {
-          return Response.json({ ok: true, result: await executeLocalTool("browser_type", await readBody()) });
-        }
-        if (req.method === "POST" && url.pathname === "/v1/browser/close") {
-          return Response.json({ ok: true, result: await executeLocalTool("browser_close", {}) });
+        const match = url.pathname.match(/^\/v1\/tools\/([a-zA-Z0-9_]+)$/);
+        if (req.method === "POST" && match) {
+          const name = match[1];
+          if (!toolCatalogEntry(name)) {
+            return Response.json({ ok: false, error: `unknown tool: ${name}` }, { status: 404 });
+          }
+          const args = await req.json().catch(() => ({})) as Record<string, unknown>;
+          return Response.json({ ok: true, result: await executeLocalTool(name, args) });
         }
         return Response.json({ ok: false, error: "not found" }, { status: 404 });
       } catch (err) {
@@ -708,7 +698,7 @@ function startAgentToolsServer(): void {
       }
     },
   });
-  console.log(`[daemon] agent tools API listening on 127.0.0.1:${AGENT_TOOLS_PORT}`);
+  console.log(`[daemon] agent tools API listening on 127.0.0.1:${AGENT_TOOLS_PORT} (${TOOL_CATALOG.length} tools)`);
 }
 
 // ─── File watcher ──────────────────────────────────────────────────────────
@@ -1692,7 +1682,48 @@ function buildAxlRoutingPromptContext(routing?: AxlRoutingContext): string {
   ].join("\n");
 }
 
+// ─── Tool catalog ───────────────────────────────────────────────────────────
+//
+// Single source of truth for every tool this pod can execute. Adding a new
+// pod capability (another app, another wallet action, etc.) means: add a
+// catalog entry here, add its `if (tool === "...")` branch in
+// executeLocalTool, and it is immediately available everywhere a daemon
+// reaches an LLM — the native cli_tool_request schema sent to AGC, the
+// OpenClaw/Hermes `tools` param, the generic pod-local HTTP tools API, and
+// the generated docs in buildCliContext. No other repo needs to change.
+
+type ToolCatalogEntry = { name: string; description: string; parameters: Record<string, unknown> };
+
+const TOOL_CATALOG: ToolCatalogEntry[] = [
+  { name: "list_directory", description: "List files and folders at a path in this pod's workspace. Defaults to the session root.", parameters: { type: "object", properties: { path: { type: "string", description: "Directory path relative to session root (default: session root)" } }, required: [] } },
+  { name: "read_file", description: "Read the full contents of a file in this pod's workspace.", parameters: { type: "object", properties: { path: { type: "string", description: "File path relative to session root" } }, required: ["path"] } },
+  { name: "write_file", description: "Write or overwrite a file in this pod's workspace. Creates parent directories if needed.", parameters: { type: "object", properties: { path: { type: "string", description: "File path relative to session root" }, content: { type: "string", description: "Content to write" } }, required: ["path", "content"] } },
+  { name: "search_files", description: "Find files matching a glob-style pattern in this pod's workspace. Returns up to 50 matches.", parameters: { type: "object", properties: { pattern: { type: "string", description: "Glob-style filename pattern (e.g. \"*.ts\")" }, directory: { type: "string", description: "Directory to search (default: session root)" } }, required: ["pattern"] } },
+  { name: "run_command", description: "Run a short command (up to 5 minutes) in this pod's workspace and return its output.", parameters: { type: "object", properties: { command: { type: "string", description: "Command to run" }, args: { type: "array", items: { type: "string" }, description: "Arguments array" }, cwd: { type: "string", description: "Working directory (default: session root)" }, timeout_seconds: { type: "number", description: "Max seconds to wait (default 120, max 300)" } }, required: ["command"] } },
+  { name: "browser_open", description: "Launch this pod's shared Chromium browser and navigate to a URL.", parameters: { type: "object", properties: { url: { type: "string", description: "URL to open" } }, required: ["url"] } },
+  { name: "browser_status", description: "Return the shared browser's on/off state, current URL, page title, and latest screenshot.", parameters: { type: "object", properties: {}, required: [] } },
+  { name: "browser_screenshot", description: "Refresh and return the latest screenshot of the shared browser.", parameters: { type: "object", properties: {}, required: [] } },
+  { name: "browser_click", description: "Click a coordinate in the shared browser's viewport.", parameters: { type: "object", properties: { x: { type: "number", description: "X coordinate" }, y: { type: "number", description: "Y coordinate" } }, required: ["x", "y"] } },
+  { name: "browser_type", description: "Type text into the focused element, or into a CSS selector, in the shared browser.", parameters: { type: "object", properties: { text: { type: "string", description: "Text to type" }, selector: { type: "string", description: "Optional CSS selector to type into" } }, required: ["text"] } },
+  { name: "browser_close", description: "Close the shared browser.", parameters: { type: "object", properties: {}, required: [] } },
+  { name: "send_axl_message", description: "Send a CommonOS fleet message over AXL/P2P. Only use when explicitly requested — OpenClaw/channel connectors are the normal messaging surface.", parameters: { type: "object", properties: { target: { type: "string", description: "Agent id, AXL peer id, role/name like Pumba, fleet manager, or fleet master" }, content: { type: "string", description: "Message to send" } }, required: ["target", "content"] } },
+  { name: "wallet_address", description: "Return this agent's wallet address.", parameters: { type: "object", properties: {}, required: [] } },
+  { name: "wallet_balance", description: "Return this agent's Base Sepolia wallet balance.", parameters: { type: "object", properties: {}, required: [] } },
+  { name: "wallet_send_transaction", description: "Request a policy-checked wallet transaction signed by CommonOS/Privy. Pass the recipient alias when the user names another CommonOS agent — the API resolves the wallet again at signing time.", parameters: { type: "object", properties: { recipient: { type: "string", description: "Agent role/name like Sammy, @Sammy, agent id, or 0x address" }, valueEth: { type: "string", description: "Amount in ETH, e.g. \"0.001\"" }, valueWei: { type: "string", description: "Amount in wei (alternative to valueEth)" }, chainId: { type: "number", description: "Chain id (default: agent's configured chain)" }, data: { type: "string", description: "Optional raw call data" } }, required: ["recipient"] } },
+];
+
+function toolCatalogEntry(name: string): ToolCatalogEntry | undefined {
+  return TOOL_CATALOG.find((entry) => entry.name === name);
+}
+
+// JSON-schema function defs, cli_-prefixed, for any consumer that binds
+// tools to an LLM (AGC's dynamic cliTools, OpenClaw/Hermes `tools` param).
+function cliToolDefs(): Array<{ name: string; description: string; parameters: Record<string, unknown> }> {
+  return TOOL_CATALOG.map((entry) => ({ name: `cli_${entry.name}`, description: entry.description, parameters: entry.parameters }));
+}
+
 function buildCliContext(): string {
+  const toolTable = TOOL_CATALOG.map((entry) => `| \`cli_${entry.name}\` | ${entry.description} |`).join("\n");
   return `
 ## CLI Local Tools - ACTIVE
 
@@ -1719,43 +1750,7 @@ ${buildWorkspaceSnapshot(WORKSPACE_DIR)}
 
 | Tool | What it does |
 |------|-------------|
-| \`cli_list_directory\` | List files and folders at a path |
-| \`cli_read_file\` | Read a file |
-| \`cli_write_file\` | Write or overwrite a file |
-| \`cli_search_files\` | Find files matching a pattern |
-| \`cli_run_command\` | Run a short command and return its output |
-| \`cli_browser_open\` | Launch this pod's Chromium browser and navigate to a URL |
-| \`cli_browser_status\` | Return browser on/off state, current URL, title, and latest screenshot |
-| \`cli_browser_screenshot\` | Refresh and return the latest browser screenshot |
-| \`cli_browser_click\` | Click a coordinate in the browser viewport |
-| \`cli_browser_type\` | Type text into the focused element or a selector |
-| \`cli_browser_close\` | Close this pod's browser |
-| \`cli_send_axl_message\` | Optional: send a CommonOS fleet message over AXL/P2P when explicitly requested |
-| \`cli_wallet_address\` | Return this agent's wallet address |
-| \`cli_wallet_balance\` | Return this agent's Base Sepolia wallet balance |
-| \`cli_wallet_send_transaction\` | Request a policy-checked wallet transaction signed by CommonOS/Privy |
-
-### Browser tool schemas
-
-\`\`\`json
-{"url":"https://example.com"}
-{"x":120,"y":260}
-{"text":"hello","selector":"input[name=q]"}
-\`\`\`
-
-### cli_send_axl_message schema
-
-\`\`\`json
-{"target":"<agent id, AXL peer id, role/name like Pumba, fleet manager, or fleet master>","content":"<message to send>"}
-\`\`\`
-
-### cli_wallet_send_transaction schema
-
-\`\`\`json
-{"recipient":"<agent role/name like Sammy, @Sammy, agent id, or 0x address>","valueEth":"0.001","chainId":84532}
-\`\`\`
-
-Always pass the recipient alias to \`cli_wallet_send_transaction\` when the user names another CommonOS agent. The CommonOS API resolves the wallet again at signing time.
+${toolTable}
 
 ### Cached AXL peers in this fleet
 
@@ -2145,6 +2140,7 @@ async function runViaNative(
     ...(sessionIdToUse ? { sessionId: sessionIdToUse } : {}),
     messages: [{ role: "user", content: prompt }],
     cliContext: buildCliContext(),
+    cliTools: cliToolDefs(),
     ...(AGC_INITIATOR ? { initiatorId: AGC_INITIATOR } : {}),
   };
 
@@ -2339,27 +2335,18 @@ async function waitForHermesGateway(): Promise<void> {
   throw new Error(`Hermes gateway unavailable after ${Math.round(HERMES_READY_TIMEOUT_MS / 1000)}s: ${lastError}`);
 }
 
-// ─── Shared browser tools — Responses API (OpenClaw, Hermes) ───────────────
+// ─── Shared tool catalog — Responses API (OpenClaw, Hermes) ────────────────
 //
-// Native (AGC) gets cli_browser_* tools via cli_tool_request SSE events
-// (see executeLocalTool below). OpenClaw and Hermes are opaque gateway
-// binaries that advertise OpenAI Responses-API compatibility, so the same
-// browser tools are offered to them as a `tools` array on /v1/responses;
-// any function_call they emit is executed through the same executeLocalTool
-// dispatcher that drives the daemon's shared Chromium browser. This keeps
-// one browser implementation reachable from every agent runtime.
+// Native (AGC) gets the catalog via cli_tool_request SSE events (see
+// executeLocalTool below) using the dynamic cliTools the daemon sends on
+// every run. OpenClaw and Hermes are opaque gateway binaries that advertise
+// OpenAI Responses-API compatibility, so the same catalog is offered to
+// them as a `tools` array on /v1/responses; any function_call they emit is
+// executed through the same executeLocalTool dispatcher. One tool catalog,
+// reachable from every agent runtime.
 
-const RESPONSES_BROWSER_TOOLS: Array<{ name: string; description: string; parameters: Record<string, unknown> }> = [
-  { name: "cli_browser_open", description: "Launch this pod's shared Chromium browser and navigate to a URL.", parameters: { type: "object", properties: { url: { type: "string", description: "URL to open" } }, required: ["url"] } },
-  { name: "cli_browser_status", description: "Return the shared browser's on/off state, current URL, page title, and latest screenshot.", parameters: { type: "object", properties: {}, required: [] } },
-  { name: "cli_browser_screenshot", description: "Refresh and return the latest screenshot of the shared browser.", parameters: { type: "object", properties: {}, required: [] } },
-  { name: "cli_browser_click", description: "Click a coordinate in the shared browser's viewport.", parameters: { type: "object", properties: { x: { type: "number" }, y: { type: "number" } }, required: ["x", "y"] } },
-  { name: "cli_browser_type", description: "Type text into the focused element, or into a CSS selector, in the shared browser.", parameters: { type: "object", properties: { text: { type: "string" }, selector: { type: "string" } }, required: ["text"] } },
-  { name: "cli_browser_close", description: "Close the shared browser.", parameters: { type: "object", properties: {}, required: [] } },
-];
-
-function responsesBrowserToolDefs(): Array<Record<string, unknown>> {
-  return RESPONSES_BROWSER_TOOLS.map((def) => ({ type: "function", name: def.name, description: def.description, parameters: def.parameters }));
+function responsesToolDefs(): Array<Record<string, unknown>> {
+  return cliToolDefs().map((def) => ({ type: "function", name: def.name, description: def.description, parameters: def.parameters }));
 }
 
 type ResponsesToolCall = { callId: string; name: string; arguments: string };
@@ -2447,14 +2434,14 @@ function responsesFunctionCall(event: Record<string, unknown>): ResponsesToolCal
   const item = (event.item && typeof event.item === "object" ? event.item as Record<string, unknown> : event) as Record<string, unknown>;
   if (String(item.type ?? "") !== "function_call") return null;
   const name = String(item.name ?? "");
-  if (!name.startsWith("cli_browser_")) return null;
+  if (!toolCatalogEntry(toolName(name))) return null;
   const callId = String(item.call_id ?? item.callId ?? item.id ?? "");
   if (!callId) return null;
   return { callId, name, arguments: typeof item.arguments === "string" ? item.arguments : "{}" };
 }
 
 // Drives a tools-enabled OpenAI Responses-API conversation against an
-// OpenClaw/Hermes gateway, executing any cli_browser_* function_call through
+// OpenClaw/Hermes gateway, executing any cataloged function_call through
 // executeLocalTool and feeding the result back via previous_response_id
 // until the model produces a final answer (or we hit the round cap).
 async function runResponsesConversation(opts: {
@@ -2467,7 +2454,7 @@ async function runResponsesConversation(opts: {
   gatewayLabel: string;
 }): Promise<string> {
   const MAX_TOOL_ROUNDS = 6;
-  let body: Record<string, unknown> = { ...opts.body, tools: responsesBrowserToolDefs(), stream: true };
+  let body: Record<string, unknown> = { ...opts.body, tools: responsesToolDefs(), stream: true };
   let finalOutput = "";
 
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
@@ -2528,7 +2515,7 @@ async function runResponsesConversation(opts: {
       previous_response_id: result.responseId,
       input: toolOutputs,
       user: body.user,
-      tools: responsesBrowserToolDefs(),
+      tools: responsesToolDefs(),
       stream: true,
     };
   }
