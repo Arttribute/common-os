@@ -88,7 +88,7 @@ interface AgentCost {
   agentId: string
   role: string
   status: string
-  integrationPath: 'native' | 'openclaw' | 'guest'
+  integrationPath: 'native' | 'openclaw' | 'hermes' | 'guest'
   provider: string
   model: string
   rateSource: string
@@ -118,6 +118,7 @@ interface AgentCost {
 }
 
 type OpenClawDmPolicy = 'pairing' | 'allowlist' | 'open' | 'disabled'
+type AgentPath = 'native' | 'openclaw' | 'hermes'
 type ConnectorId =
   | 'telegram'
   | 'slack'
@@ -456,12 +457,16 @@ export default function DashboardPage() {
   const [agentRole, setAgentRole] = useState('')
   const [agentPrompt, setAgentPrompt] = useState('')
   const [agentTier, setAgentTier] = useState<'manager' | 'worker'>('worker')
-  const [agentPath, setAgentPath] = useState<'native' | 'openclaw'>('native')
+  const [agentPath, setAgentPath] = useState<AgentPath>('native')
   const [openclawModelProvider, setOpenclawModelProvider] = useState('openai')
   const [openclawModelApiKey, setOpenclawModelApiKey] = useState('')
   const [openclawPlugins, setOpenclawPlugins] = useState('')
   const [openclawDmPolicy, setOpenclawDmPolicy] = useState<OpenClawDmPolicy>('pairing')
   const [openclawConnectors, setOpenclawConnectors] = useState<ConnectorState>(() => emptyConnectorState())
+  const [hermesModelProvider, setHermesModelProvider] = useState('openai')
+  const [hermesModelId, setHermesModelId] = useState('')
+  const [hermesModelApiKey, setHermesModelApiKey] = useState('')
+  const [hermesGatewayApiKey, setHermesGatewayApiKey] = useState('')
   const [deployingAgent, setDeployingAgent] = useState(false)
 
   useEffect(() => {
@@ -530,9 +535,13 @@ export default function DashboardPage() {
     setOpenclawPlugins('')
     setOpenclawDmPolicy('pairing')
     setOpenclawConnectors(emptyConnectorState())
+    setHermesModelProvider('openai')
+    setHermesModelId('')
+    setHermesModelApiKey('')
+    setHermesGatewayApiKey('')
   }
 
-  const openAgentForm = (fleetId: string, path: 'native' | 'openclaw') => {
+  const openAgentForm = (fleetId: string, path: AgentPath) => {
     setAgentForm(fleetId)
     setAgentPath(path)
   }
@@ -605,6 +614,15 @@ export default function DashboardPage() {
                   dmPolicy: openclawDmPolicy,
                 },
               }
+            : agentPath === 'hermes'
+              ? {
+                  hermesConfig: {
+                    modelProvider: hermesModelProvider,
+                    modelId: hermesModelId.trim() || undefined,
+                    modelApiKey: hermesModelApiKey.trim() || undefined,
+                    gatewayApiKey: hermesGatewayApiKey.trim() || undefined,
+                  },
+                }
             : {}),
         }),
       })
@@ -843,14 +861,14 @@ export default function DashboardPage() {
           resetAgentForm()
         }
       }}>
-        <DialogContent className={agentPath === 'openclaw' ? 'max-h-[90vh] max-w-3xl overflow-y-auto' : undefined}>
+        <DialogContent className={agentPath === 'openclaw' || agentPath === 'hermes' ? 'max-h-[90vh] max-w-3xl overflow-y-auto' : undefined}>
           {agentForm && (
             <form onSubmit={(e) => void deployAgent(e, agentForm)} className="space-y-5">
               <DialogHeader>
                 <DialogTitle>Deploy agent</DialogTitle>
                 <DialogDescription>
                   {activeAgentFleet
-                    ? `Add a ${agentPath === 'openclaw' ? 'OpenClaw' : 'native'} runtime to ${activeAgentFleet.name}.`
+                    ? `Add a ${agentPath === 'openclaw' ? 'OpenClaw' : agentPath === 'hermes' ? 'Hermes' : 'native'} runtime to ${activeAgentFleet.name}.`
                     : 'Add a runtime to this fleet.'}
                 </DialogDescription>
               </DialogHeader>
@@ -884,10 +902,11 @@ export default function DashboardPage() {
                     id="agent-path"
                     className={selectClass}
                     value={agentPath}
-                    onChange={(e) => setAgentPath(e.target.value as 'native' | 'openclaw')}
+                    onChange={(e) => setAgentPath(e.target.value as AgentPath)}
                   >
                     <option value="native">Native</option>
                     <option value="openclaw">OpenClaw</option>
+                    <option value="hermes">Hermes</option>
                   </select>
                 </div>
               </div>
@@ -989,6 +1008,56 @@ export default function DashboardPage() {
                   </div>
                 </div>
               )}
+              {agentPath === 'hermes' && (
+                <div className="rounded-md border bg-muted/20 p-4">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="hermes-model-provider">Model provider</Label>
+                      <select
+                        id="hermes-model-provider"
+                        className={selectClass}
+                        value={hermesModelProvider}
+                        onChange={(e) => setHermesModelProvider(e.target.value)}
+                      >
+                        <option value="openai">OpenAI</option>
+                        <option value="anthropic">Anthropic</option>
+                        <option value="openrouter">OpenRouter</option>
+                        <option value="google">Google</option>
+                        <option value="groq">Groq</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="hermes-model-id">Model ID</Label>
+                      <Input
+                        id="hermes-model-id"
+                        placeholder="openai/gpt-5.4-mini"
+                        value={hermesModelId}
+                        onChange={(e) => setHermesModelId(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="hermes-model-api-key">Model API key</Label>
+                      <Input
+                        id="hermes-model-api-key"
+                        type="password"
+                        placeholder="Provider API key"
+                        value={hermesModelApiKey}
+                        onChange={(e) => setHermesModelApiKey(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="hermes-gateway-api-key">Gateway API key</Label>
+                      <Input
+                        id="hermes-gateway-api-key"
+                        type="password"
+                        placeholder="Optional gateway key"
+                        value={hermesGatewayApiKey}
+                        onChange={(e) => setHermesGatewayApiKey(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
               <div className="space-y-2">
                 <Label htmlFor="agent-prompt">System prompt</Label>
                 <Textarea
@@ -1004,7 +1073,7 @@ export default function DashboardPage() {
                 </Button>
                 <Button type="submit" disabled={deployingAgent}>
                   {deployingAgent && <Loader2 className="animate-spin" />}
-                  {agentPath === 'openclaw' ? 'Deploy OpenClaw' : 'Deploy agent'}
+                  {agentPath === 'openclaw' ? 'Deploy OpenClaw' : agentPath === 'hermes' ? 'Deploy Hermes' : 'Deploy agent'}
                 </Button>
               </DialogFooter>
             </form>
@@ -1342,7 +1411,7 @@ function FleetCard({
   expanded: boolean
   onToggle: () => void
   onOpenWorld: () => void
-  onDeployAgent: (path: 'native' | 'openclaw') => void
+  onDeployAgent: (path: AgentPath) => void
   onConfigureOrchestration: () => void
   onTerminateAgent: (agentId: string) => void
 }) {
@@ -1406,6 +1475,18 @@ function FleetCard({
             >
               <Bot />
               OpenClaw
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation()
+                onDeployAgent('hermes')
+              }}
+            >
+              <Bot />
+              Hermes
             </Button>
             <Button
               type="button"

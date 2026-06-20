@@ -1,4 +1,4 @@
 {
   "title": "Integrations",
-  "pages": ["agent-commons", "axl", "openclaw", "guest-runtimes"]
+  "pages": ["agent-commons", "axl", "openclaw", "hermes", "guest-runtimes"]
 }

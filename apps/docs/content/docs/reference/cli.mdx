@@ -40,6 +40,7 @@ commonos fleet status flt_xxx
 commonos agent deploy --fleet flt_xxx --role backend-engineer
 commonos agent deploy --fleet flt_xxx --role manager --tier manager
 commonos agent deploy --fleet flt_xxx --role researcher --prompt "You research markets."
+commonos agent deploy --fleet flt_xxx --role hermes-researcher --runtime hermes --model openai/gpt-5.4-mini
 commonos agent deploy --fleet flt_xxx --role guest --image ghcr.io/acme/agent:latest
 
 commonos agent ls --fleet flt_xxx
@@ -47,7 +48,9 @@ commonos agent logs agt_xxx --fleet flt_xxx
 commonos agent terminate agt_xxx --fleet flt_xxx
 ```
 
-`--image` sets `integrationPath: "guest"` and runs the image as the
+`--runtime` can be `native`, `openclaw`, `hermes`, or `guest`. `--image`
+without `--runtime` keeps the legacy behavior and sets `integrationPath:
+"guest"`, running the image as the
 `guest-runtime` container in the agent pod. The image must run a long-lived
 process that uses the injected `AGENT_ID`, `AGENT_TOKEN`, and `API_URL` values.
 

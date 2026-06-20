@@ -1,0 +1,25 @@
+---
+title: Hermes
+description: Gateway-backed integration path for Hermes agents.
+---
+
+The `hermes` integration path runs a Hermes agent through the same CommonOS control plane used by native and OpenClaw agents. CommonOS keeps the agent record, wallet, world state, tasks, events, workspace snapshots, and cost telemetry unified while Hermes owns runtime execution.
+
+## API Config
+
+```json
+{
+  "role": "research-agent",
+  "integrationPath": "hermes",
+  "hermesConfig": {
+    "modelProvider": "openai",
+    "modelId": "openai/gpt-5.4-mini",
+    "modelApiKey": "secret-ref",
+    "gatewayApiKey": "optional-gateway-key"
+  }
+}
+```
+
+## Runtime Setup
+
+Set `HERMES_IMAGE_URL` to launch a Hermes Gateway sidecar per agent, or set `HERMES_GATEWAY_URL` to route Hermes agents to an existing Gateway. The daemon calls the gateway through the Responses-compatible API and emits token usage events so the cost dashboard can show Hermes model and infrastructure spend.

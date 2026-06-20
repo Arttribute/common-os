@@ -406,6 +406,8 @@ function SessionCard({ entry }: { entry: SessionEntry }) {
   const [expanded, setExpanded] = useState(false)
   const waitingLabel = entry.runtimeStatus === 'waiting_for_openclaw'
     ? 'waiting for OpenClaw…'
+    : entry.runtimeStatus === 'waiting_for_hermes'
+      ? 'waiting for Hermes…'
     : entry.runtimeStatus === 'waiting_for_openclaw_cli'
       ? 'waiting for OpenClaw CLI…'
       : entry.runtimeStatus?.startsWith('tool:')

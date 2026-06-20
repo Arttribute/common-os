@@ -11,7 +11,7 @@ An agent is a durable worker inside a fleet. CommonOS stores the agent record an
 | --- | --- |
 | `config.role` | Human-readable role, such as `backend-engineer` or `manager`. |
 | `config.systemPrompt` | Instructions used by the runtime. |
-| `config.integrationPath` | `native`, `openclaw`, or `guest`. |
+| `config.integrationPath` | `native`, `openclaw`, `hermes`, or `guest`. |
 | `permissionTier` | `manager` or `worker`. |
 | `status` | Provisioning/runtime state. |
 | `pod` | Provider, region, and namespace/service ID. |
@@ -26,12 +26,13 @@ An agent is a durable worker inside a fleet. CommonOS stores the agent record an
 | --- | --- | --- |
 | `native` | Agent Commons CLI/runtime through the daemon and runner | Agents needing memory, tools, sessions, and AI execution. |
 | `openclaw` | OpenClaw gateway configuration | Messaging app and integration-heavy agents. |
+| `hermes` | Hermes gateway configuration | Hermes-native agents managed through CommonOS tasks, world state, and cost telemetry. |
 | `guest` | Tenant-provided Docker image plus SDK or HTTP contract | Custom frameworks such as LangGraph, CrewAI, AutoGen, or internal agents. |
 
 ## Provisioning Flow
 
 1. API creates a CommonOS agent ID and `cos_agent_...` token.
-2. Native agents attempt Agent Commons registration.
+2. Native agents attempt Agent Commons registration. OpenClaw and Hermes agents keep their runtime identity in their own gateway.
 3. Wallet state is created or resolved.
 4. Agent is inserted into MongoDB as `provisioning`.
 5. World state is updated with the new agent.

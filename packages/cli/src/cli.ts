@@ -161,23 +161,54 @@ agentCmd.addCommand(
     .requiredOption("--role <role>",      "Agent role (e.g. backend-engineer)")
     .option("--prompt <prompt>",  "System prompt string")
     .option("--image <image>",    "Docker image URI (enables guest path)")
+    .option("--runtime <runtime>", "Runtime: native, openclaw, hermes, or guest")
+    .option("--model-provider <provider>", "Model provider for OpenClaw/Hermes", "openai")
+    .option("--model <model>", "Model ID for Hermes")
+    .option("--model-api-key <key>", "Model provider API key for OpenClaw/Hermes")
+    .option("--gateway-api-key <key>", "Gateway API key for Hermes")
+    .option("--plugins <plugins>", "Comma-separated OpenClaw plugins")
     .option("--tier <tier>",      "Permission tier: manager or worker", "worker")
     .option("--room <room>",      "Room to place agent in",             "dev-room")
     .option("--type <type>",      "Cloud instance type",                "t3.medium")
     .action(async (opts: {
       fleet: string; role: string; prompt?: string; image?: string;
+      runtime?: "native" | "openclaw" | "hermes" | "guest";
+      modelProvider: string; model?: string; modelApiKey?: string; gatewayApiKey?: string; plugins?: string;
       tier: string; room: string; type: string;
     }) => {
       const spinner = ora(`Deploying ${opts.role}…`).start();
       try {
+        const integrationPath = opts.runtime ?? (opts.image ? "guest" : "native");
+        if (!["native", "openclaw", "hermes", "guest"].includes(integrationPath)) {
+          throw new Error(`Unsupported runtime "${integrationPath}"`);
+        }
         const result = await getClient().agents.deploy(opts.fleet, {
           role:            opts.role,
           systemPrompt:    opts.prompt ?? `You are a ${opts.role} in a software team.`,
           permissionTier:  opts.tier,
           room:            opts.room,
           dockerImage:     opts.image ?? null,
-          integrationPath: opts.image ? "guest" : "native",
+          integrationPath,
           instanceType:    opts.type,
+          ...(integrationPath === "openclaw"
+            ? {
+                openclawConfig: {
+                  modelProvider: opts.modelProvider,
+                  modelApiKey: opts.modelApiKey,
+                  plugins: opts.plugins?.split(",").map((plugin) => plugin.trim()).filter(Boolean) ?? [],
+                },
+              }
+            : {}),
+          ...(integrationPath === "hermes"
+            ? {
+                hermesConfig: {
+                  modelProvider: opts.modelProvider,
+                  modelId: opts.model,
+                  modelApiKey: opts.modelApiKey,
+                  gatewayApiKey: opts.gatewayApiKey,
+                },
+              }
+            : {}),
         });
         const id = (result as { agentId?: string })?.agentId ?? "";
         spinner.succeed(chalk.green(`Agent deployed${id ? `  ${id}` : ""}`));

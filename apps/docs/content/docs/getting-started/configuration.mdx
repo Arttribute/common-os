@@ -30,6 +30,12 @@ The API reads from `apps/api/.env.local` during local development.
 | `OPENCLAW_MODEL_PROVIDER` | OpenClaw runtime | Default provider injected for OpenClaw agents. |
 | `OPENCLAW_MODEL_ID` | OpenClaw runtime | Default OpenClaw model route for generated gateway config, for example `openai/gpt-5.4-mini`. |
 | `OPENCLAW_MODEL_API_KEY` | OpenClaw runtime | Default model provider key injected for OpenClaw agents. |
+| `HERMES_IMAGE_URL` | Hermes runtime | Image used for the per-agent Hermes Gateway sidecar. Required for one-click Hermes deploys unless `HERMES_GATEWAY_URL` is set. |
+| `HERMES_GATEWAY_URL` | Hermes runtime | Existing Hermes Gateway URL. When set without an image, CommonOS targets this Gateway instead of launching a sidecar. |
+| `HERMES_MODEL_PROVIDER` | Hermes runtime | Default provider injected for Hermes agents. |
+| `HERMES_MODEL_ID` | Hermes runtime | Default Hermes model route for generated gateway config, for example `openai/gpt-5.4-mini`. |
+| `HERMES_MODEL_API_KEY` | Hermes runtime | Default model provider key injected for Hermes agents. |
+| `HERMES_GATEWAY_API_KEY` | Hermes runtime | Optional bearer token used when the daemon calls a secured Hermes Gateway. |
 | `AWS_REGION` | AWS | Region for EKS operations. |
 | `EKS_CLUSTER` | AWS | EKS cluster name. |
 
