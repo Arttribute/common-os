@@ -574,7 +574,6 @@ interface ComputerViewProps {
   agentRole: string
   pod?: { provider: string; region: string; namespaceId?: string | null }
   snapshot: string | null
-  browser: BrowserInfo | null
   loading: boolean
   error: string | null
   apiUrl?: string
@@ -583,7 +582,7 @@ interface ComputerViewProps {
   resolveToken?: () => Promise<string | null>
 }
 
-function ComputerView({ agentRole, pod, snapshot, browser, loading, error, apiUrl, fleetId, agentId, resolveToken }: ComputerViewProps) {
+function ComputerView({ agentRole, pod, snapshot, loading, error, apiUrl, fleetId, agentId, resolveToken }: ComputerViewProps) {
   const [path, setPath] = useState<string[]>([])
   const [history, setHistory] = useState<string[][]>([[]])
   const [histIdx, setHistIdx] = useState(0)
@@ -749,12 +748,6 @@ function ComputerView({ agentRole, pod, snapshot, browser, loading, error, apiUr
             onClick={() => navigateTo([])}
           />
           <div style={{ marginTop: 12, padding: '4px 10px 6px', fontSize: 10, color: '#475569', fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: 1 }}>
-            Browser
-          </div>
-          <div style={{ padding: '3px 10px', fontSize: 10, color: browser?.status === 'on' ? '#22c55e' : browser?.status === 'error' ? '#ef4444' : '#64748b', fontFamily: 'monospace', lineHeight: 1.8 }}>
-            {browser?.status ?? 'off'}
-          </div>
-          <div style={{ marginTop: 12, padding: '4px 10px 6px', fontSize: 10, color: '#475569', fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: 1 }}>
             Pod Info
           </div>
           {pod && (
@@ -774,7 +767,6 @@ function ComputerView({ agentRole, pod, snapshot, browser, loading, error, apiUr
 
         {/* File area */}
         <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-          <BrowserPreview browser={browser} />
           {loading ? (
             <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <div style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace' }}>loading workspace…</div>
@@ -846,52 +838,122 @@ function ComputerView({ agentRole, pod, snapshot, browser, loading, error, apiUr
   )
 }
 
-function BrowserPreview({ browser }: { browser: BrowserInfo | null }) {
+// ─── Browser view ───────────────────────────────────────────────────────────
+
+function browserStatusColor(status: BrowserInfo['status'] | undefined): string {
+  switch (status) {
+    case 'on': return '#22c55e'
+    case 'starting': return '#f59e0b'
+    case 'error': return '#ef4444'
+    default: return '#64748b'
+  }
+}
+
+interface BrowserViewProps {
+  browser: BrowserInfo | null
+  loading: boolean
+  error: string | null
+}
+
+function BrowserView({ browser, loading, error }: BrowserViewProps) {
   const status = browser?.status ?? 'off'
-  const color = status === 'on' ? '#22c55e' : status === 'starting' ? '#f59e0b' : status === 'error' ? '#ef4444' : '#64748b'
+  const color = browserStatusColor(status)
+  const isLive = status === 'on' || status === 'starting'
+
   return (
-    <div style={{
-      borderBottom: '1px solid rgba(255,255,255,0.04)',
-      background: '#070b12',
-      padding: 8,
-      display: 'grid',
-      gridTemplateColumns: browser?.screenshot ? '160px minmax(0, 1fr)' : 'minmax(0, 1fr)',
-      gap: 10,
-      flexShrink: 0,
-    }}>
-      {browser?.screenshot && (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#080c14' }}>
+      {/* Toolbar — status + url */}
+      <div style={{
+        background: 'linear-gradient(180deg, #1a2540 0%, #111827 100%)',
+        borderBottom: '1px solid rgba(255,255,255,0.06)',
+        padding: '6px 10px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        flexShrink: 0,
+      }}>
+        <span style={{ width: 7, height: 7, borderRadius: 999, background: color, boxShadow: `0 0 8px ${color}`, flexShrink: 0 }} />
+        <span style={{ fontSize: 10, color, fontFamily: 'monospace', textTransform: 'uppercase', flexShrink: 0 }}>{status}</span>
         <div style={{
-          width: 160,
-          aspectRatio: '16 / 10',
-          border: '1px solid rgba(255,255,255,0.08)',
-          borderRadius: 4,
+          flex: 1,
+          background: '#0a0e1a',
+          border: '1px solid rgba(255,255,255,0.1)',
+          borderRadius: 3,
+          padding: '3px 8px',
+          fontSize: 11,
+          fontFamily: 'monospace',
+          color: browser?.url ? '#94a3b8' : '#475569',
           overflow: 'hidden',
-          background: '#020617',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
         }}>
-          <img src={browser.screenshot} alt="Agent browser viewport" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+          {browser?.url ?? 'no page open'}
         </div>
-      )}
-      <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 5, justifyContent: 'center' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ width: 7, height: 7, borderRadius: 999, background: color, boxShadow: `0 0 8px ${color}` }} />
-          <span style={{ fontSize: 10, color, fontFamily: 'monospace', textTransform: 'uppercase' }}>{status}</span>
-          {browser?.updatedAt && (
-            <span style={{ marginLeft: 'auto', fontSize: 10, color: '#475569', fontFamily: 'monospace' }}>{relativeTime(browser.updatedAt)}</span>
-          )}
-        </div>
-        <div style={{ fontSize: 11, color: '#94a3b8', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {browser?.title || browser?.url || 'Agent browser is not running'}
-        </div>
-        {browser?.url && (
-          <div style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {browser.url}
+        {browser?.updatedAt && (
+          <span style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace', flexShrink: 0 }}>{relativeTime(browser.updatedAt)}</span>
+        )}
+      </div>
+
+      {/* Viewport */}
+      <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        {loading && !browser ? (
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace' }}>loading browser…</div>
+          </div>
+        ) : error && !browser ? (
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 6 }}>
+            <div style={{ fontSize: 16 }}>⚠️</div>
+            <div style={{ fontSize: 11, color: '#fca5a5', fontFamily: 'monospace' }}>{error}</div>
+          </div>
+        ) : browser?.screenshot ? (
+          <div style={{ flex: 1, overflow: 'auto', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: 12, background: '#020617' }}>
+            <img
+              src={browser.screenshot}
+              alt="Agent browser viewport"
+              style={{
+                maxWidth: '100%',
+                border: '1px solid rgba(255,255,255,0.08)',
+                borderRadius: 4,
+                boxShadow: isLive ? `0 0 0 1px ${color}33` : undefined,
+                display: 'block',
+              }}
+            />
+          </div>
+        ) : (
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 6 }}>
+            <div style={{ fontSize: 16 }}>🌐</div>
+            <div style={{ fontSize: 11, color: '#64748b', fontFamily: 'monospace' }}>
+              {status === 'starting' ? 'browser is launching…' : 'agent browser is off'}
+            </div>
+            <div style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace' }}>
+              it will appear here when the agent opens a page
+            </div>
           </div>
         )}
-        {(browser?.lastAction || browser?.error) && (
-          <div style={{ fontSize: 10, color: browser.error ? '#ef4444' : '#475569', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {browser.error ?? browser.lastAction}
-          </div>
-        )}
+      </div>
+
+      {/* Status bar — what the agent is doing */}
+      <div style={{
+        minHeight: 22,
+        borderTop: '1px solid rgba(255,255,255,0.04)',
+        background: '#0a0e18',
+        display: 'flex',
+        alignItems: 'center',
+        padding: '4px 10px',
+        gap: 10,
+        flexShrink: 0,
+      }}>
+        <span style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace', flexShrink: 0 }}>doing:</span>
+        <span style={{
+          fontSize: 10,
+          color: browser?.error ? '#ef4444' : '#94a3b8',
+          fontFamily: 'monospace',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}>
+          {browser?.error ?? browser?.lastAction ?? browser?.title ?? '—'}
+        </span>
       </div>
     </div>
   )
@@ -1328,7 +1390,7 @@ export function AgentDetailModal() {
   const searchParams = useSearchParams()
   const { getAccessToken, authenticated } = usePrivy()
 
-  const [tab, setTab] = useState<'sessions' | 'computer' | 'wallet'>('sessions')
+  const [tab, setTab] = useState<'sessions' | 'computer' | 'browser' | 'wallet'>('sessions')
   const [sessions, setSessions]   = useState<AgentSession[]>([])
   const [snapshot, setSnapshot]   = useState<string | null>(null)
   const [browser, setBrowser] = useState<BrowserInfo | null>(null)
@@ -1534,16 +1596,17 @@ export function AgentDetailModal() {
   }, [isOpen, tab, activeSessionId, fetchSessions, fetchSessionMessages])
 
   useEffect(() => {
-    if (isOpen && tab === 'computer') void fetchWorkspace()
+    if (isOpen && (tab === 'computer' || tab === 'browser')) void fetchWorkspace()
   }, [isOpen, tab, fetchWorkspace])
 
   useEffect(() => {
     if (isOpen && tab === 'wallet') void fetchWallet()
   }, [isOpen, tab, fetchWallet])
 
-  // Auto-refresh workspace every 10 s while the computer tab is active
+  // Auto-refresh workspace/browser snapshot every 10 s while those tabs are active
+  // (browser_status events also stream in live via SSE regardless of active tab)
   useEffect(() => {
-    if (!isOpen || tab !== 'computer') return
+    if (!isOpen || (tab !== 'computer' && tab !== 'browser')) return
     const id = setInterval(() => { void fetchWorkspace() }, 10_000)
     return () => clearInterval(id)
   }, [isOpen, tab, fetchWorkspace])
@@ -1792,6 +1855,18 @@ export function AgentDetailModal() {
           <TabButton active={tab === 'computer'} onClick={() => setTab('computer')}>
             🖥️ Computer
           </TabButton>
+          <TabButton active={tab === 'browser'} onClick={() => setTab('browser')}>
+            🌐 Browser
+            <span style={{
+              marginLeft: 6,
+              width: 6,
+              height: 6,
+              borderRadius: 999,
+              display: 'inline-block',
+              background: browserStatusColor(browser?.status),
+              boxShadow: browser?.status === 'on' ? `0 0 6px ${browserStatusColor(browser?.status)}` : undefined,
+            }} />
+          </TabButton>
           <TabButton active={tab === 'wallet'} onClick={() => setTab('wallet')}>
             ◇ Wallet
           </TabButton>
@@ -1822,13 +1897,18 @@ export function AgentDetailModal() {
               agentRole={shortRole}
               pod={agent.pod}
               snapshot={snapshot}
-              browser={browser}
               loading={snapLoading}
               error={workspaceError}
               apiUrl={apiUrl}
               fleetId={fleetId}
               agentId={selectedId ?? undefined}
               resolveToken={resolveToken}
+            />
+          ) : tab === 'browser' ? (
+            <BrowserView
+              browser={browser}
+              loading={snapLoading}
+              error={workspaceError}
             />
           ) : (
             <WalletView

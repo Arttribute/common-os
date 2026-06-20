@@ -380,6 +380,7 @@ async function main() {
   setInterval(() => {
     refreshFleetOrchestration().catch(() => {});
   }, 60_000);
+  startBrowserPolling();
 
   startFileWatcher();
   startHealthMonitor();
@@ -478,8 +479,11 @@ type BrowserRuntimeStatus = {
   error?: string | null;
 };
 
+let browserLastAction: string | null = null;
+
 async function browserSnapshot(lastAction?: string): Promise<BrowserRuntimeStatus> {
-  if (!browserProc || !browserWs || !browserSessionId) return { status: "off", lastAction: lastAction ?? null };
+  if (lastAction) browserLastAction = lastAction;
+  if (!browserProc || !browserWs || !browserSessionId) return { status: "off", lastAction: browserLastAction };
   try {
     const urlResult = await cdpSend("Runtime.evaluate", { expression: "location.href", returnByValue: true }, browserSessionId);
     const titleResult = await cdpSend("Runtime.evaluate", { expression: "document.title", returnByValue: true }, browserSessionId);
@@ -492,7 +496,7 @@ async function browserSnapshot(lastAction?: string): Promise<BrowserRuntimeStatu
       url,
       title,
       screenshot: data ? `data:image/jpeg;base64,${data}` : null,
-      lastAction: lastAction ?? null,
+      lastAction: browserLastAction,
       error: null,
     };
   } catch (err) {
@@ -501,10 +505,18 @@ async function browserSnapshot(lastAction?: string): Promise<BrowserRuntimeStatu
       url: null,
       title: null,
       screenshot: null,
-      lastAction: lastAction ?? null,
+      lastAction: browserLastAction,
       error: err instanceof Error ? err.message : String(err),
     };
   }
+}
+
+// Keeps the browser tab live between agent-driven actions
+function startBrowserPolling(): void {
+  setInterval(() => {
+    if (!browserProc || !browserWs || !browserSessionId) return;
+    void browserSnapshot().then(emitBrowserStatus).catch(() => {});
+  }, 2_500);
 }
 
 async function emitBrowserStatus(status: BrowserRuntimeStatus): Promise<void> {
@@ -571,7 +583,8 @@ async function connectBrowserWs(wsUrl: string): Promise<void> {
     browserSessionId = null;
     for (const pending of browserPending.values()) pending.reject(new Error("browser websocket closed"));
     browserPending.clear();
-    void emitBrowserStatus({ status: "off", url: null, title: null, screenshot: null, lastAction: "browser disconnected", error: null });
+    browserLastAction = "browser disconnected";
+    void emitBrowserStatus({ status: "off", url: null, title: null, screenshot: null, lastAction: browserLastAction, error: null });
   });
   await new Promise<void>((resolveOpen, rejectOpen) => {
     const timeout = setTimeout(() => rejectOpen(new Error("browser websocket open timed out")), 5_000);
@@ -616,7 +629,8 @@ async function ensureBrowser(url?: string): Promise<void> {
     browserProc = null;
     browserWs = null;
     browserSessionId = null;
-    void emitBrowserStatus({ status: "off", url: null, title: null, screenshot: null, lastAction: "browser exited", error: null });
+    browserLastAction = "browser exited";
+    void emitBrowserStatus({ status: "off", url: null, title: null, screenshot: null, lastAction: browserLastAction, error: null });
   });
   await connectBrowserWs(await waitForBrowserWs(port));
   const target = await cdpSend("Target.createTarget", {
@@ -640,7 +654,8 @@ async function closeBrowser(): Promise<void> {
   browserWs = null;
   browserSessionId = null;
   current?.kill();
-  await emitBrowserStatus({ status: "off", url: null, title: null, screenshot: null, lastAction: "close", error: null });
+  browserLastAction = "close";
+  await emitBrowserStatus({ status: "off", url: null, title: null, screenshot: null, lastAction: browserLastAction, error: null });
 }
 
 // ─── File watcher ──────────────────────────────────────────────────────────
