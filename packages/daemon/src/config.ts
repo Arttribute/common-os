@@ -29,7 +29,7 @@ export interface DaemonConfig {
   managerPeerId?: string;  // ed25519 public key (hex) used as X-Destination-Peer-Id
 }
 
-export function loadConfig(path = "/etc/common-os/config.json"): DaemonConfig {
+export function loadConfig(path = process.env.COMMONOS_CONFIG_PATH ?? "/etc/common-os/config.json"): DaemonConfig {
   let raw: string;
   try {
     raw = readFileSync(path, "utf-8");

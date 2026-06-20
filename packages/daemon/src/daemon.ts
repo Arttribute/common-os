@@ -29,6 +29,8 @@ const OPENCLAW_READY_TIMEOUT_MS = Number(process.env.OPENCLAW_READY_TIMEOUT_MS ?
 const HERMES_RESPONSE_TIMEOUT_MS = Number(process.env.HERMES_RESPONSE_TIMEOUT_MS ?? 90_000);
 const HERMES_READY_TIMEOUT_MS = Number(process.env.HERMES_READY_TIMEOUT_MS ?? 30_000);
 const AGENT_TOOLS_PORT = Number(process.env.AGENT_TOOLS_PORT ?? 4100);
+const BROWSER_STATUS_MS = Number(process.env.BROWSER_STATUS_MS ?? 7_500);
+const BROWSER_SCREENSHOT_QUALITY = Number(process.env.BROWSER_SCREENSHOT_QUALITY ?? 45);
 const HEALTH_MS      = 10_000;
 const AXL_INBOX_MS   = 5_000;
 const WORKSPACE_DIR  = process.env.COMMONOS_WORKSPACE ?? config.workspaceDir;
@@ -101,6 +103,8 @@ let fleetOrchestration: FleetOrchestration | null = null;
 let browserProc: ReturnType<typeof Bun.spawn> | null = null;
 let browserWs: WebSocket | null = null;
 let browserSessionId: string | null = null;
+let browserStderrTail = "";
+let browserLastError: string | null = null;
 let browserCdpId = 0;
 const browserPending = new Map<number, { resolve: (value: Record<string, unknown>) => void; reject: (err: Error) => void }>();
 
@@ -483,13 +487,36 @@ type BrowserRuntimeStatus = {
 
 let browserLastAction: string | null = null;
 
+function rememberBrowserStderr(chunk: string): void {
+  browserStderrTail = `${browserStderrTail}${chunk}`.slice(-4_000);
+}
+
+async function consumeBrowserStderr(stream: ReadableStream<Uint8Array> | null | undefined): Promise<void> {
+  if (!stream) return;
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value) rememberBrowserStderr(decoder.decode(value, { stream: true }));
+    }
+  } catch (err) {
+    rememberBrowserStderr(`\n[stderr read failed: ${err instanceof Error ? err.message : String(err)}]`);
+  }
+}
+
 async function browserSnapshot(lastAction?: string): Promise<BrowserRuntimeStatus> {
   if (lastAction) browserLastAction = lastAction;
-  if (!browserProc || !browserWs || !browserSessionId) return { status: "off", lastAction: browserLastAction };
+  if (!browserProc || !browserWs || !browserSessionId) return { status: "off", lastAction: browserLastAction, error: browserLastError };
   try {
     const urlResult = await cdpSend("Runtime.evaluate", { expression: "location.href", returnByValue: true }, browserSessionId);
     const titleResult = await cdpSend("Runtime.evaluate", { expression: "document.title", returnByValue: true }, browserSessionId);
-    const shotResult = await cdpSend("Page.captureScreenshot", { format: "jpeg", quality: 55, fromSurface: true }, browserSessionId);
+    const shotResult = await cdpSend("Page.captureScreenshot", {
+      format: "jpeg",
+      quality: Math.max(25, Math.min(80, BROWSER_SCREENSHOT_QUALITY)),
+      fromSurface: true,
+    }, browserSessionId);
     const url = cdpValue(urlResult) ?? null;
     const title = cdpValue(titleResult) ?? null;
     const data = typeof shotResult.data === "string" ? shotResult.data : null;
@@ -508,7 +535,7 @@ async function browserSnapshot(lastAction?: string): Promise<BrowserRuntimeStatu
       title: null,
       screenshot: null,
       lastAction: browserLastAction,
-      error: err instanceof Error ? err.message : String(err),
+      error: browserLastError ?? (err instanceof Error ? err.message : String(err)),
     };
   }
 }
@@ -518,7 +545,7 @@ function startBrowserPolling(): void {
   setInterval(() => {
     if (!browserProc || !browserWs || !browserSessionId) return;
     void browserSnapshot().then(emitBrowserStatus).catch(() => {});
-  }, 2_500);
+  }, BROWSER_STATUS_MS);
 }
 
 async function emitBrowserStatus(status: BrowserRuntimeStatus): Promise<void> {
@@ -530,6 +557,12 @@ async function emitBrowserStatus(status: BrowserRuntimeStatus): Promise<void> {
 function browserExecutablePath(): string {
   return process.env.BROWSER_EXECUTABLE_PATH
     ?? (existsSync("/usr/bin/chromium-browser") ? "/usr/bin/chromium-browser" : "/usr/bin/chromium");
+}
+
+function resetBrowserState(): void {
+  browserProc = null;
+  browserWs = null;
+  browserSessionId = null;
 }
 
 async function cdpSend(method: string, params: Record<string, unknown> = {}, sessionId?: string | null): Promise<Record<string, unknown>> {
@@ -547,8 +580,9 @@ async function cdpSend(method: string, params: Record<string, unknown> = {}, ses
 }
 
 function cdpValue(result: Record<string, unknown>): string | null {
-  const obj = result.result as Record<string, unknown> | undefined;
-  const nested = obj?.result as Record<string, unknown> | undefined;
+  const value = result.value;
+  if (typeof value === "string") return value;
+  const nested = result.result as Record<string, unknown> | undefined;
   return typeof nested?.value === "string" ? nested.value : null;
 }
 
@@ -610,53 +644,91 @@ async function ensureBrowser(url?: string): Promise<void> {
   await emitBrowserStatus({ status: "starting", url: url ?? null, title: null, screenshot: null, lastAction: "launch", error: null });
   const port = Number(process.env.BROWSER_DEBUG_PORT ?? 9222);
   const userDataDir = process.env.BROWSER_USER_DATA_DIR ?? "/tmp/commonos-agent-browser";
+  const executablePath = browserExecutablePath();
+  if (!existsSync(executablePath)) {
+    browserLastError = `Chromium executable not found at ${executablePath}`;
+    await emitBrowserStatus({ status: "error", url: null, title: null, screenshot: null, lastAction: "launch", error: browserLastError });
+    throw new Error(browserLastError);
+  }
+  browserLastError = null;
+  browserStderrTail = "";
   mkdirSync(userDataDir, { recursive: true });
-  browserProc = Bun.spawn([
-    browserExecutablePath(),
+  console.log(`[daemon] launching browser executable=${executablePath} port=${port} profile=${userDataDir}`);
+  const proc = Bun.spawn([
+    executablePath,
     `--remote-debugging-port=${port}`,
+    "--remote-debugging-address=127.0.0.1",
     `--user-data-dir=${userDataDir}`,
     "--headless=new",
-      "--no-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--disable-background-networking",
-      "--disable-background-timer-throttling",
-      "--disable-renderer-backgrounding",
+    "--no-sandbox",
+    "--no-zygote",
+    "--disable-dev-shm-usage",
+    "--disable-gpu",
+    "--disable-software-rasterizer",
+    "--disable-background-networking",
+    "--disable-background-timer-throttling",
+    "--disable-renderer-backgrounding",
+    "--disable-extensions",
+    "--disable-sync",
+    "--disable-default-apps",
+    "--disable-popup-blocking",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--metrics-recording-only",
+    "--mute-audio",
     "about:blank",
   ], {
     stdout: "ignore",
     stderr: "pipe",
   });
-  void browserProc.exited.then(() => {
-    browserProc = null;
-    browserWs = null;
-    browserSessionId = null;
+  browserProc = proc;
+  void consumeBrowserStderr(proc.stderr);
+  void proc.exited.then((code) => {
+    if (browserProc !== proc) return;
+    browserLastError = `Chromium exited with code ${code}${browserStderrTail.trim() ? `: ${browserStderrTail.trim()}` : ""}`;
+    console.warn(`[daemon] ${browserLastError}`);
+    resetBrowserState();
     browserLastAction = "browser exited";
-    void emitBrowserStatus({ status: "off", url: null, title: null, screenshot: null, lastAction: browserLastAction, error: null });
+    void emitBrowserStatus({ status: "off", url: null, title: null, screenshot: null, lastAction: browserLastAction, error: browserLastError });
   });
-  await connectBrowserWs(await waitForBrowserWs(port));
-  const target = await cdpSend("Target.createTarget", {
-    url: url ?? "about:blank",
-    width: Number(process.env.BROWSER_VIEWPORT_WIDTH ?? 1280),
-    height: Number(process.env.BROWSER_VIEWPORT_HEIGHT ?? 800),
-  });
-  const targetId = typeof target.targetId === "string" ? target.targetId : "";
-  const attached = await cdpSend("Target.attachToTarget", { targetId, flatten: true });
-  browserSessionId = typeof attached.sessionId === "string" ? attached.sessionId : null;
-  if (!browserSessionId) throw new Error("could not attach to browser target");
-  await cdpSend("Page.enable", {}, browserSessionId);
-  await cdpSend("Runtime.enable", {}, browserSessionId);
-  await emitBrowserStatus(await browserSnapshot(url ? `open ${url}` : "launch"));
+  try {
+    await connectBrowserWs(await waitForBrowserWs(port));
+    const target = await cdpSend("Target.createTarget", {
+      url: url ?? "about:blank",
+    });
+    const targetId = typeof target.targetId === "string" ? target.targetId : "";
+    const attached = await cdpSend("Target.attachToTarget", { targetId, flatten: true });
+    browserSessionId = typeof attached.sessionId === "string" ? attached.sessionId : null;
+    if (!browserSessionId) throw new Error("could not attach to browser target");
+    await cdpSend("Page.enable", {}, browserSessionId);
+    await cdpSend("Runtime.enable", {}, browserSessionId);
+    await cdpSend("Emulation.setDeviceMetricsOverride", {
+      width: Number(process.env.BROWSER_VIEWPORT_WIDTH ?? 1280),
+      height: Number(process.env.BROWSER_VIEWPORT_HEIGHT ?? 800),
+      deviceScaleFactor: 1,
+      mobile: false,
+    }, browserSessionId);
+    await emitBrowserStatus(await browserSnapshot(url ? `open ${url}` : "launch"));
+  } catch (err) {
+    browserLastError = `${err instanceof Error ? err.message : String(err)}${browserStderrTail.trim() ? `: ${browserStderrTail.trim()}` : ""}`;
+    console.warn(`[daemon] browser launch failed: ${browserLastError}`);
+    if (browserProc === proc) {
+      resetBrowserState();
+      proc.kill();
+    }
+    await emitBrowserStatus({ status: "error", url: null, title: null, screenshot: null, lastAction: "launch", error: browserLastError });
+    throw new Error(browserLastError);
+  }
 }
 
 async function closeBrowser(): Promise<void> {
   const current = browserProc;
-  browserProc = null;
-  browserWs?.close();
-  browserWs = null;
-  browserSessionId = null;
+  const currentWs = browserWs;
+  resetBrowserState();
+  currentWs?.close();
   current?.kill();
   browserLastAction = "close";
+  browserLastError = null;
   await emitBrowserStatus({ status: "off", url: null, title: null, screenshot: null, lastAction: browserLastAction, error: null });
 }
 
