@@ -118,6 +118,22 @@ router.post("/", async (c) => {
 					},
 				},
 			);
+		} else if (event.type === "browser_status") {
+			await agentCol.updateOne(
+				{ _id: agentId },
+				{
+					$set: {
+						"browser.status": event.payload.status,
+						"browser.url": event.payload.url ?? null,
+						"browser.title": event.payload.title ?? null,
+						"browser.screenshot": event.payload.screenshot ?? null,
+						"browser.lastAction": event.payload.lastAction ?? null,
+						"browser.error": event.payload.error ?? null,
+						"browser.updatedAt": now,
+						updatedAt: now,
+					},
+				},
+			);
 		} else if (event.type === "heartbeat") {
 			const runtimePayload = event.payload
 				? {

@@ -97,6 +97,11 @@ type FleetOrchestration = {
 let agentSessionId: string | null = null;
 let agcReady = false;
 let fleetOrchestration: FleetOrchestration | null = null;
+let browserProc: ReturnType<typeof Bun.spawn> | null = null;
+let browserWs: WebSocket | null = null;
+let browserSessionId: string | null = null;
+let browserCdpId = 0;
+const browserPending = new Map<number, { resolve: (value: Record<string, unknown>) => void; reject: (err: Error) => void }>();
 
 function axlEnabled(): boolean {
   return AXL_MODE !== "off" && AXL_MODE !== "disabled";
@@ -460,6 +465,182 @@ async function emitWorkspaceSnapshot(): Promise<void> {
     .emit({ type: "workspace_snapshot", payload: { snapshot, rootDir: WORKSPACE_DIR } })
     .catch(() => {});
   console.log(`[daemon] workspace snapshot emitted (${snapshot.split("\n").length} lines)`);
+}
+
+// ─── Agent browser ─────────────────────────────────────────────────────────
+
+type BrowserRuntimeStatus = {
+  status: "off" | "starting" | "on" | "error";
+  url?: string | null;
+  title?: string | null;
+  screenshot?: string | null;
+  lastAction?: string | null;
+  error?: string | null;
+};
+
+async function browserSnapshot(lastAction?: string): Promise<BrowserRuntimeStatus> {
+  if (!browserProc || !browserWs || !browserSessionId) return { status: "off", lastAction: lastAction ?? null };
+  try {
+    const urlResult = await cdpSend("Runtime.evaluate", { expression: "location.href", returnByValue: true }, browserSessionId);
+    const titleResult = await cdpSend("Runtime.evaluate", { expression: "document.title", returnByValue: true }, browserSessionId);
+    const shotResult = await cdpSend("Page.captureScreenshot", { format: "jpeg", quality: 55, fromSurface: true }, browserSessionId);
+    const url = cdpValue(urlResult) ?? null;
+    const title = cdpValue(titleResult) ?? null;
+    const data = typeof shotResult.data === "string" ? shotResult.data : null;
+    return {
+      status: "on",
+      url,
+      title,
+      screenshot: data ? `data:image/jpeg;base64,${data}` : null,
+      lastAction: lastAction ?? null,
+      error: null,
+    };
+  } catch (err) {
+    return {
+      status: "error",
+      url: null,
+      title: null,
+      screenshot: null,
+      lastAction: lastAction ?? null,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+async function emitBrowserStatus(status: BrowserRuntimeStatus): Promise<void> {
+  await agent.emit({ type: "browser_status", payload: status }).catch((err) => {
+    console.warn("[daemon] browser status emit failed:", err instanceof Error ? err.message : err);
+  });
+}
+
+function browserExecutablePath(): string {
+  return process.env.BROWSER_EXECUTABLE_PATH
+    ?? (existsSync("/usr/bin/chromium-browser") ? "/usr/bin/chromium-browser" : "/usr/bin/chromium");
+}
+
+async function cdpSend(method: string, params: Record<string, unknown> = {}, sessionId?: string | null): Promise<Record<string, unknown>> {
+  if (!browserWs || browserWs.readyState !== WebSocket.OPEN) throw new Error("browser websocket is not connected");
+  const id = ++browserCdpId;
+  const msg = { id, method, params, ...(sessionId ? { sessionId } : {}) };
+  const result = new Promise<Record<string, unknown>>((resolve, reject) => {
+    browserPending.set(id, { resolve, reject });
+    setTimeout(() => {
+      if (browserPending.delete(id)) reject(new Error(`browser command timed out: ${method}`));
+    }, 30_000);
+  });
+  browserWs.send(JSON.stringify(msg));
+  return result;
+}
+
+function cdpValue(result: Record<string, unknown>): string | null {
+  const obj = result.result as Record<string, unknown> | undefined;
+  const nested = obj?.result as Record<string, unknown> | undefined;
+  return typeof nested?.value === "string" ? nested.value : null;
+}
+
+async function waitForBrowserWs(port: number): Promise<string> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1_000) });
+      if (res.ok) {
+        const data = await res.json() as { webSocketDebuggerUrl?: string };
+        if (data.webSocketDebuggerUrl) return data.webSocketDebuggerUrl;
+      }
+    } catch {}
+    await sleep(250);
+  }
+  throw new Error("Chromium remote debugging endpoint did not become ready");
+}
+
+async function connectBrowserWs(wsUrl: string): Promise<void> {
+  browserWs = new WebSocket(wsUrl);
+  browserWs.addEventListener("message", (event) => {
+    const raw = typeof event.data === "string" ? event.data : "";
+    if (!raw) return;
+    const msg = JSON.parse(raw) as { id?: number; result?: Record<string, unknown>; error?: { message?: string } };
+    if (!msg.id) return;
+    const pending = browserPending.get(msg.id);
+    if (!pending) return;
+    browserPending.delete(msg.id);
+    if (msg.error) pending.reject(new Error(msg.error.message ?? "browser command failed"));
+    else pending.resolve(msg.result ?? {});
+  });
+  browserWs.addEventListener("close", () => {
+    browserWs = null;
+    browserSessionId = null;
+    for (const pending of browserPending.values()) pending.reject(new Error("browser websocket closed"));
+    browserPending.clear();
+    void emitBrowserStatus({ status: "off", url: null, title: null, screenshot: null, lastAction: "browser disconnected", error: null });
+  });
+  await new Promise<void>((resolveOpen, rejectOpen) => {
+    const timeout = setTimeout(() => rejectOpen(new Error("browser websocket open timed out")), 5_000);
+    browserWs?.addEventListener("open", () => {
+      clearTimeout(timeout);
+      resolveOpen();
+    }, { once: true });
+    browserWs?.addEventListener("error", () => {
+      clearTimeout(timeout);
+      rejectOpen(new Error("browser websocket connection failed"));
+    }, { once: true });
+  });
+}
+
+async function ensureBrowser(url?: string): Promise<void> {
+  if (browserProc && browserWs && browserSessionId) {
+    if (url) await cdpSend("Page.navigate", { url }, browserSessionId);
+    return;
+  }
+
+  await emitBrowserStatus({ status: "starting", url: url ?? null, title: null, screenshot: null, lastAction: "launch", error: null });
+  const port = Number(process.env.BROWSER_DEBUG_PORT ?? 9222);
+  const userDataDir = process.env.BROWSER_USER_DATA_DIR ?? "/tmp/commonos-agent-browser";
+  mkdirSync(userDataDir, { recursive: true });
+  browserProc = Bun.spawn([
+    browserExecutablePath(),
+    `--remote-debugging-port=${port}`,
+    `--user-data-dir=${userDataDir}`,
+    "--headless=new",
+      "--no-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--disable-background-networking",
+      "--disable-background-timer-throttling",
+      "--disable-renderer-backgrounding",
+    "about:blank",
+  ], {
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  void browserProc.exited.then(() => {
+    browserProc = null;
+    browserWs = null;
+    browserSessionId = null;
+    void emitBrowserStatus({ status: "off", url: null, title: null, screenshot: null, lastAction: "browser exited", error: null });
+  });
+  await connectBrowserWs(await waitForBrowserWs(port));
+  const target = await cdpSend("Target.createTarget", {
+    url: url ?? "about:blank",
+    width: Number(process.env.BROWSER_VIEWPORT_WIDTH ?? 1280),
+    height: Number(process.env.BROWSER_VIEWPORT_HEIGHT ?? 800),
+  });
+  const targetId = typeof target.targetId === "string" ? target.targetId : "";
+  const attached = await cdpSend("Target.attachToTarget", { targetId, flatten: true });
+  browserSessionId = typeof attached.sessionId === "string" ? attached.sessionId : null;
+  if (!browserSessionId) throw new Error("could not attach to browser target");
+  await cdpSend("Page.enable", {}, browserSessionId);
+  await cdpSend("Runtime.enable", {}, browserSessionId);
+  await emitBrowserStatus(await browserSnapshot(url ? `open ${url}` : "launch"));
+}
+
+async function closeBrowser(): Promise<void> {
+  const current = browserProc;
+  browserProc = null;
+  browserWs?.close();
+  browserWs = null;
+  browserSessionId = null;
+  current?.kill();
+  await emitBrowserStatus({ status: "off", url: null, title: null, screenshot: null, lastAction: "close", error: null });
 }
 
 // ─── File watcher ──────────────────────────────────────────────────────────
@@ -1475,10 +1656,24 @@ ${buildWorkspaceSnapshot(WORKSPACE_DIR)}
 | \`cli_write_file\` | Write or overwrite a file |
 | \`cli_search_files\` | Find files matching a pattern |
 | \`cli_run_command\` | Run a short command and return its output |
+| \`cli_browser_open\` | Launch this pod's Chromium browser and navigate to a URL |
+| \`cli_browser_status\` | Return browser on/off state, current URL, title, and latest screenshot |
+| \`cli_browser_screenshot\` | Refresh and return the latest browser screenshot |
+| \`cli_browser_click\` | Click a coordinate in the browser viewport |
+| \`cli_browser_type\` | Type text into the focused element or a selector |
+| \`cli_browser_close\` | Close this pod's browser |
 | \`cli_send_axl_message\` | Optional: send a CommonOS fleet message over AXL/P2P when explicitly requested |
 | \`cli_wallet_address\` | Return this agent's wallet address |
 | \`cli_wallet_balance\` | Return this agent's Base Sepolia wallet balance |
 | \`cli_wallet_send_transaction\` | Request a policy-checked wallet transaction signed by CommonOS/Privy |
+
+### Browser tool schemas
+
+\`\`\`json
+{"url":"https://example.com"}
+{"x":120,"y":260}
+{"text":"hello","selector":"input[name=q]"}
+\`\`\`
 
 ### cli_send_axl_message schema
 
@@ -1606,6 +1801,83 @@ async function executeLocalTool(name: string, args: Record<string, unknown>): Pr
       stderr.trim() ? `--- stderr ---\n${stderr.trim()}` : "",
       timedOut ? `(command timed out after ${timeoutMs / 1000}s)` : `(exit code ${code})`,
     ].filter(Boolean).join("\n") || "(no output)";
+  }
+
+  if (tool === "browser_open") {
+    const url = String(args.url ?? "");
+    if (!url) throw new Error('browser_open requires "url"');
+    await ensureBrowser(url);
+    await sleep(1_000);
+    const status = await browserSnapshot(`open ${url}`);
+    await emitBrowserStatus(status);
+    return [
+      `Browser is ${status.status}.`,
+      `url=${status.url ?? url}`,
+      `title=${status.title ?? ""}`,
+      status.screenshot ? "screenshot=available in CommonOS UI" : "",
+    ].filter(Boolean).join("\n");
+  }
+
+  if (tool === "browser_status") {
+    const status = await browserSnapshot("status");
+    await emitBrowserStatus(status);
+    return [
+      `Browser is ${status.status}.`,
+      status.url ? `url=${status.url}` : "",
+      status.title ? `title=${status.title}` : "",
+      status.lastAction ? `lastAction=${status.lastAction}` : "",
+      status.error ? `error=${status.error}` : "",
+      status.screenshot ? "screenshot=available in CommonOS UI" : "",
+    ].filter(Boolean).join("\n");
+  }
+
+  if (tool === "browser_screenshot") {
+    await ensureBrowser();
+    const status = await browserSnapshot("screenshot");
+    await emitBrowserStatus(status);
+    return [
+      `Captured browser screenshot.`,
+      `url=${status.url ?? ""}`,
+      `title=${status.title ?? ""}`,
+      "screenshot=available in CommonOS UI",
+    ].join("\n");
+  }
+
+  if (tool === "browser_click") {
+    const x = Number(args.x);
+    const y = Number(args.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('browser_click requires numeric "x" and "y"');
+    await ensureBrowser();
+    await cdpSend("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 }, browserSessionId);
+    await cdpSend("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 }, browserSessionId);
+    await sleep(500);
+    const status = await browserSnapshot(`click ${Math.round(x)},${Math.round(y)}`);
+    await emitBrowserStatus(status);
+    return `Clicked browser at ${Math.round(x)},${Math.round(y)}. url=${status.url ?? ""}`;
+  }
+
+  if (tool === "browser_type") {
+    const text = String(args.text ?? "");
+    const selector = args.selector !== undefined ? String(args.selector) : "";
+    if (!text) throw new Error('browser_type requires "text"');
+    await ensureBrowser();
+    if (selector) {
+      await cdpSend("Runtime.evaluate", {
+        expression: `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) throw new Error("selector not found"); el.focus(); el.value = ${JSON.stringify(text)}; el.dispatchEvent(new Event("input", { bubbles: true })); el.dispatchEvent(new Event("change", { bubbles: true })); return true; })()`,
+        awaitPromise: true,
+        returnByValue: true,
+      }, browserSessionId);
+    } else {
+      await cdpSend("Input.insertText", { text }, browserSessionId);
+    }
+    const status = await browserSnapshot(selector ? `type into ${selector}` : "type");
+    await emitBrowserStatus(status);
+    return `Typed ${text.length} characters${selector ? ` into ${selector}` : ""}.`;
+  }
+
+  if (tool === "browser_close") {
+    await closeBrowser();
+    return "Browser closed.";
   }
 
   if (tool === "send_axl_message") {

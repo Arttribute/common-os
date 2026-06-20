@@ -95,6 +95,16 @@ interface WalletInfo {
   } | null
 }
 
+interface BrowserInfo {
+  status: 'off' | 'starting' | 'on' | 'error'
+  url?: string | null
+  title?: string | null
+  screenshot?: string | null
+  lastAction?: string | null
+  error?: string | null
+  updatedAt?: string | null
+}
+
 // ─── Filesystem snapshot parser ────────────────────────────────────────────
 
 function parseSnapshot(snapshot: string): FsNode[] {
@@ -564,6 +574,7 @@ interface ComputerViewProps {
   agentRole: string
   pod?: { provider: string; region: string; namespaceId?: string | null }
   snapshot: string | null
+  browser: BrowserInfo | null
   loading: boolean
   error: string | null
   apiUrl?: string
@@ -572,7 +583,7 @@ interface ComputerViewProps {
   resolveToken?: () => Promise<string | null>
 }
 
-function ComputerView({ agentRole, pod, snapshot, loading, error, apiUrl, fleetId, agentId, resolveToken }: ComputerViewProps) {
+function ComputerView({ agentRole, pod, snapshot, browser, loading, error, apiUrl, fleetId, agentId, resolveToken }: ComputerViewProps) {
   const [path, setPath] = useState<string[]>([])
   const [history, setHistory] = useState<string[][]>([[]])
   const [histIdx, setHistIdx] = useState(0)
@@ -738,6 +749,12 @@ function ComputerView({ agentRole, pod, snapshot, loading, error, apiUrl, fleetI
             onClick={() => navigateTo([])}
           />
           <div style={{ marginTop: 12, padding: '4px 10px 6px', fontSize: 10, color: '#475569', fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: 1 }}>
+            Browser
+          </div>
+          <div style={{ padding: '3px 10px', fontSize: 10, color: browser?.status === 'on' ? '#22c55e' : browser?.status === 'error' ? '#ef4444' : '#64748b', fontFamily: 'monospace', lineHeight: 1.8 }}>
+            {browser?.status ?? 'off'}
+          </div>
+          <div style={{ marginTop: 12, padding: '4px 10px 6px', fontSize: 10, color: '#475569', fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: 1 }}>
             Pod Info
           </div>
           {pod && (
@@ -757,6 +774,7 @@ function ComputerView({ agentRole, pod, snapshot, loading, error, apiUrl, fleetI
 
         {/* File area */}
         <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <BrowserPreview browser={browser} />
           {loading ? (
             <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <div style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace' }}>loading workspace…</div>
@@ -823,6 +841,57 @@ function ComputerView({ agentRole, pod, snapshot, loading, error, apiUrl, fleetI
             )}
           </div>
         </div>
+      </div>
+    </div>
+  )
+}
+
+function BrowserPreview({ browser }: { browser: BrowserInfo | null }) {
+  const status = browser?.status ?? 'off'
+  const color = status === 'on' ? '#22c55e' : status === 'starting' ? '#f59e0b' : status === 'error' ? '#ef4444' : '#64748b'
+  return (
+    <div style={{
+      borderBottom: '1px solid rgba(255,255,255,0.04)',
+      background: '#070b12',
+      padding: 8,
+      display: 'grid',
+      gridTemplateColumns: browser?.screenshot ? '160px minmax(0, 1fr)' : 'minmax(0, 1fr)',
+      gap: 10,
+      flexShrink: 0,
+    }}>
+      {browser?.screenshot && (
+        <div style={{
+          width: 160,
+          aspectRatio: '16 / 10',
+          border: '1px solid rgba(255,255,255,0.08)',
+          borderRadius: 4,
+          overflow: 'hidden',
+          background: '#020617',
+        }}>
+          <img src={browser.screenshot} alt="Agent browser viewport" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+        </div>
+      )}
+      <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 5, justifyContent: 'center' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ width: 7, height: 7, borderRadius: 999, background: color, boxShadow: `0 0 8px ${color}` }} />
+          <span style={{ fontSize: 10, color, fontFamily: 'monospace', textTransform: 'uppercase' }}>{status}</span>
+          {browser?.updatedAt && (
+            <span style={{ marginLeft: 'auto', fontSize: 10, color: '#475569', fontFamily: 'monospace' }}>{relativeTime(browser.updatedAt)}</span>
+          )}
+        </div>
+        <div style={{ fontSize: 11, color: '#94a3b8', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {browser?.title || browser?.url || 'Agent browser is not running'}
+        </div>
+        {browser?.url && (
+          <div style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {browser.url}
+          </div>
+        )}
+        {(browser?.lastAction || browser?.error) && (
+          <div style={{ fontSize: 10, color: browser.error ? '#ef4444' : '#475569', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {browser.error ?? browser.lastAction}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -1262,6 +1331,7 @@ export function AgentDetailModal() {
   const [tab, setTab] = useState<'sessions' | 'computer' | 'wallet'>('sessions')
   const [sessions, setSessions]   = useState<AgentSession[]>([])
   const [snapshot, setSnapshot]   = useState<string | null>(null)
+  const [browser, setBrowser] = useState<BrowserInfo | null>(null)
   const [sessLoading, setSessLoading] = useState(false)
   const [snapLoading, setSnapLoading] = useState(false)
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
@@ -1399,8 +1469,9 @@ export function AgentDetailModal() {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (res.ok) {
-        const data = await res.json() as { workspace?: { snapshot?: string } | null }
+        const data = await res.json() as { workspace?: { snapshot?: string } | null; browser?: BrowserInfo | null }
         setSnapshot(data.workspace?.snapshot ?? null)
+        setBrowser(data.browser ?? null)
       } else {
         const data = await res.json().catch(() => null)
         setWorkspaceError(errorText(data, `could not load workspace snapshot (${res.status})`))
@@ -1443,6 +1514,7 @@ export function AgentDetailModal() {
     setWorkspaceError(null)
     setWalletError(null)
     setSnapshot(null)
+    setBrowser(null)
     setWalletInfo(null)
     setTab('sessions')
     setActiveSessionId(null)
@@ -1533,6 +1605,13 @@ export function AgentDetailModal() {
     function onFleetEvent(event: Event) {
       const data = (event as CustomEvent<Record<string, unknown>>).detail
       if (!data || data.agentId !== selectedId) return
+      if (data.type === 'agent_event') {
+        const event = data.event as { type?: unknown; payload?: Record<string, unknown> } | undefined
+        if (event?.type === 'browser_status') {
+          setBrowser({ ...((event.payload ?? {}) as unknown as BrowserInfo), updatedAt: typeof data.ts === 'string' ? data.ts : new Date().toISOString() })
+          return
+        }
+      }
       const msgId = typeof data.msgId === 'string' ? data.msgId : null
       if (!msgId) return
       const ts = typeof data.ts === 'string' ? data.ts : new Date().toISOString()
@@ -1743,6 +1822,7 @@ export function AgentDetailModal() {
               agentRole={shortRole}
               pod={agent.pod}
               snapshot={snapshot}
+              browser={browser}
               loading={snapLoading}
               error={workspaceError}
               apiUrl={apiUrl}

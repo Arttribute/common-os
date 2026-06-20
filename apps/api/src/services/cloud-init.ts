@@ -1102,7 +1102,7 @@ set -euo pipefail
 
 # ── System deps ─────────────────────────────────────────────
 apt-get update -qq
-apt-get install -y -qq curl git jq
+apt-get install -y -qq curl git jq chromium
 
 # ── Node.js 22 ───────────────────────────────────────────────
 curl -fsSL https://deb.nodesource.com/setup_22.x | bash -

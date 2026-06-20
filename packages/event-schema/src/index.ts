@@ -111,6 +111,18 @@ const WorkspaceSnapshotEvent = z.object({
   }),
 });
 
+const BrowserStatusEvent = z.object({
+  type: z.literal("browser_status"),
+  payload: z.object({
+    status: z.enum(["off", "starting", "on", "error"]),
+    url: z.string().nullable().optional(),
+    title: z.string().nullable().optional(),
+    screenshot: z.string().nullable().optional(),
+    lastAction: z.string().nullable().optional(),
+    error: z.string().nullable().optional(),
+  }),
+});
+
 const TokenUsageEvent = z.object({
   type: z.literal("token_usage"),
   payload: z.object({
@@ -138,6 +150,7 @@ export const AgentEventSchema = z.discriminatedUnion("type", [
   ErrorEvent,
   HeartbeatEvent,
   WorkspaceSnapshotEvent,
+  BrowserStatusEvent,
   TokenUsageEvent,
 ]);
 
@@ -157,4 +170,5 @@ export type HeartbeatEvent = z.infer<typeof HeartbeatEvent>;
 export type WorldInteractEvent = z.infer<typeof WorldInteractEvent>;
 export type WorldCreateObjectEvent = z.infer<typeof WorldCreateObjectEvent>;
 export type WorkspaceSnapshotEvent = z.infer<typeof WorkspaceSnapshotEvent>;
+export type BrowserStatusEvent = z.infer<typeof BrowserStatusEvent>;
 export type TokenUsageEvent = z.infer<typeof TokenUsageEvent>;

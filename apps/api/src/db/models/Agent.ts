@@ -50,6 +50,15 @@ const AgentSchema = new Schema<AgentDoc>(
       rootDir: String,
       updatedAt: Date,
     },
+    browser: {
+      status: { type: String, enum: ['off', 'starting', 'on', 'error'], default: 'off' },
+      url: { type: String, default: null },
+      title: { type: String, default: null },
+      screenshot: { type: String, default: null },
+      lastAction: { type: String, default: null },
+      error: { type: String, default: null },
+      updatedAt: { type: Date, default: null },
+    },
     lastHeartbeatAt: Date,
     runtime: {
       name: { type: String, default: null },

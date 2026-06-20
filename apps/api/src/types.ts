@@ -149,6 +149,15 @@ export interface AgentDoc {
     rootDir: string
     updatedAt: Date
   } | null
+  browser?: {
+    status: 'off' | 'starting' | 'on' | 'error'
+    url: string | null
+    title: string | null
+    screenshot: string | null
+    lastAction: string | null
+    error: string | null
+    updatedAt: Date | null
+  } | null
   lastHeartbeatAt: Date | null
   runtime: {
     name: string | null

@@ -46,6 +46,15 @@ export interface Agent {
   world: AgentWorld
   pod?: AgentPod
   commons?: AgentCommonsIdentity
+  browser?: {
+    status: 'off' | 'starting' | 'on' | 'error'
+    url?: string | null
+    title?: string | null
+    screenshot?: string | null
+    lastAction?: string | null
+    error?: string | null
+    updatedAt?: string | null
+  } | null
   createdAt?: number  // unix ms — used to infer creation step
   currentAction?: string
   currentTask?: { taskId: string; description: string }
