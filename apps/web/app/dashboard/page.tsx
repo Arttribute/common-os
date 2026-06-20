@@ -69,6 +69,11 @@ interface FleetCostReport {
   period: { since: string; until: string; days: number }
   markupRate: number
   confidence: 'actual' | 'mixed' | 'estimated'
+  usageComparison: {
+    actual: TokenSummary
+    estimated: TokenSummary
+    ratio: number | null
+  }
   totals: {
     tokens: number
     compute: number
@@ -82,6 +87,14 @@ interface FleetCostReport {
     requestCount: number
   }
   agents: AgentCost[]
+}
+
+interface TokenSummary {
+  inputTokens: number
+  cachedInputTokens: number
+  outputTokens: number
+  requestCount: number
+  totalTokens: number
 }
 
 interface AgentCost {
@@ -99,6 +112,13 @@ interface AgentCost {
     cachedInputTokens: number
     outputTokens: number
     requestCount: number
+  }
+  actualTokens: TokenSummary
+  estimatedTokens: TokenSummary
+  usageComparison: {
+    actualTokens: number
+    estimatedTokens: number
+    ratio: number | null
   }
   resources: {
     cpuRequestCores: number
@@ -119,6 +139,7 @@ interface AgentCost {
 
 type OpenClawDmPolicy = 'pairing' | 'allowlist' | 'open' | 'disabled'
 type AgentPath = 'native' | 'openclaw' | 'hermes'
+type CostPeriodDays = 7 | 30 | 90
 type ConnectorId =
   | 'telegram'
   | 'slack'
@@ -441,6 +462,7 @@ export default function DashboardPage() {
   const [agentsByFleet, setAgentsByFleet] = useState<Record<string, Agent[]>>({})
   const [costsByFleet, setCostsByFleet] = useState<Record<string, FleetCostReport>>({})
   const [loadingCostByFleet, setLoadingCostByFleet] = useState<Record<string, boolean>>({})
+  const [costPeriodDays, setCostPeriodDays] = useState<CostPeriodDays>(30)
   const [expandedFleet, setExpandedFleet] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -505,7 +527,28 @@ export default function DashboardPage() {
     if (costsByFleet[fleetId] || loadingCostByFleet[fleetId]) return
     setLoadingCostByFleet((prev) => ({ ...prev, [fleetId]: true }))
     try {
-      const res = await apiFetch(`/fleets/${fleetId}/costs?periodDays=30`)
+      const res = await apiFetch(`/fleets/${fleetId}/costs?periodDays=${costPeriodDays}`)
+      if (res.ok) {
+        const report = await res.json() as FleetCostReport
+        setCostsByFleet((prev) => ({ ...prev, [fleetId]: report }))
+      }
+    } finally {
+      setLoadingCostByFleet((prev) => ({ ...prev, [fleetId]: false }))
+    }
+  }
+
+  const updateCostPeriod = (days: CostPeriodDays) => {
+    setCostPeriodDays(days)
+    setCostsByFleet({})
+    if (expandedFleet) {
+      void fetchFleetCostsForPeriod(expandedFleet, days)
+    }
+  }
+
+  const fetchFleetCostsForPeriod = async (fleetId: string, days: CostPeriodDays) => {
+    setLoadingCostByFleet((prev) => ({ ...prev, [fleetId]: true }))
+    try {
+      const res = await apiFetch(`/fleets/${fleetId}/costs?periodDays=${days}`)
       if (res.ok) {
         const report = await res.json() as FleetCostReport
         setCostsByFleet((prev) => ({ ...prev, [fleetId]: report }))
@@ -749,7 +792,7 @@ export default function DashboardPage() {
           <MetricCard label="Total fleets" value={fleets.length} />
           <MetricCard label="Active fleets" value={activeFleets} />
           <MetricCard label="Agents deployed" value={totalAgents} />
-          <MetricCard label="Loaded 30d cost" value={formatCurrency(dashboardCost)} />
+          <MetricCard label={`Loaded ${costPeriodDays}d cost`} value={formatCurrency(dashboardCost)} />
         </div>
 
         {error && (
@@ -791,11 +834,13 @@ export default function DashboardPage() {
                   agents={agentsByFleet[fleet._id]}
                   costReport={costsByFleet[fleet._id]}
                   costLoading={Boolean(loadingCostByFleet[fleet._id])}
+                  costPeriodDays={costPeriodDays}
                   expanded={expandedFleet === fleet._id}
                   onToggle={() => void toggleFleet(fleet._id)}
                   onOpenWorld={() => router.push(`/world?fleet=${fleet._id}`)}
                   onDeployAgent={(path) => openAgentForm(fleet._id, path)}
                   onConfigureOrchestration={() => openOrchestrationForm(fleet)}
+                  onCostPeriodChange={updateCostPeriod}
                   onTerminateAgent={(agentId) => void terminateAgent(fleet._id, agentId)}
                 />
               ))}
@@ -1397,22 +1442,26 @@ function FleetCard({
   agents,
   costReport,
   costLoading,
+  costPeriodDays,
   expanded,
   onToggle,
   onOpenWorld,
   onDeployAgent,
   onConfigureOrchestration,
+  onCostPeriodChange,
   onTerminateAgent,
 }: {
   fleet: Fleet
   agents?: Agent[]
   costReport?: FleetCostReport
   costLoading: boolean
+  costPeriodDays: CostPeriodDays
   expanded: boolean
   onToggle: () => void
   onOpenWorld: () => void
   onDeployAgent: (path: AgentPath) => void
   onConfigureOrchestration: () => void
+  onCostPeriodChange: (days: CostPeriodDays) => void
   onTerminateAgent: (agentId: string) => void
 }) {
   return (
@@ -1504,7 +1553,12 @@ function FleetCard({
 
         {expanded && (
           <div className="space-y-5 border-t bg-background p-5">
-            <CostPanel report={costReport} loading={costLoading} />
+            <CostPanel
+              report={costReport}
+              loading={costLoading}
+              periodDays={costPeriodDays}
+              onPeriodChange={onCostPeriodChange}
+            />
             {!agents ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" />
@@ -1584,17 +1638,42 @@ function FleetCard({
   )
 }
 
-function CostPanel({ report, loading }: { report?: FleetCostReport; loading: boolean }) {
+const costPeriodOptions: CostPeriodDays[] = [7, 30, 90]
+
+function CostPanel({
+  report,
+  loading,
+  periodDays,
+  onPeriodChange,
+}: {
+  report?: FleetCostReport
+  loading: boolean
+  periodDays: CostPeriodDays
+  onPeriodChange: (days: CostPeriodDays) => void
+}) {
   if (loading || !report) {
     return (
       <div className="rounded-md border bg-muted/20 p-4">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="size-4 animate-spin" />
-          Loading cost telemetry...
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="size-4 animate-spin" />
+            Loading cost telemetry...
+          </div>
+          <CostPeriodSelect value={periodDays} onChange={onPeriodChange} />
         </div>
       </div>
     )
   }
+
+  const actualTotal = report.usageComparison.actual.totalTokens
+  const estimatedTotal = report.usageComparison.estimated.totalTokens
+  const comparisonMax = Math.max(actualTotal, estimatedTotal, 1)
+  const actualPercent = Math.min(100, Math.round((actualTotal / comparisonMax) * 100))
+  const estimatedPercent = Math.min(100, Math.round((estimatedTotal / comparisonMax) * 100))
+  const estimateRatio = estimatedTotal > 0 ? actualTotal / estimatedTotal : 0
+  const ratioLabel = estimatedTotal > 0
+    ? `${Math.round(estimateRatio * 100)}% of estimate`
+    : 'No estimate baseline'
 
   const costBreakdown = [
     { label: 'Model', value: report.totals.tokens, icon: Gauge },
@@ -1618,12 +1697,31 @@ function CostPanel({ report, loading }: { report?: FleetCostReport; loading: boo
             {formatCompact(report.totals.inputTokens + report.totals.outputTokens)} tokens across {formatCompact(report.totals.requestCount)} requests
           </div>
         </div>
-        <div className="min-w-40 rounded-md border bg-background px-4 py-3">
-          <div className="text-xs text-muted-foreground">Customer price</div>
-          <div className="mt-1 text-2xl font-semibold tracking-tight">{formatCurrency(report.totals.billed)}</div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            Raw {formatCurrency(report.totals.raw)} + {Math.round(report.markupRate * 100)}%
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <CostPeriodSelect value={periodDays} onChange={onPeriodChange} />
+          <div className="min-w-40 rounded-md border bg-background px-4 py-3">
+            <div className="text-xs text-muted-foreground">Customer price</div>
+            <div className="mt-1 text-2xl font-semibold tracking-tight">{formatCurrency(report.totals.billed)}</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              Raw {formatCurrency(report.totals.raw)} + {Math.round(report.markupRate * 100)}%
+            </div>
           </div>
+        </div>
+      </div>
+
+      <div className="border-b p-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Actual token consumption</div>
+            <div className="mt-1 text-sm">
+              {formatCompact(actualTotal)} actual vs {formatCompact(estimatedTotal)} estimated
+            </div>
+          </div>
+          <div className="text-sm font-medium">{ratioLabel}</div>
+        </div>
+        <div className="mt-4 space-y-3">
+          <TokenComparisonBar label="Actual" value={actualTotal} percent={actualPercent} tone="actual" />
+          <TokenComparisonBar label="Estimated" value={estimatedTotal} percent={estimatedPercent} tone="estimated" />
         </div>
       </div>
 
@@ -1688,6 +1786,54 @@ function CostPanel({ report, loading }: { report?: FleetCostReport; loading: boo
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+function CostPeriodSelect({
+  value,
+  onChange,
+}: {
+  value: CostPeriodDays
+  onChange: (days: CostPeriodDays) => void
+}) {
+  return (
+    <select
+      className={`${selectClass} h-9 w-32`}
+      value={value}
+      onChange={(e) => onChange(Number(e.target.value) as CostPeriodDays)}
+      aria-label="Cost telemetry period"
+    >
+      {costPeriodOptions.map((days) => (
+        <option key={days} value={days}>
+          {days} days
+        </option>
+      ))}
+    </select>
+  )
+}
+
+function TokenComparisonBar({
+  label,
+  value,
+  percent,
+  tone,
+}: {
+  label: string
+  value: number
+  percent: number
+  tone: 'actual' | 'estimated'
+}) {
+  return (
+    <div className="grid gap-2 sm:grid-cols-[6rem_1fr_5rem] sm:items-center">
+      <div className="text-xs font-medium text-muted-foreground">{label}</div>
+      <div className="h-3 overflow-hidden rounded-full bg-muted">
+        <div
+          className={tone === 'actual' ? 'h-full rounded-full bg-emerald-500' : 'h-full rounded-full bg-sky-500/70'}
+          style={{ width: `${percent}%` }}
+        />
+      </div>
+      <div className="text-xs tabular-nums text-muted-foreground sm:text-right">{formatCompact(value)}</div>
     </div>
   )
 }

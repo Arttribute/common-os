@@ -146,6 +146,28 @@ function estimateTokens(agent: AgentDoc, hours: number) {
 	};
 }
 
+function emptyTokens() {
+	return { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, requestCount: 0 };
+}
+
+function addTokens<T extends { inputTokens: number; cachedInputTokens: number; outputTokens: number; requestCount: number }>(target: T, tokens: T): T {
+	target.inputTokens += tokens.inputTokens;
+	target.cachedInputTokens += tokens.cachedInputTokens;
+	target.outputTokens += tokens.outputTokens;
+	target.requestCount += tokens.requestCount;
+	return target;
+}
+
+function roundTokenSummary(tokens: { inputTokens: number; cachedInputTokens: number; outputTokens: number; requestCount: number }) {
+	return {
+		inputTokens: Math.round(tokens.inputTokens),
+		cachedInputTokens: Math.round(tokens.cachedInputTokens),
+		outputTokens: Math.round(tokens.outputTokens),
+		requestCount: Math.round(tokens.requestCount),
+		totalTokens: Math.round(tokens.inputTokens + tokens.outputTokens),
+	};
+}
+
 export async function fleetCostReport(opts: { fleetId: string; tenantId: string; periodDays?: number }) {
 	const periodDays = Math.max(1, Math.min(90, opts.periodDays ?? 30));
 	const until = new Date();
@@ -175,6 +197,9 @@ export async function fleetCostReport(opts: { fleetId: string; tenantId: string;
 		usageByAgent.set(event.agentId, current);
 	}
 
+	const actualTokenTotals = emptyTokens();
+	const estimatedTokenTotals = emptyTokens();
+
 	const agentsWithCosts = agentList.map((agent) => {
 		const hours = activeHours(agent, since, until);
 		const provider = normalizeProvider(
@@ -184,7 +209,11 @@ export async function fleetCostReport(opts: { fleetId: string; tenantId: string;
 		const model = normalizeModel(usageByAgent.get(agent._id)?.model ?? agent.config.hermesConfig?.modelId, provider, agent.config.integrationPath);
 		const rate = rateFor(provider, model);
 		const usage = usageByAgent.get(agent._id);
-		const tokens = usage ?? estimateTokens(agent, hours);
+		const estimatedTokens = estimateTokens(agent, hours);
+		const actualTokens = usage ?? emptyTokens();
+		addTokens(actualTokenTotals, actualTokens);
+		addTokens(estimatedTokenTotals, estimatedTokens);
+		const tokens = usage ?? estimatedTokens;
 		const profile = resourceProfile(agent);
 		const cloudProvider = agent.pod.provider === "aws" ? "aws" : "gcp";
 		const infraRates = DEFAULT_INFRA_RATES[cloudProvider];
@@ -208,6 +237,15 @@ export async function fleetCostReport(opts: { fleetId: string; tenantId: string;
 			confidence: usage ? "actual" : "estimated",
 			activeHours: Number(hours.toFixed(2)),
 			tokens,
+			actualTokens: roundTokenSummary(actualTokens),
+			estimatedTokens: roundTokenSummary(estimatedTokens),
+			usageComparison: {
+				actualTokens: Math.round(actualTokens.inputTokens + actualTokens.outputTokens),
+				estimatedTokens: Math.round(estimatedTokens.inputTokens + estimatedTokens.outputTokens),
+				ratio: estimatedTokens.inputTokens + estimatedTokens.outputTokens > 0
+					? Number(((actualTokens.inputTokens + actualTokens.outputTokens) / (estimatedTokens.inputTokens + estimatedTokens.outputTokens)).toFixed(4))
+					: null,
+			},
 			resources: profile,
 			cost: {
 				tokens: Number(tokenCost.toFixed(4)),
@@ -240,6 +278,13 @@ export async function fleetCostReport(opts: { fleetId: string; tenantId: string;
 		period: { since: since.toISOString(), until: until.toISOString(), days: periodDays },
 		markupRate: DEFAULT_MARKUP_RATE,
 		confidence: usageEvents.length > 0 ? "mixed" : "estimated",
+		usageComparison: {
+			actual: roundTokenSummary(actualTokenTotals),
+			estimated: roundTokenSummary(estimatedTokenTotals),
+			ratio: estimatedTokenTotals.inputTokens + estimatedTokenTotals.outputTokens > 0
+				? Number(((actualTokenTotals.inputTokens + actualTokenTotals.outputTokens) / (estimatedTokenTotals.inputTokens + estimatedTokenTotals.outputTokens)).toFixed(4))
+				: null,
+		},
 		totals: {
 			...Object.fromEntries(Object.entries(totals).map(([key, value]) => [key, Number(value.toFixed(key.endsWith("Tokens") || key === "requestCount" ? 0 : 4))])),
 		},
