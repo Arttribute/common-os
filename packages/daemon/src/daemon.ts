@@ -28,6 +28,7 @@ const OPENCLAW_RESPONSE_TIMEOUT_MS = Number(process.env.OPENCLAW_RESPONSE_TIMEOU
 const OPENCLAW_READY_TIMEOUT_MS = Number(process.env.OPENCLAW_READY_TIMEOUT_MS ?? 30_000);
 const HERMES_RESPONSE_TIMEOUT_MS = Number(process.env.HERMES_RESPONSE_TIMEOUT_MS ?? 90_000);
 const HERMES_READY_TIMEOUT_MS = Number(process.env.HERMES_READY_TIMEOUT_MS ?? 30_000);
+const AGENT_TOOLS_PORT = Number(process.env.AGENT_TOOLS_PORT ?? 4100);
 const HEALTH_MS      = 10_000;
 const AXL_INBOX_MS   = 5_000;
 const WORKSPACE_DIR  = process.env.COMMONOS_WORKSPACE ?? config.workspaceDir;
@@ -381,6 +382,7 @@ async function main() {
     refreshFleetOrchestration().catch(() => {});
   }, 60_000);
   startBrowserPolling();
+  startAgentToolsServer();
 
   startFileWatcher();
   startHealthMonitor();
@@ -656,6 +658,57 @@ async function closeBrowser(): Promise<void> {
   current?.kill();
   browserLastAction = "close";
   await emitBrowserStatus({ status: "off", url: null, title: null, screenshot: null, lastAction: browserLastAction, error: null });
+}
+
+// ─── Pod-local Agent Tools API ──────────────────────────────────────────────
+//
+// Any sibling container in this pod — a custom/guest runtime the tenant
+// brings, or a future integration path — can drive the shared browser over
+// plain HTTP without needing CommonOS-specific tool-calling plumbing.
+// Containers in the same Kubernetes pod share the loopback interface, so
+// binding to 127.0.0.1 keeps this reachable pod-locally only.
+function startAgentToolsServer(): void {
+  Bun.serve({
+    hostname: "127.0.0.1",
+    port: AGENT_TOOLS_PORT,
+    async fetch(req) {
+      const url = new URL(req.url);
+      const readBody = async (): Promise<Record<string, unknown>> => {
+        try {
+          return await req.json() as Record<string, unknown>;
+        } catch {
+          return {};
+        }
+      };
+      try {
+        if (req.method === "GET" && url.pathname === "/healthz") {
+          return Response.json({ ok: true });
+        }
+        if (req.method === "GET" && url.pathname === "/v1/browser/status") {
+          return Response.json({ ok: true, result: await executeLocalTool("browser_status", {}) });
+        }
+        if (req.method === "POST" && url.pathname === "/v1/browser/open") {
+          return Response.json({ ok: true, result: await executeLocalTool("browser_open", await readBody()) });
+        }
+        if (req.method === "POST" && url.pathname === "/v1/browser/screenshot") {
+          return Response.json({ ok: true, result: await executeLocalTool("browser_screenshot", {}) });
+        }
+        if (req.method === "POST" && url.pathname === "/v1/browser/click") {
+          return Response.json({ ok: true, result: await executeLocalTool("browser_click", await readBody()) });
+        }
+        if (req.method === "POST" && url.pathname === "/v1/browser/type") {
+          return Response.json({ ok: true, result: await executeLocalTool("browser_type", await readBody()) });
+        }
+        if (req.method === "POST" && url.pathname === "/v1/browser/close") {
+          return Response.json({ ok: true, result: await executeLocalTool("browser_close", {}) });
+        }
+        return Response.json({ ok: false, error: "not found" }, { status: 404 });
+      } catch (err) {
+        return Response.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+      }
+    },
+  });
+  console.log(`[daemon] agent tools API listening on 127.0.0.1:${AGENT_TOOLS_PORT}`);
 }
 
 // ─── File watcher ──────────────────────────────────────────────────────────
@@ -2207,42 +2260,23 @@ async function runViaOpenClaw(description: string, messages?: AgcMessage[], hook
   await hooks?.onStatus?.("waiting_for_openclaw").catch(() => {});
   await waitForOpenClawGateway();
 
-  const res = await fetch(`${config.openclawGatewayUrl}/v1/responses`, {
-    method: "POST",
+  return await runResponsesConversation({
+    gatewayUrl: `${config.openclawGatewayUrl}/v1/responses`,
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
+    body: {
       model: `openclaw/${config.agentId.replace(/[^a-zA-Z0-9_-]/g, "-")}`,
       input: message,
-      stream: true,
       user: `commonos:${config.fleetId}:${config.agentId}`,
-    }),
-    signal: AbortSignal.timeout(OPENCLAW_RESPONSE_TIMEOUT_MS),
+    },
+    hooks,
+    usageDefaults: {
+      provider: process.env.OPENCLAW_MODEL_PROVIDER ?? "openclaw",
+      model: undefined,
+      source: "openclaw-stream",
+    },
+    timeoutMs: OPENCLAW_RESPONSE_TIMEOUT_MS,
+    gatewayLabel: "OpenClaw gateway",
   });
-
-  if (res.ok) {
-    const contentType = res.headers.get("content-type") ?? "";
-    if (contentType.includes("text/event-stream") || contentType.includes("application/x-ndjson")) {
-      const streamed = await readOpenClawStream(res, hooks);
-      if (streamed.trim()) return streamed;
-    }
-    const data = await res.json() as {
-      output_text?: string;
-      output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }>; text?: string }>;
-      response?: string;
-      text?: string;
-    };
-    const outputText = data.output_text
-      ?? data.text
-      ?? data.response
-      ?? data.output?.flatMap((item) => [
-        item.text,
-        ...(item.content?.map((content) => content.text) ?? []),
-      ]).filter(Boolean).join("\n");
-    return outputText || "done";
-  }
-
-  const detail = await res.text().catch(() => "");
-  throw new Error(`OpenClaw gateway failed (${res.status}): ${truncate(detail || res.statusText, 500)}`);
 }
 
 async function runViaHermes(description: string, messages?: AgcMessage[], hooks?: MessageRunHooks): Promise<string> {
@@ -2254,46 +2288,23 @@ async function runViaHermes(description: string, messages?: AgcMessage[], hooks?
   const gatewayKey = process.env.HERMES_GATEWAY_API_KEY;
   if (gatewayKey) headers.Authorization = `Bearer ${gatewayKey}`;
 
-  const res = await fetch(`${config.hermesGatewayUrl}/v1/responses`, {
-    method: "POST",
+  return await runResponsesConversation({
+    gatewayUrl: `${config.hermesGatewayUrl}/v1/responses`,
     headers,
-    body: JSON.stringify({
+    body: {
       model: process.env.HERMES_MODEL_ID ?? `hermes/${config.agentId.replace(/[^a-zA-Z0-9_-]/g, "-")}`,
       input: message,
-      stream: true,
       user: `commonos:${config.fleetId}:${config.agentId}`,
-    }),
-    signal: AbortSignal.timeout(HERMES_RESPONSE_TIMEOUT_MS),
+    },
+    hooks,
+    usageDefaults: {
+      provider: process.env.HERMES_MODEL_PROVIDER ?? "hermes",
+      model: process.env.HERMES_MODEL_ID,
+      source: "hermes-stream",
+    },
+    timeoutMs: HERMES_RESPONSE_TIMEOUT_MS,
+    gatewayLabel: "Hermes gateway",
   });
-
-  if (res.ok) {
-    const contentType = res.headers.get("content-type") ?? "";
-    if (contentType.includes("text/event-stream") || contentType.includes("application/x-ndjson")) {
-      const streamed = await readGatewayStream(res, hooks, {
-        provider: process.env.HERMES_MODEL_PROVIDER ?? "hermes",
-        model: process.env.HERMES_MODEL_ID,
-        source: "hermes-stream",
-      });
-      if (streamed.trim()) return streamed;
-    }
-    const data = await res.json() as {
-      output_text?: string;
-      output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }>; text?: string }>;
-      response?: string;
-      text?: string;
-    };
-    const outputText = data.output_text
-      ?? data.text
-      ?? data.response
-      ?? data.output?.flatMap((item) => [
-        item.text,
-        ...(item.content?.map((content) => content.text) ?? []),
-      ]).filter(Boolean).join("\n");
-    return outputText || "done";
-  }
-
-  const detail = await res.text().catch(() => "");
-  throw new Error(`Hermes gateway failed (${res.status}): ${truncate(detail || res.statusText, 500)}`);
 }
 
 async function waitForOpenClawGateway(): Promise<void> {
@@ -2328,24 +2339,49 @@ async function waitForHermesGateway(): Promise<void> {
   throw new Error(`Hermes gateway unavailable after ${Math.round(HERMES_READY_TIMEOUT_MS / 1000)}s: ${lastError}`);
 }
 
-async function readOpenClawStream(res: Response, hooks?: MessageRunHooks): Promise<string> {
-  return readGatewayStream(res, hooks, {
-    provider: process.env.OPENCLAW_MODEL_PROVIDER ?? "openclaw",
-    model: undefined,
-    source: "openclaw-stream",
-  });
+// ─── Shared browser tools — Responses API (OpenClaw, Hermes) ───────────────
+//
+// Native (AGC) gets cli_browser_* tools via cli_tool_request SSE events
+// (see executeLocalTool below). OpenClaw and Hermes are opaque gateway
+// binaries that advertise OpenAI Responses-API compatibility, so the same
+// browser tools are offered to them as a `tools` array on /v1/responses;
+// any function_call they emit is executed through the same executeLocalTool
+// dispatcher that drives the daemon's shared Chromium browser. This keeps
+// one browser implementation reachable from every agent runtime.
+
+const RESPONSES_BROWSER_TOOLS: Array<{ name: string; description: string; parameters: Record<string, unknown> }> = [
+  { name: "cli_browser_open", description: "Launch this pod's shared Chromium browser and navigate to a URL.", parameters: { type: "object", properties: { url: { type: "string", description: "URL to open" } }, required: ["url"] } },
+  { name: "cli_browser_status", description: "Return the shared browser's on/off state, current URL, page title, and latest screenshot.", parameters: { type: "object", properties: {}, required: [] } },
+  { name: "cli_browser_screenshot", description: "Refresh and return the latest screenshot of the shared browser.", parameters: { type: "object", properties: {}, required: [] } },
+  { name: "cli_browser_click", description: "Click a coordinate in the shared browser's viewport.", parameters: { type: "object", properties: { x: { type: "number" }, y: { type: "number" } }, required: ["x", "y"] } },
+  { name: "cli_browser_type", description: "Type text into the focused element, or into a CSS selector, in the shared browser.", parameters: { type: "object", properties: { text: { type: "string" }, selector: { type: "string" } }, required: ["text"] } },
+  { name: "cli_browser_close", description: "Close the shared browser.", parameters: { type: "object", properties: {}, required: [] } },
+];
+
+function responsesBrowserToolDefs(): Array<Record<string, unknown>> {
+  return RESPONSES_BROWSER_TOOLS.map((def) => ({ type: "function", name: def.name, description: def.description, parameters: def.parameters }));
 }
+
+type ResponsesToolCall = { callId: string; name: string; arguments: string };
+
+type GatewayStreamResult = {
+  output: string;
+  responseId: string | null;
+  toolCalls: ResponsesToolCall[];
+};
 
 async function readGatewayStream(
   res: Response,
   hooks: MessageRunHooks | undefined,
   usageDefaults: { provider: string; model?: string; source: string },
-): Promise<string> {
-  if (!res.body) return "";
+): Promise<GatewayStreamResult> {
+  if (!res.body) return { output: "", responseId: null, toolCalls: [] };
   const decoder = new TextDecoder();
   const reader = res.body.getReader();
   let buffer = "";
   let output = "";
+  let responseId: string | null = null;
+  const toolCalls: ResponsesToolCall[] = [];
   let observedUsage: TokenUsagePayload | null = null;
 
   async function handlePayload(raw: string): Promise<void> {
@@ -2363,6 +2399,16 @@ async function readGatewayStream(
       source: usageDefaults.source,
     });
     if (maybeUsage) observedUsage = maybeUsage;
+
+    const eventResponseId = responsesEventId(event);
+    if (eventResponseId) responseId = eventResponseId;
+
+    const toolCall = responsesFunctionCall(event);
+    if (toolCall) {
+      toolCalls.push(toolCall);
+      return;
+    }
+
     const text = openClawDeltaFromEvent(event);
     const delta = nextOpenClawDelta(output, text);
     if (delta) {
@@ -2385,7 +2431,109 @@ async function readGatewayStream(
   }
   await handlePayload(buffer.startsWith("data:") ? buffer.slice(5) : buffer);
   if (observedUsage) await emitTokenUsage(observedUsage);
-  return output;
+  return { output, responseId, toolCalls };
+}
+
+function responsesEventId(event: Record<string, unknown>): string | null {
+  const response = event.response && typeof event.response === "object" ? event.response as Record<string, unknown> : null;
+  if (typeof response?.id === "string") return response.id;
+  if (event.object === "response" && typeof event.id === "string") return event.id;
+  return null;
+}
+
+function responsesFunctionCall(event: Record<string, unknown>): ResponsesToolCall | null {
+  const type = String(event.type ?? "");
+  if (type !== "response.output_item.done" && type !== "function_call") return null;
+  const item = (event.item && typeof event.item === "object" ? event.item as Record<string, unknown> : event) as Record<string, unknown>;
+  if (String(item.type ?? "") !== "function_call") return null;
+  const name = String(item.name ?? "");
+  if (!name.startsWith("cli_browser_")) return null;
+  const callId = String(item.call_id ?? item.callId ?? item.id ?? "");
+  if (!callId) return null;
+  return { callId, name, arguments: typeof item.arguments === "string" ? item.arguments : "{}" };
+}
+
+// Drives a tools-enabled OpenAI Responses-API conversation against an
+// OpenClaw/Hermes gateway, executing any cli_browser_* function_call through
+// executeLocalTool and feeding the result back via previous_response_id
+// until the model produces a final answer (or we hit the round cap).
+async function runResponsesConversation(opts: {
+  gatewayUrl: string;
+  headers: Record<string, string>;
+  body: Record<string, unknown>;
+  hooks?: MessageRunHooks;
+  usageDefaults: { provider: string; model?: string; source: string };
+  timeoutMs: number;
+  gatewayLabel: string;
+}): Promise<string> {
+  const MAX_TOOL_ROUNDS = 6;
+  let body: Record<string, unknown> = { ...opts.body, tools: responsesBrowserToolDefs(), stream: true };
+  let finalOutput = "";
+
+  for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+    const res = await fetch(opts.gatewayUrl, {
+      method: "POST",
+      headers: opts.headers,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(opts.timeoutMs),
+    });
+
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(`${opts.gatewayLabel} failed (${res.status}): ${truncate(detail || res.statusText, 500)}`);
+    }
+
+    const contentType = res.headers.get("content-type") ?? "";
+    if (!contentType.includes("text/event-stream") && !contentType.includes("application/x-ndjson")) {
+      const data = await res.json() as {
+        output_text?: string;
+        output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }>; text?: string }>;
+        response?: string;
+        text?: string;
+      };
+      const outputText = data.output_text
+        ?? data.text
+        ?? data.response
+        ?? data.output?.flatMap((item) => [
+          item.text,
+          ...(item.content?.map((content) => content.text) ?? []),
+        ]).filter(Boolean).join("\n");
+      return outputText || finalOutput || "done";
+    }
+
+    const result = await readGatewayStream(res, opts.hooks, opts.usageDefaults);
+    if (result.output) finalOutput = finalOutput ? `${finalOutput}\n${result.output}` : result.output;
+
+    if (!result.toolCalls.length) return finalOutput || "done";
+
+    if (!result.responseId) {
+      console.warn(`[daemon] ${opts.gatewayLabel}: browser tool call requested but no response id observed; stopping tool loop`);
+      return finalOutput || "done";
+    }
+
+    const toolOutputs = await Promise.all(result.toolCalls.map(async (call) => {
+      await opts.hooks?.onToolCall?.(call.name).catch(() => {});
+      let output: string;
+      try {
+        const args = JSON.parse(call.arguments || "{}") as Record<string, unknown>;
+        output = await executeLocalTool(toolName(call.name), args);
+      } catch (err) {
+        output = `Error: ${err instanceof Error ? err.message : String(err)}`;
+      }
+      return { type: "function_call_output", call_id: call.callId, output };
+    }));
+
+    body = {
+      model: body.model,
+      previous_response_id: result.responseId,
+      input: toolOutputs,
+      user: body.user,
+      tools: responsesBrowserToolDefs(),
+      stream: true,
+    };
+  }
+
+  return finalOutput || "I could not complete that request — the browser tool loop hit its round limit.";
 }
 
 function nextOpenClawDelta(output: string, text: string | null): string | null {
