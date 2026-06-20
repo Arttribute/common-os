@@ -10,11 +10,7 @@ import {
   ChevronDown,
   ChevronRight,
   CirclePlus,
-  Cpu,
-  Database,
-  DollarSign,
   ExternalLink,
-  Gauge,
   Loader2,
   LogOut,
   MonitorUp,
@@ -63,83 +59,8 @@ interface Agent {
   createdAt: string
 }
 
-interface FleetCostReport {
-  fleetId: string
-  fleetName: string
-  period: { since: string; until: string; days: number }
-  markupRate: number
-  confidence: 'actual' | 'mixed' | 'estimated'
-  usageComparison: {
-    actual: TokenSummary
-    estimated: TokenSummary
-    ratio: number | null
-  }
-  totals: {
-    tokens: number
-    compute: number
-    storage: number
-    raw: number
-    markup: number
-    billed: number
-    inputTokens: number
-    cachedInputTokens: number
-    outputTokens: number
-    requestCount: number
-  }
-  agents: AgentCost[]
-}
-
-interface TokenSummary {
-  inputTokens: number
-  cachedInputTokens: number
-  outputTokens: number
-  requestCount: number
-  totalTokens: number
-}
-
-interface AgentCost {
-  agentId: string
-  role: string
-  status: string
-  integrationPath: 'native' | 'openclaw' | 'hermes' | 'guest'
-  provider: string
-  model: string
-  rateSource: string
-  confidence: 'actual' | 'estimated'
-  activeHours: number
-  tokens: {
-    inputTokens: number
-    cachedInputTokens: number
-    outputTokens: number
-    requestCount: number
-  }
-  actualTokens: TokenSummary
-  estimatedTokens: TokenSummary
-  usageComparison: {
-    actualTokens: number
-    estimatedTokens: number
-    ratio: number | null
-  }
-  resources: {
-    cpuRequestCores: number
-    memoryRequestGiB: number
-    cpuLimitCores: number
-    memoryLimitGiB: number
-    storageGiB: number
-  }
-  cost: {
-    tokens: number
-    compute: number
-    storage: number
-    raw: number
-    markup: number
-    billed: number
-  }
-}
-
 type OpenClawDmPolicy = 'pairing' | 'allowlist' | 'open' | 'disabled'
 type AgentPath = 'native' | 'openclaw' | 'hermes'
-type CostPeriodDays = 7 | 30 | 90
 type ConnectorId =
   | 'telegram'
   | 'slack'
@@ -438,21 +359,6 @@ function hasWalletIdentity(value: string | null | undefined): boolean {
   return Boolean(value && /^0x[a-fA-F0-9]{40}$/.test(value))
 }
 
-function formatCurrency(value: number): string {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    maximumFractionDigits: value >= 100 ? 0 : 2,
-  }).format(value)
-}
-
-function formatCompact(value: number): string {
-  return new Intl.NumberFormat('en-US', {
-    notation: 'compact',
-    maximumFractionDigits: 1,
-  }).format(value)
-}
-
 export default function DashboardPage() {
   const { ready } = usePrivy()
   const { authenticated, tenantId, onboarding, logout, apiFetch } = useAuth()
@@ -460,9 +366,6 @@ export default function DashboardPage() {
 
   const [fleets, setFleets] = useState<Fleet[]>([])
   const [agentsByFleet, setAgentsByFleet] = useState<Record<string, Agent[]>>({})
-  const [costsByFleet, setCostsByFleet] = useState<Record<string, FleetCostReport>>({})
-  const [loadingCostByFleet, setLoadingCostByFleet] = useState<Record<string, boolean>>({})
-  const [costPeriodDays, setCostPeriodDays] = useState<CostPeriodDays>(30)
   const [expandedFleet, setExpandedFleet] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -503,7 +406,7 @@ export default function DashboardPage() {
     try {
       const res = await apiFetch('/fleets')
       if (res.ok) setFleets(await res.json() as Fleet[])
-      else setError('Could not load fleets.')
+      else setError('Could not load teams.')
     } catch {
       setError('Could not connect to the API.')
     } finally {
@@ -524,47 +427,12 @@ export default function DashboardPage() {
     }
   }
 
-  const fetchFleetCosts = async (fleetId: string) => {
-    if (costsByFleet[fleetId] || loadingCostByFleet[fleetId]) return
-    setLoadingCostByFleet((prev) => ({ ...prev, [fleetId]: true }))
-    try {
-      const res = await apiFetch(`/fleets/${fleetId}/costs?periodDays=${costPeriodDays}`)
-      if (res.ok) {
-        const report = await res.json() as FleetCostReport
-        setCostsByFleet((prev) => ({ ...prev, [fleetId]: report }))
-      }
-    } finally {
-      setLoadingCostByFleet((prev) => ({ ...prev, [fleetId]: false }))
-    }
-  }
-
-  const updateCostPeriod = (days: CostPeriodDays) => {
-    setCostPeriodDays(days)
-    setCostsByFleet({})
-    if (expandedFleet) {
-      void fetchFleetCostsForPeriod(expandedFleet, days)
-    }
-  }
-
-  const fetchFleetCostsForPeriod = async (fleetId: string, days: CostPeriodDays) => {
-    setLoadingCostByFleet((prev) => ({ ...prev, [fleetId]: true }))
-    try {
-      const res = await apiFetch(`/fleets/${fleetId}/costs?periodDays=${days}`)
-      if (res.ok) {
-        const report = await res.json() as FleetCostReport
-        setCostsByFleet((prev) => ({ ...prev, [fleetId]: report }))
-      }
-    } finally {
-      setLoadingCostByFleet((prev) => ({ ...prev, [fleetId]: false }))
-    }
-  }
-
   const toggleFleet = async (fleetId: string) => {
     if (expandedFleet === fleetId) {
       setExpandedFleet(null)
     } else {
       setExpandedFleet(fleetId)
-      await Promise.all([fetchAgents(fleetId), fetchFleetCosts(fleetId)])
+      await fetchAgents(fleetId)
     }
   }
 
@@ -747,8 +615,6 @@ export default function DashboardPage() {
   const activeAgentFleet = agentForm ? fleets.find((f) => f._id === agentForm) : null
   const activeFleets = fleets.filter((fleet) => fleet.status === 'active').length
   const totalAgents = fleets.reduce((sum, fleet) => sum + fleet.agentCount, 0)
-  const loadedCosts = Object.values(costsByFleet)
-  const dashboardCost = loadedCosts.reduce((sum, report) => sum + report.totals.billed, 0)
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -778,24 +644,23 @@ export default function DashboardPage() {
         <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
           <div>
             <Badge variant="outline" className="bg-background">
-              Fleets
+              Teams
             </Badge>
             <h1 className="mt-3 text-3xl font-semibold tracking-tight">Agent operations</h1>
             <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-              Create fleets, deploy agents, inspect runtime health, and open the live world view from a single surface.
+              Create teams, deploy agents, inspect runtime health, and open the live world view from a single surface.
             </p>
           </div>
           <Button onClick={() => setShowCreateFleet(true)}>
             <CirclePlus />
-            New fleet
+            New team
           </Button>
         </div>
 
-        <div className="mt-8 grid gap-4 md:grid-cols-4">
-          <MetricCard label="Total fleets" value={fleets.length} />
-          <MetricCard label="Active fleets" value={activeFleets} />
+        <div className="mt-8 grid gap-4 md:grid-cols-3">
+          <MetricCard label="Total teams" value={fleets.length} />
+          <MetricCard label="Active teams" value={activeFleets} />
           <MetricCard label="Agents deployed" value={totalAgents} />
-          <MetricCard label={`Loaded ${costPeriodDays}d cost`} value={formatCurrency(dashboardCost)} />
         </div>
 
         {error && (
@@ -809,7 +674,7 @@ export default function DashboardPage() {
             <Card>
               <CardContent className="flex items-center gap-2 p-6 text-sm text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" />
-                Loading fleets...
+                Loading teams...
               </CardContent>
             </Card>
           ) : fleets.length === 0 ? (
@@ -818,13 +683,13 @@ export default function DashboardPage() {
                 <div className="flex size-12 items-center justify-center rounded-md border bg-muted">
                   <Box className="size-6 text-muted-foreground" />
                 </div>
-                <h2 className="mt-4 text-lg font-semibold">No fleets yet</h2>
+                <h2 className="mt-4 text-lg font-semibold">No teams yet</h2>
                 <p className="mt-2 max-w-sm text-sm text-muted-foreground">
-                  Create a fleet to deploy your first isolated agent runtime.
+                  Create a team to deploy your first isolated agent runtime.
                 </p>
                 <Button className="mt-5" onClick={() => setShowCreateFleet(true)}>
                   <CirclePlus />
-                  New fleet
+                  New team
                 </Button>
               </CardContent>
             </Card>
@@ -835,15 +700,11 @@ export default function DashboardPage() {
                   key={fleet._id}
                   fleet={fleet}
                   agents={agentsByFleet[fleet._id]}
-                  costReport={costsByFleet[fleet._id]}
-                  costLoading={Boolean(loadingCostByFleet[fleet._id])}
-                  costPeriodDays={costPeriodDays}
                   expanded={expandedFleet === fleet._id}
                   onToggle={() => void toggleFleet(fleet._id)}
                   onOpenWorld={() => router.push(`/world?fleet=${fleet._id}`)}
                   onDeployAgent={(path) => openAgentForm(fleet._id, path)}
                   onConfigureOrchestration={() => openOrchestrationForm(fleet)}
-                  onCostPeriodChange={updateCostPeriod}
                   onTerminateAgent={(agentId) => void terminateAgent(fleet._id, agentId)}
                 />
               ))}
@@ -862,13 +723,13 @@ export default function DashboardPage() {
         <DialogContent>
           <form onSubmit={(e) => void createFleet(e)} className="space-y-5">
             <DialogHeader>
-              <DialogTitle>Create fleet</DialogTitle>
+              <DialogTitle>Create team</DialogTitle>
               <DialogDescription>
                 Choose a name and world template for this group of agent runtimes.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-2">
-              <Label htmlFor="fleet-name">Fleet name</Label>
+              <Label htmlFor="fleet-name">Team name</Label>
               <Input
                 id="fleet-name"
                 placeholder="product-ops"
@@ -897,7 +758,7 @@ export default function DashboardPage() {
               </Button>
               <Button type="submit" disabled={creatingFleet}>
                 {creatingFleet && <Loader2 className="animate-spin" />}
-                Create fleet
+                Create team
               </Button>
             </DialogFooter>
           </form>
@@ -917,7 +778,7 @@ export default function DashboardPage() {
                 <DialogDescription>
                   {activeAgentFleet
                     ? `Add a ${agentPath === 'openclaw' ? 'OpenClaw' : agentPath === 'hermes' ? 'Hermes' : 'native'} runtime to ${activeAgentFleet.name}.`
-                    : 'Add a runtime to this fleet.'}
+                    : 'Add a runtime to this team.'}
                 </DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 sm:grid-cols-3">
@@ -1145,7 +1006,7 @@ export default function DashboardPage() {
           {orchestrationFleet && (
             <form onSubmit={(e) => void saveOrchestration(e)} className="space-y-5">
               <DialogHeader>
-                <DialogTitle>Fleet orchestration</DialogTitle>
+                <DialogTitle>Team orchestration</DialogTitle>
                 <DialogDescription>
                   Define how agents in {orchestrationFleet.name} coordinate, report, hand off work, and escalate blockers.
                 </DialogDescription>
@@ -1325,7 +1186,7 @@ export default function DashboardPage() {
                   id="orch-custom"
                   value={orchestrationForm.customInstructions}
                   onChange={(e) => setOrchestrationForm((prev) => ({ ...prev, customInstructions: e.target.value }))}
-                  placeholder="Add fleet-specific coordination rules."
+                  placeholder="Add team-specific coordination rules."
                 />
               </div>
 
@@ -1452,28 +1313,20 @@ function ToggleField({
 function FleetCard({
   fleet,
   agents,
-  costReport,
-  costLoading,
-  costPeriodDays,
   expanded,
   onToggle,
   onOpenWorld,
   onDeployAgent,
   onConfigureOrchestration,
-  onCostPeriodChange,
   onTerminateAgent,
 }: {
   fleet: Fleet
   agents?: Agent[]
-  costReport?: FleetCostReport
-  costLoading: boolean
-  costPeriodDays: CostPeriodDays
   expanded: boolean
   onToggle: () => void
   onOpenWorld: () => void
   onDeployAgent: (path: AgentPath) => void
   onConfigureOrchestration: () => void
-  onCostPeriodChange: (days: CostPeriodDays) => void
   onTerminateAgent: (agentId: string) => void
 }) {
   return (
@@ -1565,12 +1418,6 @@ function FleetCard({
 
         {expanded && (
           <div className="space-y-5 border-t bg-background p-5">
-            <CostPanel
-              report={costReport}
-              loading={costLoading}
-              periodDays={costPeriodDays}
-              onPeriodChange={onCostPeriodChange}
-            />
             {!agents ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" />
@@ -1578,7 +1425,7 @@ function FleetCard({
               </div>
             ) : agents.length === 0 ? (
               <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-                No agents deployed in this fleet.
+                No agents deployed in this team.
               </div>
             ) : (
               <div className="overflow-hidden rounded-md border">
@@ -1647,206 +1494,6 @@ function FleetCard({
         )}
       </CardContent>
     </Card>
-  )
-}
-
-const costPeriodOptions: CostPeriodDays[] = [7, 30, 90]
-
-function CostPanel({
-  report,
-  loading,
-  periodDays,
-  onPeriodChange,
-}: {
-  report?: FleetCostReport
-  loading: boolean
-  periodDays: CostPeriodDays
-  onPeriodChange: (days: CostPeriodDays) => void
-}) {
-  if (loading || !report) {
-    return (
-      <div className="rounded-md border bg-muted/20 p-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" />
-            Loading cost telemetry...
-          </div>
-          <CostPeriodSelect value={periodDays} onChange={onPeriodChange} />
-        </div>
-      </div>
-    )
-  }
-
-  const actualTotal = report.usageComparison.actual.totalTokens
-  const estimatedTotal = report.usageComparison.estimated.totalTokens
-  const comparisonMax = Math.max(actualTotal, estimatedTotal, 1)
-  const actualPercent = Math.min(100, Math.round((actualTotal / comparisonMax) * 100))
-  const estimatedPercent = Math.min(100, Math.round((estimatedTotal / comparisonMax) * 100))
-  const estimateRatio = estimatedTotal > 0 ? actualTotal / estimatedTotal : 0
-  const ratioLabel = estimatedTotal > 0
-    ? `${Math.round(estimateRatio * 100)}% of estimate`
-    : 'No estimate baseline'
-
-  const costBreakdown = [
-    { label: 'Model', value: report.totals.tokens, icon: Gauge },
-    { label: 'Compute', value: report.totals.compute, icon: Cpu },
-    { label: 'Storage', value: report.totals.storage, icon: Database },
-    { label: 'Markup', value: report.totals.markup, icon: DollarSign },
-  ]
-
-  return (
-    <div className="rounded-md border bg-muted/10">
-      <div className="grid gap-4 border-b p-4 lg:grid-cols-[1fr_auto] lg:items-center">
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-sm font-semibold">Cost monitor</h3>
-            <Badge variant={report.confidence === 'estimated' ? 'warning' : 'success'}>
-              {report.confidence}
-            </Badge>
-            <Badge variant="outline">{report.period.days} days</Badge>
-          </div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            {formatCompact(report.totals.inputTokens + report.totals.outputTokens)} tokens across {formatCompact(report.totals.requestCount)} requests
-          </div>
-        </div>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <CostPeriodSelect value={periodDays} onChange={onPeriodChange} />
-          <div className="min-w-40 rounded-md border bg-background px-4 py-3">
-            <div className="text-xs text-muted-foreground">Customer price</div>
-            <div className="mt-1 text-2xl font-semibold tracking-tight">{formatCurrency(report.totals.billed)}</div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              Raw {formatCurrency(report.totals.raw)} + {Math.round(report.markupRate * 100)}%
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="border-b p-4">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Actual token consumption</div>
-            <div className="mt-1 text-sm">
-              {formatCompact(actualTotal)} actual vs {formatCompact(estimatedTotal)} estimated
-            </div>
-          </div>
-          <div className="text-sm font-medium">{ratioLabel}</div>
-        </div>
-        <div className="mt-4 space-y-3">
-          <TokenComparisonBar label="Actual" value={actualTotal} percent={actualPercent} tone="actual" />
-          <TokenComparisonBar label="Estimated" value={estimatedTotal} percent={estimatedPercent} tone="estimated" />
-        </div>
-      </div>
-
-      <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
-        {costBreakdown.map((item) => {
-          const Icon = item.icon
-          return (
-            <div key={item.label} className="rounded-md border bg-background p-3">
-              <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                <span>{item.label}</span>
-                <Icon className="size-4" />
-              </div>
-              <div className="mt-2 text-lg font-semibold">{formatCurrency(item.value)}</div>
-            </div>
-          )
-        })}
-      </div>
-
-      <div className="overflow-x-auto border-t">
-        <div className="min-w-[760px]">
-          <div className="grid grid-cols-[1.2fr_0.9fr_1fr_0.8fr_0.8fr_0.8fr_0.8fr] gap-3 bg-muted/40 px-4 py-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            <span>Agent</span>
-            <span>Model</span>
-            <span>Usage</span>
-            <span>Pod</span>
-            <span>Model cost</span>
-            <span>Infra</span>
-            <span className="text-right">Price</span>
-          </div>
-          <div className="max-h-72 overflow-y-auto">
-            {report.agents.map((agent) => (
-              <div
-                key={agent.agentId}
-                className="grid grid-cols-[1.2fr_0.9fr_1fr_0.8fr_0.8fr_0.8fr_0.8fr] items-center gap-3 border-t px-4 py-3 text-sm"
-              >
-                <div className="min-w-0">
-                  <div className="truncate font-medium capitalize">{agent.role}</div>
-                  <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-                    <Badge variant={agent.confidence === 'actual' ? 'success' : 'warning'} className="px-1.5 py-0">
-                      {agent.confidence}
-                    </Badge>
-                    {agent.integrationPath}
-                  </div>
-                </div>
-                <div className="min-w-0 text-xs">
-                  <div className="truncate font-mono">{agent.model}</div>
-                  <div className="mt-1 text-muted-foreground">{agent.provider}</div>
-                </div>
-                <div className="text-xs">
-                  <div>{formatCompact(agent.tokens.inputTokens)} in / {formatCompact(agent.tokens.outputTokens)} out</div>
-                  <div className="mt-1 text-muted-foreground">{formatCompact(agent.tokens.cachedInputTokens)} cached</div>
-                </div>
-                <div className="text-xs">
-                  <div>{agent.resources.cpuRequestCores} CPU</div>
-                  <div className="mt-1 text-muted-foreground">{agent.resources.memoryRequestGiB} GiB</div>
-                </div>
-                <span>{formatCurrency(agent.cost.tokens)}</span>
-                <span>{formatCurrency(agent.cost.compute + agent.cost.storage)}</span>
-                <span className="text-right font-medium">{formatCurrency(agent.cost.billed)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function CostPeriodSelect({
-  value,
-  onChange,
-}: {
-  value: CostPeriodDays
-  onChange: (days: CostPeriodDays) => void
-}) {
-  return (
-    <select
-      className={`${selectClass} h-9 w-32`}
-      value={value}
-      onChange={(e) => onChange(Number(e.target.value) as CostPeriodDays)}
-      aria-label="Cost telemetry period"
-    >
-      {costPeriodOptions.map((days) => (
-        <option key={days} value={days}>
-          {days} days
-        </option>
-      ))}
-    </select>
-  )
-}
-
-function TokenComparisonBar({
-  label,
-  value,
-  percent,
-  tone,
-}: {
-  label: string
-  value: number
-  percent: number
-  tone: 'actual' | 'estimated'
-}) {
-  return (
-    <div className="grid gap-2 sm:grid-cols-[6rem_1fr_5rem] sm:items-center">
-      <div className="text-xs font-medium text-muted-foreground">{label}</div>
-      <div className="h-3 overflow-hidden rounded-full bg-muted">
-        <div
-          className={tone === 'actual' ? 'h-full rounded-full bg-emerald-500' : 'h-full rounded-full bg-sky-500/70'}
-          style={{ width: `${percent}%` }}
-        />
-      </div>
-      <div className="text-xs tabular-nums text-muted-foreground sm:text-right">{formatCompact(value)}</div>
-    </div>
   )
 }
 
