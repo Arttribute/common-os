@@ -33,14 +33,23 @@ phases:
       - infra/aws/set-express-alarm-threshold.sh common-os-api-production 100 || true
       - infra/aws/set-express-alarm-threshold.sh common-os-runner-production 100 || true
       - (while sleep 20; do infra/aws/set-express-alarm-threshold.sh common-os-api-production 100 || true; infra/aws/set-express-alarm-threshold.sh common-os-runner-production 100 || true; done) & ALARM_GUARD_PID=$!
-      - infra/aws/deploy-services-stack.sh
-      - API_ENDPOINT=$(aws cloudformation describe-stacks --stack-name common-os-services --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' --output text --region "$AWS_REGION")
-      - RUNNER_ENDPOINT=$(aws cloudformation describe-stacks --stack-name common-os-services --query 'Stacks[0].Outputs[?OutputKey==`RunnerEndpoint`].OutputValue' --output text --region "$AWS_REGION")
-      - API_ENDPOINT="https://${API_ENDPOINT#https://}"
-      - RUNNER_ENDPOINT="https://${RUNNER_ENDPOINT#https://}"
-      - infra/aws/set-express-alarm-threshold.sh common-os-api-production 100
-      - infra/aws/set-express-alarm-threshold.sh common-os-runner-production 100
-      - infra/aws/deploy-services-stack.sh --with-public-urls
+      - API_ENDPOINT=$(aws cloudformation describe-stacks --stack-name common-os-services --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' --output text --region "$AWS_REGION" 2>/dev/null || true)
+      - RUNNER_ENDPOINT=$(aws cloudformation describe-stacks --stack-name common-os-services --query 'Stacks[0].Outputs[?OutputKey==`RunnerEndpoint`].OutputValue' --output text --region "$AWS_REGION" 2>/dev/null || true)
+      - |
+        if [[ -n "${API_ENDPOINT:-}" && -n "${RUNNER_ENDPOINT:-}" && "$API_ENDPOINT" != "None" && "$RUNNER_ENDPOINT" != "None" ]]; then
+          API_ENDPOINT="https://${API_ENDPOINT#https://}"
+          RUNNER_ENDPOINT="https://${RUNNER_ENDPOINT#https://}"
+          infra/aws/deploy-services-stack.sh --with-public-urls
+        else
+          infra/aws/deploy-services-stack.sh
+          API_ENDPOINT=$(aws cloudformation describe-stacks --stack-name common-os-services --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' --output text --region "$AWS_REGION")
+          RUNNER_ENDPOINT=$(aws cloudformation describe-stacks --stack-name common-os-services --query 'Stacks[0].Outputs[?OutputKey==`RunnerEndpoint`].OutputValue' --output text --region "$AWS_REGION")
+          API_ENDPOINT="https://${API_ENDPOINT#https://}"
+          RUNNER_ENDPOINT="https://${RUNNER_ENDPOINT#https://}"
+          infra/aws/set-express-alarm-threshold.sh common-os-api-production 100
+          infra/aws/set-express-alarm-threshold.sh common-os-runner-production 100
+          infra/aws/deploy-services-stack.sh --with-public-urls
+        fi
       - curl --fail --show-error --silent --retry 18 --retry-delay 10 --retry-all-errors "${API_ENDPOINT%/}/health" | jq -e '.status == "ok"'
       - curl --fail --show-error --silent --retry 18 --retry-delay 10 --retry-all-errors "${RUNNER_ENDPOINT%/}/health" | jq -e '.status == "ok"'
       - kill "$ALARM_GUARD_PID" 2>/dev/null || true
