@@ -8,8 +8,11 @@ The agent image lives under `apps/api/agent`.
 ## Contents
 
 - Bun runtime
+- Node.js, npm, pnpm, npx, git, ripgrep, and native package build tools
 - Agent Commons CLI
 - bundled CommonOS daemon
+- pod-local CommonOS tools API for filesystem, shell, managed processes, browser, AXL, and wallet actions
+- headless Chromium for in-pod browser verification
 - entrypoint script
 - AXL startup sequence
 - workspace mount expectations
@@ -37,8 +40,32 @@ entrypoint.sh
 | `COMMONS_AGENT_ID` | Native Agent Commons identity. |
 | `COMMONS_API_KEY` | Runtime Agent Commons key when available. |
 | `RUNNER_URL` | Shared runner service URL. |
+| `AGENT_TOOLS_URL` | Pod-local tools API base URL, usually `http://127.0.0.1:4100`. |
+| `COMMONOS_TOOLS_URL` | Discovery URL for the shared tool catalog. |
 | `AXL_PEERS` | Optional bootstrap peers. |
 | `WORLD_ROOM`, `WORLD_X`, `WORLD_Y` | Initial world placement. |
+
+## Development Loop
+
+Every CommonOS agent pod exposes the same local tool catalog to native Agent
+Commons agents, OpenClaw, Hermes, and guest runtimes. The catalog lets an agent
+create files, install packages, run finite commands, start a long-running dev
+server, open Chromium against `localhost`, inspect the rendered page, and then
+fix issues in the workspace.
+
+For app work, agents should use finite command execution for setup and tests,
+managed processes for servers, and browser tools for verification:
+
+```txt
+cli_run_command      -> npm/pnpm install, build, test, lint
+cli_start_process   -> Next: npm run dev -- --hostname 0.0.0.0 --port 3000
+cli_start_process   -> Vite: npm run dev -- --host 0.0.0.0 --port 3000
+cli_browser_open    -> http://127.0.0.1:3000
+cli_browser_wait    -> wait for the page to become interactive
+cli_browser_eval    -> inspect DOM text, selectors, and runtime errors
+cli_process_status  -> read server logs while debugging
+cli_stop_process    -> stop or restart the server
+```
 
 ## Build
 

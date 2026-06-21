@@ -7,6 +7,26 @@ import type { Env } from "../types.js";
 
 const router = new Hono<Env>();
 
+const DEFAULT_PERSISTED_EVENT_TYPES = new Set([
+	"token_usage",
+	"error",
+	"task_start",
+	"task_complete",
+]);
+
+function persistedEventTypes(): Set<string> {
+	const configured = process.env.PERSIST_EVENT_TYPES;
+	if (!configured) return DEFAULT_PERSISTED_EVENT_TYPES;
+	return new Set(configured.split(",").map((type) => type.trim()).filter(Boolean));
+}
+
+function shouldPersistEvent(type: string): boolean {
+	const mode = (process.env.EVENT_PERSISTENCE_MODE ?? "minimal").toLowerCase();
+	if (mode === "off" || mode === "disabled") return false;
+	if (mode === "all") return true;
+	return persistedEventTypes().has(type);
+}
+
 // POST /events — agent emits an event
 router.post("/", async (c) => {
 	const raw = await c.req.json<Record<string, unknown>>();
@@ -31,18 +51,6 @@ router.post("/", async (c) => {
 		if (!agentDoc) return c.json({ error: "agent not found" }, 404);
 
 		const now = new Date();
-		const eventId = `evt_${Date.now().toString(36)}${randomBytes(4).toString("hex")}`;
-
-		await (await events()).create({
-			_id: eventId,
-			agentId,
-			fleetId: agentDoc.fleetId,
-			tenantId: agentDoc.tenantId,
-			type: event.type,
-			payload: (event as { payload?: Record<string, unknown> }).payload ?? {},
-			createdAt: now,
-		} as never);
-
 		const agentCol = await agents();
 
 		if (event.type === "world_move") {
@@ -135,6 +143,7 @@ router.post("/", async (c) => {
 				},
 			);
 		} else if (event.type === "heartbeat") {
+			const heartbeatProvesRunning = ["provisioning", "starting", "stopped"].includes(agentDoc.status);
 			const runtimePayload = event.payload
 				? {
 					"runtime.name": event.payload.runtime ?? null,
@@ -145,8 +154,14 @@ router.post("/", async (c) => {
 				: {};
 			await agentCol.updateOne(
 				{ _id: agentId },
-				{ $set: { lastHeartbeatAt: now, updatedAt: now, ...runtimePayload } },
+				{ $set: { lastHeartbeatAt: now, updatedAt: now, ...runtimePayload, ...(heartbeatProvesRunning ? { status: "running" } : {}) } },
 			);
+			if (heartbeatProvesRunning) {
+				await (await worldStates()).updateOne(
+					{ fleetId: agentDoc.fleetId, "agents.agentId": agentId },
+					{ $set: { "agents.$.status": "running", updatedAt: now } },
+				);
+			}
 		} else if (event.type === "task_start") {
 			await (await tasks()).updateOne(
 				{ _id: event.payload.taskId, agentId },
@@ -172,8 +187,30 @@ router.post("/", async (c) => {
 			ts: now.toISOString(),
 		});
 
-		return c.json({ ok: true, eventId });
-	} catch {
+		let eventId: string | null = null;
+		let persistenceWarning: string | null = null;
+		if (shouldPersistEvent(event.type)) {
+			eventId = `evt_${Date.now().toString(36)}${randomBytes(4).toString("hex")}`;
+			try {
+				await (await events()).create({
+					_id: eventId,
+					agentId,
+					fleetId: agentDoc.fleetId,
+					tenantId: agentDoc.tenantId,
+					type: event.type,
+					payload: (event as { payload?: Record<string, unknown> }).payload ?? {},
+					createdAt: now,
+				} as never);
+			} catch (err) {
+				persistenceWarning = err instanceof Error ? err.message : String(err);
+				eventId = null;
+				console.warn(`[events] skipped event persistence type=${event.type} agent=${agentId}: ${persistenceWarning}`);
+			}
+		}
+
+		return c.json({ ok: true, eventId, persisted: Boolean(eventId), ...(persistenceWarning ? { persistenceWarning } : {}) });
+	} catch (err) {
+		console.warn("[events] state update failed:", err instanceof Error ? err.message : err);
 		return c.json({ error: "database error" }, 503);
 	}
 });

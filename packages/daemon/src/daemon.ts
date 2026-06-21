@@ -107,6 +107,18 @@ let browserStderrTail = "";
 let browserLastError: string | null = null;
 let browserCdpId = 0;
 const browserPending = new Map<number, { resolve: (value: Record<string, unknown>) => void; reject: (err: Error) => void }>();
+type ManagedProcess = {
+  id: string;
+  command: string;
+  args: string[];
+  cwd: string;
+  proc: ReturnType<typeof Bun.spawn>;
+  startedAt: string;
+  exitCode: number | null;
+  stdoutTail: string;
+  stderrTail: string;
+};
+const managedProcesses = new Map<string, ManagedProcess>();
 
 function axlEnabled(): boolean {
   return AXL_MODE !== "off" && AXL_MODE !== "disabled";
@@ -538,6 +550,46 @@ async function browserSnapshot(lastAction?: string): Promise<BrowserRuntimeStatu
       error: browserLastError ?? (err instanceof Error ? err.message : String(err)),
     };
   }
+}
+
+async function waitForBrowserReady(timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + Math.max(1_000, timeoutMs);
+  let lastState = "";
+  while (Date.now() < deadline) {
+    try {
+      const ready = await cdpSend("Runtime.evaluate", {
+        expression: "document.readyState",
+        returnByValue: true,
+      }, browserSessionId);
+      lastState = cdpValue(ready) ?? "";
+      if (lastState === "complete" || lastState === "interactive") return;
+    } catch (err) {
+      lastState = err instanceof Error ? err.message : String(err);
+    }
+    await sleep(250);
+  }
+  throw new Error(`browser did not become ready within ${Math.round(timeoutMs / 1000)}s (${lastState || "unknown state"})`);
+}
+
+async function browserEvaluate(expression: string, timeoutMs = 10_000): Promise<unknown> {
+  await ensureBrowser();
+  const result = await cdpSend("Runtime.evaluate", {
+    expression,
+    awaitPromise: true,
+    returnByValue: true,
+    timeout: timeoutMs,
+  }, browserSessionId);
+  const nested = result.result as Record<string, unknown> | undefined;
+  if (nested?.subtype === "error") {
+    const description = typeof nested.description === "string" ? nested.description : "browser evaluation failed";
+    throw new Error(description);
+  }
+  return nested?.value ?? result.value ?? null;
+}
+
+function formatBrowserValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  return JSON.stringify(value, null, 2);
 }
 
 // Keeps the browser tab live between agent-driven actions
@@ -1772,7 +1824,12 @@ const TOOL_CATALOG: ToolCatalogEntry[] = [
   { name: "write_file", description: "Write or overwrite a file in this pod's workspace. Creates parent directories if needed.", parameters: { type: "object", properties: { path: { type: "string", description: "File path relative to session root" }, content: { type: "string", description: "Content to write" } }, required: ["path", "content"] } },
   { name: "search_files", description: "Find files matching a glob-style pattern in this pod's workspace. Returns up to 50 matches.", parameters: { type: "object", properties: { pattern: { type: "string", description: "Glob-style filename pattern (e.g. \"*.ts\")" }, directory: { type: "string", description: "Directory to search (default: session root)" } }, required: ["pattern"] } },
   { name: "run_command", description: "Run a short shell command (up to 5 minutes) in this pod's workspace and return its output. Use this for node, npm, npx, pnpm, git, tests, build scripts, and dev servers.", parameters: { type: "object", properties: { command: { type: "string", description: "Command to run, e.g. node, npm, npx, sh, git" }, args: { type: "array", items: { type: "string" }, description: "Arguments array, e.g. [\"--version\"] or [\"create\", \"vite@latest\", \"site\", \"--\", \"--template\", \"react-ts\"]" }, cwd: { type: "string", description: "Working directory (default: session root)" }, timeout_seconds: { type: "number", description: "Max seconds to wait (default 120, max 300)" } }, required: ["command"] } },
+  { name: "start_process", description: "Start a long-running process such as a Next.js/Vite dev server and keep it alive in the pod. Returns a process id and recent logs.", parameters: { type: "object", properties: { id: { type: "string", description: "Optional stable process id, e.g. \"dev-server\"" }, command: { type: "string", description: "Command to run, e.g. npm, pnpm, bun, node" }, args: { type: "array", items: { type: "string" }, description: "Arguments array, e.g. [\"run\", \"dev\", \"--\", \"--host\", \"0.0.0.0\", \"--port\", \"3000\"]" }, cwd: { type: "string", description: "Working directory (default: session root)" }, wait_seconds: { type: "number", description: "Seconds to collect startup logs before returning (default 3, max 15)" } }, required: ["command"] } },
+  { name: "process_status", description: "List managed long-running processes or show one process with recent stdout/stderr logs.", parameters: { type: "object", properties: { id: { type: "string", description: "Optional process id returned by start_process" } }, required: [] } },
+  { name: "stop_process", description: "Stop a managed long-running process by id.", parameters: { type: "object", properties: { id: { type: "string", description: "Process id returned by start_process" } }, required: ["id"] } },
   { name: "browser_open", description: "Launch this pod's shared Chromium browser and navigate to a URL.", parameters: { type: "object", properties: { url: { type: "string", description: "URL to open" } }, required: ["url"] } },
+  { name: "browser_wait", description: "Wait until the shared browser page is interactive/complete, then return URL, title, and screenshot status.", parameters: { type: "object", properties: { timeout_seconds: { type: "number", description: "Max seconds to wait (default 20, max 60)" } }, required: [] } },
+  { name: "browser_eval", description: "Evaluate JavaScript in the shared browser page and return the JSON-serializable result. Use this to inspect rendered text, errors, selectors, and client state.", parameters: { type: "object", properties: { expression: { type: "string", description: "JavaScript expression or async IIFE to evaluate in the page" }, timeout_seconds: { type: "number", description: "Max seconds to wait (default 10, max 30)" } }, required: ["expression"] } },
   { name: "browser_status", description: "Return the shared browser's on/off state, current URL, page title, and latest screenshot.", parameters: { type: "object", properties: {}, required: [] } },
   { name: "browser_screenshot", description: "Refresh and return the latest screenshot of the shared browser.", parameters: { type: "object", properties: {}, required: [] } },
   { name: "browser_click", description: "Click a coordinate in the shared browser's viewport.", parameters: { type: "object", properties: { x: { type: "number", description: "X coordinate" }, y: { type: "number", description: "Y coordinate" } }, required: ["x", "y"] } },
@@ -1817,9 +1874,9 @@ ${buildWorkspaceSnapshot(WORKSPACE_DIR)}
 2. **Use AXL only when explicitly requested.** OpenClaw and channel connectors are normal messaging surfaces; do not route those conversations through AXL unless the user specifically asks for CommonOS P2P/AXL.
 3. File operations are sandboxed to the session root. Return the actual path or command output after using a tool.
 4. For markdown file requests, write the .md file with \`cli_write_file\` and return its path.
-5. For website, app, package, build, install, test, or localhost/dev-server requests, use \`cli_run_command\`. Standard agent pods include Node.js, npm, npx, and git unless a command check proves otherwise.
+5. For website, app, package, build, install, test, or localhost/dev-server requests, use \`cli_run_command\` for finite commands and \`cli_start_process\` for dev servers that must stay alive. Standard agent pods include Node.js, npm, npx, pnpm, bun, and git unless a command check proves otherwise.
 6. Never say npm, node, npx, git, package managers, files, terminal commands, or localhost are unavailable until you have called \`cli_run_command\` to verify, such as \`node --version\`, \`npm --version\`, \`which npm\`, or the requested command itself.
-7. If the user asks you to create and run an app/site, create the files, install dependencies as needed, run the dev server with \`cli_run_command\`, and report the localhost URL plus any command output or errors.
+7. If the user asks you to create and run an app/site, create the files, install dependencies as needed, start the dev server with \`cli_start_process\`, open it with \`cli_browser_open\`, inspect it with \`cli_browser_wait\`, \`cli_browser_eval\`, and screenshots, then fix any errors and re-check before reporting the localhost URL.
 
 ### Available CLI tools
 
@@ -1833,7 +1890,17 @@ ${toolTable}
 {"command":"node","args":["--version"]}
 {"command":"npm","args":["--version"]}
 {"command":"npm","args":["create","vite@latest","site","--","--template","react-ts"]}
-{"command":"npm","args":["run","dev","--","--host","0.0.0.0"],"cwd":"site","timeout_seconds":5}
+{"command":"npm","args":["install"],"cwd":"site","timeout_seconds":300}
+\`\`\`
+
+### cli_start_process + browser verification examples
+
+\`\`\`json
+{"id":"next-dev","command":"npm","args":["run","dev","--","--hostname","0.0.0.0","--port","3000"],"cwd":"next-site","wait_seconds":5}
+{"id":"vite-dev","command":"npm","args":["run","dev","--","--host","0.0.0.0","--port","3000"],"cwd":"vite-site","wait_seconds":5}
+{"url":"http://127.0.0.1:3000"}
+{"timeout_seconds":30}
+{"expression":"({ title: document.title, text: document.body.innerText.slice(0, 2000), errors: Array.from(document.querySelectorAll('nextjs-portal')).map(e => e.textContent) })"}
 \`\`\`
 
 ### Cached AXL peers in this fleet
@@ -1867,6 +1934,59 @@ function workspacePath(userPath = "."): string {
 
 function toolName(name: unknown): string {
   return String(name ?? "").replace(/^cli_/, "");
+}
+
+function appendTail(existing: string, chunk: string, max = 12_000): string {
+  return `${existing}${chunk}`.slice(-max);
+}
+
+function boundedSeconds(value: unknown, fallback: number, max: number): number {
+  const n = Number(value ?? fallback);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.min(n, max);
+}
+
+async function collectProcessStream(
+  managed: ManagedProcess,
+  stream: ReadableStream<Uint8Array> | null | undefined,
+  key: "stdoutTail" | "stderrTail",
+): Promise<void> {
+  if (!stream) return;
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value) managed[key] = appendTail(managed[key], decoder.decode(value, { stream: true }));
+    }
+  } catch (err) {
+    managed[key] = appendTail(managed[key], `\n[log stream failed: ${err instanceof Error ? err.message : String(err)}]`);
+  }
+}
+
+function managedProcessStatus(managed: ManagedProcess): string {
+  const relCwd = relative(WORKSPACE_DIR, managed.cwd) || ".";
+  return [
+    `id=${managed.id}`,
+    `command=${[managed.command, ...managed.args].join(" ")}`,
+    `cwd=${relCwd}`,
+    `startedAt=${managed.startedAt}`,
+    `status=${managed.exitCode === null ? "running" : `exited ${managed.exitCode}`}`,
+    managed.stdoutTail.trim() ? `--- stdout tail ---\n${managed.stdoutTail.trim()}` : "",
+    managed.stderrTail.trim() ? `--- stderr tail ---\n${managed.stderrTail.trim()}` : "",
+  ].filter(Boolean).join("\n");
+}
+
+async function stopManagedProcess(id: string): Promise<string> {
+  const managed = managedProcesses.get(id);
+  if (!managed) throw new Error(`managed process not found: ${id}`);
+  if (managed.exitCode === null) {
+    managed.proc.kill();
+    await Promise.race([managed.proc.exited, sleep(5_000)]).catch(() => {});
+  }
+  managedProcesses.delete(id);
+  return `Stopped process ${id}.`;
 }
 
 async function executeLocalTool(name: string, args: Record<string, unknown>): Promise<string> {
@@ -1950,6 +2070,63 @@ async function executeLocalTool(name: string, args: Record<string, unknown>): Pr
     ].filter(Boolean).join("\n") || "(no output)";
   }
 
+  if (tool === "start_process") {
+    const command = String(args.command ?? "");
+    const cmdArgs = Array.isArray(args.args) ? args.args.map(String) : [];
+    if (!command) throw new Error('start_process requires "command"');
+    const id = String(args.id ?? `proc_${Date.now().toString(36)}`).replace(/[^a-zA-Z0-9_.-]/g, "-");
+    const cwd = args.cwd ? workspacePath(String(args.cwd)) : WORKSPACE_DIR;
+    if (managedProcesses.has(id)) {
+      await stopManagedProcess(id);
+    }
+    const proc = Bun.spawn([command, ...cmdArgs], {
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...process.env,
+        HOST: process.env.HOST ?? "0.0.0.0",
+      },
+    });
+    const managed: ManagedProcess = {
+      id,
+      command,
+      args: cmdArgs,
+      cwd,
+      proc,
+      startedAt: new Date().toISOString(),
+      exitCode: null,
+      stdoutTail: "",
+      stderrTail: "",
+    };
+    managedProcesses.set(id, managed);
+    void collectProcessStream(managed, proc.stdout, "stdoutTail");
+    void collectProcessStream(managed, proc.stderr, "stderrTail");
+    void proc.exited.then((code) => {
+      managed.exitCode = code;
+      console.log(`[daemon] managed process ${id} exited with ${code}`);
+    });
+    await sleep(boundedSeconds(args.wait_seconds, 3, 15) * 1000);
+    return managedProcessStatus(managed);
+  }
+
+  if (tool === "process_status") {
+    const id = args.id !== undefined ? String(args.id) : "";
+    if (id) {
+      const managed = managedProcesses.get(id);
+      if (!managed) throw new Error(`managed process not found: ${id}`);
+      return managedProcessStatus(managed);
+    }
+    if (managedProcesses.size === 0) return "No managed processes.";
+    return Array.from(managedProcesses.values()).map(managedProcessStatus).join("\n\n");
+  }
+
+  if (tool === "stop_process") {
+    const id = String(args.id ?? "");
+    if (!id) throw new Error('stop_process requires "id"');
+    return await stopManagedProcess(id);
+  }
+
   if (tool === "browser_open") {
     const url = String(args.url ?? "");
     if (!url) throw new Error('browser_open requires "url"');
@@ -1963,6 +2140,28 @@ async function executeLocalTool(name: string, args: Record<string, unknown>): Pr
       `title=${status.title ?? ""}`,
       status.screenshot ? "screenshot=available in CommonOS UI" : "",
     ].filter(Boolean).join("\n");
+  }
+
+  if (tool === "browser_wait") {
+    const timeoutMs = boundedSeconds(args.timeout_seconds, 20, 60) * 1000;
+    await ensureBrowser();
+    await waitForBrowserReady(timeoutMs);
+    const status = await browserSnapshot("wait");
+    await emitBrowserStatus(status);
+    return [
+      `Browser is ${status.status}.`,
+      `url=${status.url ?? ""}`,
+      `title=${status.title ?? ""}`,
+      status.screenshot ? "screenshot=available in CommonOS UI" : "",
+    ].filter(Boolean).join("\n");
+  }
+
+  if (tool === "browser_eval") {
+    const expression = String(args.expression ?? "");
+    if (!expression) throw new Error('browser_eval requires "expression"');
+    const timeoutMs = boundedSeconds(args.timeout_seconds, 10, 30) * 1000;
+    const value = await browserEvaluate(expression, timeoutMs);
+    return formatBrowserValue(value);
   }
 
   if (tool === "browser_status") {

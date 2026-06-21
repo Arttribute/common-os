@@ -18,7 +18,8 @@ ENV COMMONOS_COMMIT_SHA=$COMMONOS_COMMIT_SHA
 ENV COMMONOS_BUILD_DATE=$COMMONOS_BUILD_DATE
 
 RUN apk add --no-cache curl git jq bash ca-certificates openssl chromium nss freetype harfbuzz ttf-freefont \
-    && npm install -g bun@1.3.12
+    python3 make g++ ripgrep \
+    && npm install -g bun@1.3.12 pnpm@9.15.3
 
 # AXL — P2P inter-agent communication binary (built from source above)
 COPY --from=axl-builder /axl-node /usr/local/bin/axl-node

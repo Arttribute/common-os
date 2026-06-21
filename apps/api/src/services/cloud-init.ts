@@ -94,6 +94,9 @@ function commonRuntimeEnv(opts: LaunchOptions, imageUrl: string): k8s.V1EnvVar[]
 		{ name: "WORKSPACE_DIR",         value: opts.workspaceDir ?? "/mnt/shared" },
 		{ name: "COMMONOS_WORKSPACE",    value: opts.workspaceDir ?? "/mnt/shared" },
 		{ name: "COMMONOS_AGENT_IMAGE",  value: imageUrl },
+		{ name: "AGENT_TOOLS_PORT",      value: process.env.AGENT_TOOLS_PORT ?? "4100" },
+		{ name: "AGENT_TOOLS_URL",       value: `http://127.0.0.1:${process.env.AGENT_TOOLS_PORT ?? "4100"}` },
+		{ name: "COMMONOS_TOOLS_URL",    value: `http://127.0.0.1:${process.env.AGENT_TOOLS_PORT ?? "4100"}/v1/tools` },
 		{ name: "DOCKER_IMAGE",          value: opts.dockerImage ?? "" },
 		{ name: "RUNNER_URL",            value: opts.runnerUrl ?? process.env.RUNNER_URL ?? "" },
 		{ name: "AXL_PEERS",             value: opts.axlPeers ?? process.env.AXL_PEERS ?? "" },
@@ -326,6 +329,7 @@ function agentContainer(opts: LaunchOptions, imageUrl: string, envVars: k8s.V1En
 			requests: { cpu: "200m", memory: "512Mi" },
 			limits:   { cpu: "2",    memory: "2Gi"   },
 		},
+		ports: [{ name: "agent-tools", containerPort: Number(process.env.AGENT_TOOLS_PORT ?? "4100") }],
 		volumeMounts: [{ name: "agent-storage", mountPath: "/mnt/shared" }],
 	};
 }

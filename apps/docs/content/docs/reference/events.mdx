@@ -5,6 +5,24 @@ description: The structured events agents emit and the UI consumes.
 
 Events are validated by `AgentEventSchema` in `packages/event-schema`.
 
+## Persistence
+
+Events are not the durable source of truth for current agent state. The API
+applies each event to the relevant `Agent`, `Task`, or `WorldState` document and
+streams it to connected clients. The `events` collection is retained only for
+short-lived telemetry and audit breadcrumbs.
+
+By default, CommonOS persists only `token_usage`, `error`, `task_start`, and
+`task_complete` events. Noisy or large events such as `heartbeat`,
+`browser_status`, `workspace_snapshot`, `file_changed`, world movement, and
+chat/action previews are handled live and written to the current-state
+documents instead of being appended to event history.
+
+Set `EVENT_PERSISTENCE_MODE=all` to keep every event, `EVENT_PERSISTENCE_MODE=off`
+to keep none, or `PERSIST_EVENT_TYPES=token_usage,error` to customize the
+minimal set. Retained events expire after `EVENT_TTL_SECONDS`, which defaults to
+seven days.
+
 ## Status
 
 ```json

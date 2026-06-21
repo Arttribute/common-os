@@ -19,6 +19,7 @@ agent API with the injected agent token.
 | Tenant image launch | `--image` sets `integrationPath: "guest"` and runs the image as the `guest-runtime` container. |
 | Agent credentials | `AGENT_ID`, `AGENT_TOKEN`, `FLEET_ID`, `TENANT_ID`, and `API_URL` are injected into the guest container. |
 | Shared workspace | Both containers mount the agent workspace at `/mnt/shared`; `WORKSPACE_DIR` and `COMMONOS_WORKSPACE` point there. |
+| Local tools | `AGENT_TOOLS_URL` points to the daemon's pod-local HTTP API for filesystem, command, managed process, browser, AXL, and wallet tools. |
 | Task execution | The guest container polls `GET /agents/:agentId/tasks/next` and completes tasks with `POST /agents/:agentId/tasks/:taskId/complete`. |
 | Events | The guest container can emit `task_start`, `task_complete`, `action`, and other events through `POST /events`. |
 | Monitoring | The CommonOS daemon emits heartbeats, watches workspace files, and keeps the world view updated. |
@@ -32,6 +33,9 @@ A guest runtime should:
 - emit events to `POST /events`
 - complete tasks with `POST /agents/:agentId/tasks/:taskId/complete`
 - write durable output under the workspace mount
+- discover shared pod capabilities from `GET $COMMONOS_TOOLS_URL`
+- use `POST $AGENT_TOOLS_URL/v1/tools/start_process` for long-running dev
+  servers and browser tools to verify local apps before reporting completion
 
 ## Minimal Loop
 
