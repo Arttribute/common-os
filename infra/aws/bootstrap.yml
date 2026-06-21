@@ -410,6 +410,10 @@ Resources:
                 Resource: !Sub ${SourceBucket.Arn}/common-os/*
               - Effect: Allow
                 Action:
+                  - s3:ListBucketVersions
+                Resource: !GetAtt SourceBucket.Arn
+              - Effect: Allow
+                Action:
                   - ecr:BatchCheckLayerAvailability
                   - ecr:CompleteLayerUpload
                   - ecr:GetDownloadUrlForLayer

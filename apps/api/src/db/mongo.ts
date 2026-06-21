@@ -15,13 +15,33 @@ import {
 
 let connectionPromise: Promise<void> | null = null
 
+function safeDecode(value: string): string {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
+function normalizeMongoUri(uri: string): string {
+  const match = uri.match(/^(mongodb(?:\+srv)?:\/\/)([^/?#]*@)(.+)$/)
+  if (!match) return uri
+  const [, scheme, authWithAt, rest] = match
+  const auth = authWithAt.slice(0, -1)
+  const colon = auth.indexOf(':')
+  if (colon < 0) return uri
+  const user = auth.slice(0, colon)
+  const password = auth.slice(colon + 1)
+  return `${scheme}${encodeURIComponent(safeDecode(user))}:${encodeURIComponent(safeDecode(password))}@${rest}`
+}
+
 async function connect(): Promise<void> {
   const uri = process.env.MONGODB_URI
   if (!uri) throw new Error('MONGODB_URI environment variable not set')
   if (mongoose.connection.readyState === 1) return
   if (!connectionPromise) {
     connectionPromise = mongoose
-      .connect(uri, { dbName: 'commonos' })
+      .connect(normalizeMongoUri(uri), { dbName: 'commonos' })
       .then(() => { console.log('[mongo] connected') })
   }
   await connectionPromise
