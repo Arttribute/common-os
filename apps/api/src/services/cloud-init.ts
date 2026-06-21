@@ -260,7 +260,7 @@ exit 127
 		],
 		ports: [{ name: "openclaw", containerPort: 18789 }],
 		resources: {
-			requests: { cpu: "250m", memory: "256Mi" },
+			requests: { cpu: "100m", memory: "256Mi" },
 			limits: { cpu: "2", memory: "2Gi" },
 		},
 		volumeMounts: [{ name: "agent-storage", mountPath: "/mnt/shared" }],
@@ -308,7 +308,7 @@ exit 127
 		],
 		ports: [{ name: "hermes", containerPort: 17890 }],
 		resources: {
-			requests: { cpu: "250m", memory: "256Mi" },
+			requests: { cpu: "100m", memory: "256Mi" },
 			limits: { cpu: "2", memory: "2Gi" },
 		},
 		volumeMounts: [{ name: "agent-storage", mountPath: "/mnt/shared" }],
@@ -326,8 +326,8 @@ function agentContainer(opts: LaunchOptions, imageUrl: string, envVars: k8s.V1En
 		imagePullPolicy: "Always",
 		env:             envVars,
 		resources: {
-			requests: { cpu: "200m", memory: "512Mi" },
-			limits:   { cpu: "2",    memory: "2Gi"   },
+			requests: { cpu: "100m", memory: "512Mi" },
+			limits:   { cpu: "2",    memory: "4Gi"   },
 		},
 		ports: [{ name: "agent-tools", containerPort: Number(process.env.AGENT_TOOLS_PORT ?? "4100") }],
 		volumeMounts: [{ name: "agent-storage", mountPath: "/mnt/shared" }],
@@ -349,7 +349,7 @@ function guestRuntimeContainer(opts: LaunchOptions, envVars: k8s.V1EnvVar[]): k8
 			{ name: "COMMONOS_RUNTIME_ROLE", value: "guest" },
 		],
 		resources: {
-			requests: { cpu: "250m", memory: "256Mi" },
+			requests: { cpu: "100m", memory: "256Mi" },
 			limits:   { cpu: "2",    memory: "2Gi"    },
 		},
 		volumeMounts: [{ name: "agent-storage", mountPath: "/mnt/shared" }],
