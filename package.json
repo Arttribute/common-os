@@ -11,6 +11,7 @@
     "version-packages": "changeset version",
     "version-ci": "changeset version && git checkout -- apps/web/package.json",
     "release": "pnpm build && changeset publish",
+    "maintenance:clear-events": "node scripts/backfill-telemetry-and-clear-events.mjs",
     "prepare": "husky"
   },
   "devDependencies": {

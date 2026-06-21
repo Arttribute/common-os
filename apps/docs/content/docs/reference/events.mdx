@@ -12,8 +12,10 @@ applies each event to the relevant `Agent`, `Task`, or `WorldState` document and
 streams it to connected clients. The `events` collection is retained only for
 short-lived telemetry and audit breadcrumbs.
 
-By default, CommonOS persists only `token_usage`, `error`, `task_start`, and
-`task_complete` events. Noisy or large events such as `heartbeat`,
+By default, CommonOS persists only `error`, `task_start`, and `task_complete`
+events. Token usage is aggregated into the compact `telemetry_usage` rollup
+collection instead of being stored as raw event history. Noisy or large events
+such as `heartbeat`,
 `browser_status`, `workspace_snapshot`, `file_changed`, world movement, and
 chat/action previews are handled live and written to the current-state
 documents instead of being appended to event history.
@@ -22,6 +24,13 @@ Set `EVENT_PERSISTENCE_MODE=all` to keep every event, `EVENT_PERSISTENCE_MODE=of
 to keep none, or `PERSIST_EVENT_TYPES=token_usage,error` to customize the
 minimal set. Retained events expire after `EVENT_TTL_SECONDS`, which defaults to
 seven days.
+
+To reclaim storage after deploying rollups, backfill existing raw token usage
+and clear event history:
+
+```bash
+MONGODB_URI=... node scripts/backfill-telemetry-and-clear-events.mjs
+```
 
 ## Status
 

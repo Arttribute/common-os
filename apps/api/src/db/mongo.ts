@@ -10,6 +10,7 @@ import {
   HumanMessageModel,
   AgentSessionModel,
   WalletTransactionModel,
+  TelemetryUsageModel,
 } from './models/index.js'
 
 let connectionPromise: Promise<void> | null = null
@@ -59,6 +60,7 @@ export async function ensureIndexes(): Promise<void> {
       HumanMessageModel.syncIndexes(),
       AgentSessionModel.syncIndexes(),
       WalletTransactionModel.syncIndexes(),
+      TelemetryUsageModel.syncIndexes(),
     ])
     console.log('[mongo] indexes synced')
   } catch (err) {
@@ -81,3 +83,4 @@ export async function messages()    { await connect(); return MessageModel    }
 export async function humanMessages() { await connect(); return HumanMessageModel }
 export async function agentSessions() { await connect(); return AgentSessionModel }
 export async function walletTransactions() { await connect(); return WalletTransactionModel }
+export async function telemetryUsage() { await connect(); return TelemetryUsageModel }

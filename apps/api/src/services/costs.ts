@@ -1,4 +1,4 @@
-import { agents, events, fleets } from "../db/mongo.js";
+import { agents, fleets, telemetryUsage } from "../db/mongo.js";
 import type { AgentDoc } from "../types.js";
 
 const HOURS_PER_MONTH = 730;
@@ -173,6 +173,10 @@ function startOfUtcMonth(date: Date): Date {
 	return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
 }
 
+function startOfUtcDay(date: Date): Date {
+	return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+}
+
 function startOfNextUtcMonth(date: Date): Date {
 	return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1));
 }
@@ -191,24 +195,22 @@ export async function fleetCostReport(opts: { fleetId: string; tenantId: string;
 	if (!fleet) return null;
 
 	const agentList = await (await agents()).find({ fleetId: opts.fleetId, tenantId: opts.tenantId }).lean();
-	const usageEvents = await (await events()).find({
+	const usageRows = await (await telemetryUsage()).find({
 		fleetId: opts.fleetId,
 		tenantId: opts.tenantId,
-		type: "token_usage",
-		createdAt: { $gte: since, $lte: until },
+		bucketStart: { $gte: startOfUtcDay(since), $lte: until },
 	}).lean();
 
 	const usageByAgent = new Map<string, { inputTokens: number; cachedInputTokens: number; outputTokens: number; requestCount: number; provider?: string; model?: string }>();
-	for (const event of usageEvents) {
-		const payload = event.payload ?? {};
-		const current = usageByAgent.get(event.agentId) ?? { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, requestCount: 0 };
-		current.inputTokens += Number(payload.inputTokens ?? 0);
-		current.cachedInputTokens += Number(payload.cachedInputTokens ?? 0);
-		current.outputTokens += Number(payload.outputTokens ?? 0);
-		current.requestCount += Number(payload.requestCount ?? 1);
-		if (typeof payload.provider === "string") current.provider = payload.provider;
-		if (typeof payload.model === "string") current.model = payload.model;
-		usageByAgent.set(event.agentId, current);
+	for (const row of usageRows) {
+		const current = usageByAgent.get(row.agentId) ?? { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, requestCount: 0 };
+		current.inputTokens += Number(row.inputTokens ?? 0);
+		current.cachedInputTokens += Number(row.cachedInputTokens ?? 0);
+		current.outputTokens += Number(row.outputTokens ?? 0);
+		current.requestCount += Number(row.requestCount ?? 0);
+		if (row.provider) current.provider = row.provider;
+		if (row.model) current.model = row.model;
+		usageByAgent.set(row.agentId, current);
 	}
 
 	const actualTokenTotals = emptyTokens();
@@ -302,7 +304,7 @@ export async function fleetCostReport(opts: { fleetId: string; tenantId: string;
 		billingPeriod,
 		estimatePeriod: { since: since.toISOString(), until: estimateUntil.toISOString(), days: estimateDays },
 		markupRate: DEFAULT_MARKUP_RATE,
-		confidence: usageEvents.length > 0 ? "mixed" : "estimated",
+		confidence: usageRows.length > 0 ? "mixed" : "estimated",
 		usageComparison: {
 			actual: roundTokenSummary(actualTokenTotals),
 			estimated: roundTokenSummary(estimatedTokenTotals),
@@ -316,6 +318,7 @@ export async function fleetCostReport(opts: { fleetId: string; tenantId: string;
 		agents: agentsWithCosts,
 		sources: {
 			tokenPricing: ["openai-api-pricing", "anthropic-api-pricing", "gemini-api-pricing"],
+			tokenUsage: ["telemetry_usage:daily-rollups"],
 			computePricing: ["env:gcp-rates", "env:aws-rates", "recommended:opencost-or-kubecost-for-actual-allocation"],
 		},
 	};

@@ -3,12 +3,12 @@ import { randomBytes } from "crypto";
 import { Hono } from "hono";
 import { broadcastToFleet } from "../db/memory.js";
 import { agents, events, tasks, worldStates } from "../db/mongo.js";
+import { recordTokenUsageRollup } from "../services/telemetry.js";
 import type { Env } from "../types.js";
 
 const router = new Hono<Env>();
 
 const DEFAULT_PERSISTED_EVENT_TYPES = new Set([
-	"token_usage",
 	"error",
 	"task_start",
 	"task_complete",
@@ -178,6 +178,20 @@ router.post("/", async (c) => {
 					},
 				},
 			);
+		} else if (event.type === "token_usage") {
+			await recordTokenUsageRollup({
+				tenantId: agentDoc.tenantId,
+				fleetId: agentDoc.fleetId,
+				agentId,
+				provider: event.payload.provider,
+				model: event.payload.model,
+				source: event.payload.source,
+				inputTokens: event.payload.inputTokens,
+				cachedInputTokens: event.payload.cachedInputTokens,
+				outputTokens: event.payload.outputTokens,
+				requestCount: event.payload.requestCount,
+				at: now,
+			});
 		}
 
 		broadcastToFleet(agentDoc.fleetId, {

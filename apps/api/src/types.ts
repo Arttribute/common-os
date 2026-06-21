@@ -197,6 +197,25 @@ export interface EventDoc {
   createdAt: Date
 }
 
+export interface TelemetryUsageDoc {
+  _id: string
+  tenantId: string
+  fleetId: string
+  agentId: string
+  bucket: 'day'
+  bucketStart: Date
+  provider: string
+  model: string
+  source: string | null
+  inputTokens: number
+  cachedInputTokens: number
+  outputTokens: number
+  requestCount: number
+  firstSeenAt: Date
+  lastSeenAt: Date
+  updatedAt: Date
+}
+
 export interface WorldObject {
   objectId: string
   objectType: string
