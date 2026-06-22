@@ -29,7 +29,7 @@ phases:
   post_build:
     commands:
       - test "$CODEBUILD_BUILD_SUCCEEDING" = "1"
-      - trap 'kill "${ALARM_GUARD_PID:-}" 2>/dev/null || true; wait "${ALARM_GUARD_PID:-}" 2>/dev/null || true; infra/aws/set-express-alarm-threshold.sh common-os-api-production 1 || true; infra/aws/set-express-alarm-threshold.sh common-os-runner-production 1 || true' EXIT
+      - trap 'kill "${ALARM_GUARD_PID:-}" 2>/dev/null || true; wait "${ALARM_GUARD_PID:-}" 2>/dev/null || true; infra/aws/set-express-alarm-threshold.sh common-os-api-production 10 || true; infra/aws/set-express-alarm-threshold.sh common-os-runner-production 10 || true' EXIT
       - infra/aws/set-express-alarm-threshold.sh common-os-api-production 100 || true
       - infra/aws/set-express-alarm-threshold.sh common-os-runner-production 100 || true
       - (while sleep 20; do infra/aws/set-express-alarm-threshold.sh common-os-api-production 100 || true; infra/aws/set-express-alarm-threshold.sh common-os-runner-production 100 || true; done) & ALARM_GUARD_PID=$!
@@ -54,8 +54,8 @@ phases:
       - curl --fail --show-error --silent --retry 18 --retry-delay 10 --retry-all-errors "${RUNNER_ENDPOINT%/}/health" | jq -e '.status == "ok"'
       - kill "$ALARM_GUARD_PID" 2>/dev/null || true
       - wait "$ALARM_GUARD_PID" 2>/dev/null || true
-      - infra/aws/set-express-alarm-threshold.sh common-os-api-production 1
-      - infra/aws/set-express-alarm-threshold.sh common-os-runner-production 1
+      - infra/aws/set-express-alarm-threshold.sh common-os-api-production 10
+      - infra/aws/set-express-alarm-threshold.sh common-os-runner-production 10
       - trap - EXIT
       - printf '{"apiEndpoint":"%s","runnerEndpoint":"%s","agentImage":"%s"}\n' "$API_ENDPOINT" "$RUNNER_ENDPOINT" "$AGENT_IMAGE" > deployment.json
 
