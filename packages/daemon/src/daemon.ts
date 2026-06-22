@@ -23,10 +23,11 @@ const agent = new CommonOSAgentClient({
 const HEARTBEAT_MS   = 30_000;
 const POLL_MS        = 5_000;
 const MSG_POLL_MS    = Number(process.env.MSG_POLL_MS ?? 750);
-const MESSAGE_RUN_TIMEOUT_MS = Number(process.env.MESSAGE_RUN_TIMEOUT_MS ?? 180_000);
-const OPENCLAW_RESPONSE_TIMEOUT_MS = Number(process.env.OPENCLAW_RESPONSE_TIMEOUT_MS ?? 90_000);
+const MESSAGE_RUN_TIMEOUT_MS = Number(process.env.MESSAGE_RUN_TIMEOUT_MS ?? 900_000);
+const AGC_STREAM_TIMEOUT_MS = Number(process.env.AGC_STREAM_TIMEOUT_MS ?? MESSAGE_RUN_TIMEOUT_MS);
+const OPENCLAW_RESPONSE_TIMEOUT_MS = Number(process.env.OPENCLAW_RESPONSE_TIMEOUT_MS ?? 600_000);
 const OPENCLAW_READY_TIMEOUT_MS = Number(process.env.OPENCLAW_READY_TIMEOUT_MS ?? 30_000);
-const HERMES_RESPONSE_TIMEOUT_MS = Number(process.env.HERMES_RESPONSE_TIMEOUT_MS ?? 90_000);
+const HERMES_RESPONSE_TIMEOUT_MS = Number(process.env.HERMES_RESPONSE_TIMEOUT_MS ?? 600_000);
 const HERMES_READY_TIMEOUT_MS = Number(process.env.HERMES_READY_TIMEOUT_MS ?? 30_000);
 const AGENT_TOOLS_PORT = Number(process.env.AGENT_TOOLS_PORT ?? 4100);
 const BROWSER_STATUS_MS = Number(process.env.BROWSER_STATUS_MS ?? 7_500);
@@ -1728,12 +1729,14 @@ async function maybeWriteMarkdownFallback(description: string, messages?: AgcMes
 // knows exactly what files exist in its workspace.
 
 const SNAP_SKIP = new Set([".git", "node_modules", ".cache", "__pycache__", ".next", "dist", "build"]);
+const SNAP_MAX_LINES = Number(process.env.WORKSPACE_SNAPSHOT_MAX_LINES ?? 800);
+const SNAP_MAX_DEPTH = Number(process.env.WORKSPACE_SNAPSHOT_MAX_DEPTH ?? 5);
 
-function buildWorkspaceSnapshot(dir: string, maxDepth = 2): string {
+function buildWorkspaceSnapshot(dir: string, maxDepth = SNAP_MAX_DEPTH): string {
   const lines: string[] = [`${dir}/`];
 
   function walk(d: string, depth: number, prefix: string) {
-    if (lines.length >= 200) return;
+    if (lines.length >= SNAP_MAX_LINES) return;
     let entries: Array<{ name: string; isDirectory: () => boolean }>;
     try {
       entries = readdirSync(d, { withFileTypes: true }) as Array<{ name: string; isDirectory: () => boolean }>;
@@ -1745,7 +1748,7 @@ function buildWorkspaceSnapshot(dir: string, maxDepth = 2): string {
       return a.name.localeCompare(b.name);
     });
     for (const entry of entries) {
-      if (lines.length >= 200) { lines.push(`${prefix}... (truncated)`); return; }
+      if (lines.length >= SNAP_MAX_LINES) { lines.push(`${prefix}... (truncated)`); return; }
       if (entry.name.startsWith(".") || SNAP_SKIP.has(entry.name)) continue;
       const isDir = entry.isDirectory();
       lines.push(`${prefix}${entry.name}${isDir ? "/" : ""}`);
@@ -1823,7 +1826,7 @@ const TOOL_CATALOG: ToolCatalogEntry[] = [
   { name: "read_file", description: "Read the full contents of a file in this pod's workspace.", parameters: { type: "object", properties: { path: { type: "string", description: "File path relative to session root" } }, required: ["path"] } },
   { name: "write_file", description: "Write or overwrite a file in this pod's workspace. Creates parent directories if needed.", parameters: { type: "object", properties: { path: { type: "string", description: "File path relative to session root" }, content: { type: "string", description: "Content to write" } }, required: ["path", "content"] } },
   { name: "search_files", description: "Find files matching a glob-style pattern in this pod's workspace. Returns up to 50 matches.", parameters: { type: "object", properties: { pattern: { type: "string", description: "Glob-style filename pattern (e.g. \"*.ts\")" }, directory: { type: "string", description: "Directory to search (default: session root)" } }, required: ["pattern"] } },
-  { name: "run_command", description: "Run a short shell command (up to 5 minutes) in this pod's workspace and return its output. Use this for node, npm, npx, pnpm, git, tests, build scripts, and dev servers.", parameters: { type: "object", properties: { command: { type: "string", description: "Command to run, e.g. node, npm, npx, sh, git" }, args: { type: "array", items: { type: "string" }, description: "Arguments array, e.g. [\"--version\"] or [\"create\", \"vite@latest\", \"site\", \"--\", \"--template\", \"react-ts\"]" }, cwd: { type: "string", description: "Working directory (default: session root)" }, timeout_seconds: { type: "number", description: "Max seconds to wait (default 120, max 300)" } }, required: ["command"] } },
+  { name: "run_command", description: "Run a finite shell command (up to 10 minutes) in this pod's workspace and return its output. Use this for node, npm, npx, pnpm, git, tests, installs, scaffolds, and build scripts.", parameters: { type: "object", properties: { command: { type: "string", description: "Command to run, e.g. node, npm, npx, sh, git" }, args: { type: "array", items: { type: "string" }, description: "Arguments array, e.g. [\"--version\"] or [\"create\", \"vite@latest\", \"site\", \"--\", \"--template\", \"react-ts\"]" }, cwd: { type: "string", description: "Working directory (default: session root)" }, timeout_seconds: { type: "number", description: "Max seconds to wait (default 120, max 600)" } }, required: ["command"] } },
   { name: "start_process", description: "Start a long-running process such as a Next.js/Vite dev server and keep it alive in the pod. Returns a process id and recent logs.", parameters: { type: "object", properties: { id: { type: "string", description: "Optional stable process id, e.g. \"dev-server\"" }, command: { type: "string", description: "Command to run, e.g. npm, pnpm, bun, node" }, args: { type: "array", items: { type: "string" }, description: "Arguments array, e.g. [\"run\", \"dev\", \"--\", \"--host\", \"0.0.0.0\", \"--port\", \"3000\"]" }, cwd: { type: "string", description: "Working directory (default: session root)" }, wait_seconds: { type: "number", description: "Seconds to collect startup logs before returning (default 3, max 15)" } }, required: ["command"] } },
   { name: "process_status", description: "List managed long-running processes or show one process with recent stdout/stderr logs.", parameters: { type: "object", properties: { id: { type: "string", description: "Optional process id returned by start_process" } }, required: [] } },
   { name: "stop_process", description: "Stop a managed long-running process by id.", parameters: { type: "object", properties: { id: { type: "string", description: "Process id returned by start_process" } }, required: ["id"] } },
@@ -1874,7 +1877,7 @@ ${buildWorkspaceSnapshot(WORKSPACE_DIR)}
 2. **Use AXL only when explicitly requested.** OpenClaw and channel connectors are normal messaging surfaces; do not route those conversations through AXL unless the user specifically asks for CommonOS P2P/AXL.
 3. File operations are sandboxed to the session root. Return the actual path or command output after using a tool.
 4. For markdown file requests, write the .md file with \`cli_write_file\` and return its path.
-5. For website, app, package, build, install, test, or localhost/dev-server requests, use \`cli_run_command\` for finite commands and \`cli_start_process\` for dev servers that must stay alive. Standard agent pods include Node.js, npm, npx, pnpm, bun, and git unless a command check proves otherwise.
+5. For website, app, package, build, install, test, or localhost/dev-server requests, use \`cli_run_command\` for finite commands and \`cli_start_process\` for dev servers that must stay alive. Use \`timeout_seconds: 600\` for dependency installs, create-app scaffolds, and production builds. Standard agent pods include Node.js, npm, npx, pnpm, bun, and git unless a command check proves otherwise.
 6. Never say npm, node, npx, git, package managers, files, terminal commands, or localhost are unavailable until you have called \`cli_run_command\` to verify, such as \`node --version\`, \`npm --version\`, \`which npm\`, or the requested command itself.
 7. If the user asks you to create and run an app/site, create the files, install dependencies as needed, start the dev server with \`cli_start_process\`, open it with \`cli_browser_open\`, inspect it with \`cli_browser_wait\`, \`cli_browser_eval\`, and screenshots, then fix any errors and re-check before reporting the localhost URL.
 
@@ -1890,7 +1893,7 @@ ${toolTable}
 {"command":"node","args":["--version"]}
 {"command":"npm","args":["--version"]}
 {"command":"npm","args":["create","vite@latest","site","--","--template","react-ts"]}
-{"command":"npm","args":["install"],"cwd":"site","timeout_seconds":300}
+{"command":"npm","args":["install"],"cwd":"site","timeout_seconds":600}
 \`\`\`
 
 ### cli_start_process + browser verification examples
@@ -2049,7 +2052,7 @@ async function executeLocalTool(name: string, args: Record<string, unknown>): Pr
     if (!command) throw new Error('run_command requires "command"');
     const cwd = args.cwd ? workspacePath(String(args.cwd)) : WORKSPACE_DIR;
     const proc = Bun.spawn([command, ...cmdArgs], { cwd, stdout: "pipe", stderr: "pipe" });
-    const timeoutMs = Math.min(Number(args.timeout_seconds ?? 120) * 1000, 300_000);
+    const timeoutMs = Math.min(Number(args.timeout_seconds ?? 120) * 1000, 600_000);
     let timedOut = false;
     const code = await Promise.race([
       proc.exited,
@@ -2431,7 +2434,7 @@ async function runViaNative(
     method: "POST",
     headers: agcHeaders(),
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(120_000),
+    signal: AbortSignal.timeout(AGC_STREAM_TIMEOUT_MS),
   });
 
   if (!res.ok || !res.body) {
@@ -2736,7 +2739,7 @@ async function runResponsesConversation(opts: {
   timeoutMs: number;
   gatewayLabel: string;
 }): Promise<string> {
-  const MAX_TOOL_ROUNDS = 6;
+  const MAX_TOOL_ROUNDS = Number(process.env.RESPONSES_TOOL_ROUNDS ?? 12);
   let body: Record<string, unknown> = { ...opts.body, tools: responsesToolDefs(), stream: true };
   let finalOutput = "";
 
