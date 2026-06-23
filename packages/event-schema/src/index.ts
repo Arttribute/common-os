@@ -120,6 +120,12 @@ const BrowserStatusEvent = z.object({
     screenshot: z.string().nullable().optional(),
     lastAction: z.string().nullable().optional(),
     error: z.string().nullable().optional(),
+    diagnostics: z.array(z.object({
+      level: z.enum(["error", "warning", "info"]),
+      source: z.string(),
+      message: z.string(),
+      ts: z.string(),
+    })).optional(),
   }),
 });
 

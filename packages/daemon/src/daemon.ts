@@ -109,6 +109,8 @@ let browserStderrTail = "";
 let browserLastError: string | null = null;
 let browserCdpId = 0;
 const browserPending = new Map<number, { resolve: (value: Record<string, unknown>) => void; reject: (err: Error) => void }>();
+type BrowserDiagnostic = { level: "error" | "warning" | "info"; source: string; message: string; ts: string };
+const browserDiagnostics: BrowserDiagnostic[] = [];
 type ManagedProcess = {
   id: string;
   command: string;
@@ -511,6 +513,7 @@ type BrowserRuntimeStatus = {
   screenshot?: string | null;
   lastAction?: string | null;
   error?: string | null;
+  diagnostics?: BrowserDiagnostic[];
 };
 
 let browserLastAction: string | null = null;
@@ -540,6 +543,8 @@ async function browserSnapshot(lastAction?: string): Promise<BrowserRuntimeStatu
   try {
     const urlResult = await cdpSend("Runtime.evaluate", { expression: "location.href", returnByValue: true }, browserSessionId);
     const titleResult = await cdpSend("Runtime.evaluate", { expression: "document.title", returnByValue: true }, browserSessionId);
+    const pageDiagnostics = await inspectBrowserDiagnostics().catch(() => []);
+    const diagnostics = mergeDiagnostics([...browserDiagnostics, ...pageDiagnostics]);
     const shotResult = await cdpSend("Page.captureScreenshot", {
       format: "jpeg",
       quality: Math.max(25, Math.min(80, BROWSER_SCREENSHOT_QUALITY)),
@@ -548,13 +553,15 @@ async function browserSnapshot(lastAction?: string): Promise<BrowserRuntimeStatu
     const url = cdpValue(urlResult) ?? null;
     const title = cdpValue(titleResult) ?? null;
     const data = typeof shotResult.data === "string" ? shotResult.data : null;
+    const error = diagnostics.find((entry) => entry.level === "error")?.message ?? null;
     return {
-      status: "on",
+      status: error ? "error" : "on",
       url,
       title,
       screenshot: data ? `data:image/jpeg;base64,${data}` : null,
       lastAction: browserLastAction,
-      error: null,
+      error,
+      diagnostics,
     };
   } catch (err) {
     return {
@@ -564,8 +571,133 @@ async function browserSnapshot(lastAction?: string): Promise<BrowserRuntimeStatu
       screenshot: null,
       lastAction: browserLastAction,
       error: browserLastError ?? (err instanceof Error ? err.message : String(err)),
+      diagnostics: mergeDiagnostics(browserDiagnostics),
     };
   }
+}
+
+function pushBrowserDiagnostic(level: BrowserDiagnostic["level"], source: string, message: string): void {
+  const clean = message.replace(/\s+/g, " ").trim();
+  if (!clean) return;
+  browserDiagnostics.push({ level, source, message: clean.slice(0, 2_000), ts: new Date().toISOString() });
+  while (browserDiagnostics.length > 50) browserDiagnostics.shift();
+}
+
+function mergeDiagnostics(entries: BrowserDiagnostic[]): BrowserDiagnostic[] {
+  const seen = new Set<string>();
+  const merged: BrowserDiagnostic[] = [];
+  for (const entry of entries) {
+    const key = `${entry.level}:${entry.source}:${entry.message}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(entry);
+  }
+  return merged.slice(-20);
+}
+
+function diagnosticSummary(status: BrowserRuntimeStatus): string[] {
+  const diagnostics = status.diagnostics ?? [];
+  const errors = diagnostics.filter((entry) => entry.level === "error");
+  const warnings = diagnostics.filter((entry) => entry.level === "warning");
+  const lines: string[] = [];
+  if (status.error) lines.push(`pageError=${status.error}`);
+  if (errors.length) lines.push(`consoleErrors=${errors.map((entry) => `[${entry.source}] ${entry.message}`).join(" | ")}`);
+  if (warnings.length) lines.push(`consoleWarnings=${warnings.slice(-5).map((entry) => `[${entry.source}] ${entry.message}`).join(" | ")}`);
+  if (!status.error && errors.length === 0) lines.push("pageDiagnostics=no errors detected");
+  return lines;
+}
+
+async function inspectBrowserDiagnostics(): Promise<BrowserDiagnostic[]> {
+  if (!browserWs || !browserSessionId) return [];
+  const expression = `(() => {
+    const textOf = (node) => (node && (node.innerText || node.textContent) || "").replace(/\\s+/g, " ").trim();
+    const selectors = [
+      "nextjs-portal",
+      "[data-nextjs-dialog-overlay]",
+      "[data-nextjs-toast]",
+      "[data-nextjs-error-overlay]",
+      "[data-turbopack-error-overlay]",
+      "#__next-build-watcher",
+      "vite-error-overlay",
+      "astro-dev-toolbar"
+    ];
+    const entries = [];
+    const push = (level, source, message) => {
+      if (message) entries.push({ level, source, message: String(message).slice(0, 2000), ts: new Date().toISOString() });
+    };
+    for (const selector of selectors) {
+      for (const el of Array.from(document.querySelectorAll(selector))) {
+        const direct = textOf(el);
+        if (direct) push("error", selector, direct);
+        if (el.shadowRoot) {
+          const shadow = textOf(el.shadowRoot);
+          if (shadow) push("error", selector + " shadowRoot", shadow);
+        }
+      }
+    }
+    const bodyText = textOf(document.body);
+    const patterns = [
+      /missing\\s*<html>\\s*and\\s*<body>\\s*tags[^\\n]*/i,
+      /Unhandled Runtime Error[^\\n]*/i,
+      /Application error:[^\\n]*/i,
+      /Hydration failed[^\\n]*/i,
+      /ReferenceError:[^\\n]*/i,
+      /TypeError:[^\\n]*/i,
+      /SyntaxError:[^\\n]*/i,
+      /Module not found:[^\\n]*/i
+    ];
+    for (const pattern of patterns) {
+      const match = bodyText.match(pattern);
+      if (match) push("error", "page-text", match[0]);
+    }
+    return entries;
+  })()`;
+  const value = await browserEvaluate(expression, 5_000);
+  return Array.isArray(value) ? value.filter(isBrowserDiagnostic) : [];
+}
+
+function isBrowserDiagnostic(value: unknown): value is BrowserDiagnostic {
+  if (!value || typeof value !== "object") return false;
+  const entry = value as Record<string, unknown>;
+  return (entry.level === "error" || entry.level === "warning" || entry.level === "info")
+    && typeof entry.source === "string"
+    && typeof entry.message === "string"
+    && typeof entry.ts === "string";
+}
+
+async function inspectBrowserPage(): Promise<Record<string, unknown>> {
+  await ensureBrowser();
+  const expression = `(() => {
+    const visible = (el) => {
+      const style = window.getComputedStyle(el);
+      const rect = el.getBoundingClientRect();
+      return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+    };
+    const describe = (el) => ({
+      tag: el.tagName.toLowerCase(),
+      text: (el.innerText || el.value || el.getAttribute("aria-label") || el.getAttribute("placeholder") || "").replace(/\\s+/g, " ").trim().slice(0, 160),
+      selector: el.id ? "#" + CSS.escape(el.id) : null,
+      name: el.getAttribute("name"),
+      type: el.getAttribute("type"),
+      role: el.getAttribute("role"),
+      href: el.getAttribute("href"),
+      disabled: Boolean(el.disabled || el.getAttribute("aria-disabled") === "true"),
+      rect: (() => { const r = el.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) }; })()
+    });
+    return {
+      url: location.href,
+      title: document.title,
+      readyState: document.readyState,
+      viewport: { width: innerWidth, height: innerHeight },
+      text: (document.body?.innerText || "").replace(/\\s+/g, " ").trim().slice(0, 4000),
+      links: Array.from(document.querySelectorAll("a[href]")).filter(visible).slice(0, 30).map(describe),
+      buttons: Array.from(document.querySelectorAll("button,[role=button],input[type=button],input[type=submit]")).filter(visible).slice(0, 30).map(describe),
+      inputs: Array.from(document.querySelectorAll("input,textarea,select")).filter(visible).slice(0, 30).map(describe)
+    };
+  })()`;
+  const page = await browserEvaluate(expression, 10_000);
+  const diagnostics = mergeDiagnostics([...browserDiagnostics, ...await inspectBrowserDiagnostics().catch(() => [])]);
+  return { page, diagnostics };
 }
 
 async function waitForBrowserReady(timeoutMs: number): Promise<void> {
@@ -674,8 +806,29 @@ async function connectBrowserWs(wsUrl: string): Promise<void> {
   browserWs.addEventListener("message", (event) => {
     const raw = typeof event.data === "string" ? event.data : "";
     if (!raw) return;
-    const msg = JSON.parse(raw) as { id?: number; result?: Record<string, unknown>; error?: { message?: string } };
-    if (!msg.id) return;
+    const msg = JSON.parse(raw) as { id?: number; method?: string; params?: Record<string, unknown>; result?: Record<string, unknown>; error?: { message?: string } };
+    if (!msg.id) {
+      if (msg.method === "Runtime.exceptionThrown") {
+        const detail = msg.params?.exceptionDetails as Record<string, unknown> | undefined;
+        const exception = detail?.exception as Record<string, unknown> | undefined;
+        const description = typeof exception?.description === "string"
+          ? exception.description
+          : typeof detail?.text === "string" ? detail.text : "uncaught browser exception";
+        pushBrowserDiagnostic("error", "runtime-exception", description);
+      } else if (msg.method === "Runtime.consoleAPICalled") {
+        const params = msg.params ?? {};
+        const type = typeof params.type === "string" ? params.type : "log";
+        const level: BrowserDiagnostic["level"] = type === "error" || type === "assert" ? "error" : type === "warning" ? "warning" : "info";
+        const args = Array.isArray(params.args) ? params.args as Array<Record<string, unknown>> : [];
+        const message = args.map((arg) => {
+          if (typeof arg.value === "string") return arg.value;
+          if (typeof arg.description === "string") return arg.description;
+          return "";
+        }).filter(Boolean).join(" ");
+        if (level !== "info") pushBrowserDiagnostic(level, `console.${type}`, message);
+      }
+      return;
+    }
     const pending = browserPending.get(msg.id);
     if (!pending) return;
     browserPending.delete(msg.id);
@@ -705,7 +858,10 @@ async function connectBrowserWs(wsUrl: string): Promise<void> {
 
 async function ensureBrowser(url?: string): Promise<void> {
   if (browserProc && browserWs && browserSessionId) {
-    if (url) await cdpSend("Page.navigate", { url }, browserSessionId);
+    if (url) {
+      browserDiagnostics.length = 0;
+      await cdpSend("Page.navigate", { url }, browserSessionId);
+    }
     return;
   }
 
@@ -720,6 +876,7 @@ async function ensureBrowser(url?: string): Promise<void> {
   }
   browserLastError = null;
   browserStderrTail = "";
+  browserDiagnostics.length = 0;
   mkdirSync(userDataDir, { recursive: true });
   console.log(`[daemon] launching browser executable=${executablePath} port=${port} profile=${userDataDir}`);
   const proc = Bun.spawn([
@@ -1856,12 +2013,15 @@ const TOOL_CATALOG: ToolCatalogEntry[] = [
   { name: "process_status", description: "List managed long-running processes or show one process with recent stdout/stderr logs.", parameters: { type: "object", properties: { id: { type: "string", description: "Optional process id returned by start_process" } }, required: [] } },
   { name: "stop_process", description: "Stop a managed long-running process by id.", parameters: { type: "object", properties: { id: { type: "string", description: "Process id returned by start_process" } }, required: ["id"] } },
   { name: "browser_open", description: "Launch this pod's shared Chromium browser and navigate to a URL.", parameters: { type: "object", properties: { url: { type: "string", description: "URL to open" } }, required: ["url"] } },
-  { name: "browser_wait", description: "Wait until the shared browser page is interactive/complete, then return URL, title, and screenshot status.", parameters: { type: "object", properties: { timeout_seconds: { type: "number", description: "Max seconds to wait (default 20, max 60)" } }, required: [] } },
+  { name: "browser_wait", description: "Wait until the shared browser page is interactive/complete, then return URL, title, screenshot status, and detected page errors.", parameters: { type: "object", properties: { timeout_seconds: { type: "number", description: "Max seconds to wait (default 20, max 60)" } }, required: [] } },
+  { name: "browser_inspect", description: "Inspect the current page like a tester: URL, title, visible text, detected console/runtime/framework errors, and visible links/buttons/inputs with coordinates.", parameters: { type: "object", properties: {}, required: [] } },
   { name: "browser_eval", description: "Evaluate JavaScript in the shared browser page and return the JSON-serializable result. Use this to inspect rendered text, errors, selectors, and client state.", parameters: { type: "object", properties: { expression: { type: "string", description: "JavaScript expression or async IIFE to evaluate in the page" }, timeout_seconds: { type: "number", description: "Max seconds to wait (default 10, max 30)" } }, required: ["expression"] } },
-  { name: "browser_status", description: "Return the shared browser's on/off state, current URL, page title, and latest screenshot.", parameters: { type: "object", properties: {}, required: [] } },
+  { name: "browser_status", description: "Return the shared browser's on/off state, current URL, page title, latest screenshot, and detected page errors.", parameters: { type: "object", properties: {}, required: [] } },
   { name: "browser_screenshot", description: "Refresh and return the latest screenshot of the shared browser.", parameters: { type: "object", properties: {}, required: [] } },
-  { name: "browser_click", description: "Click a coordinate in the shared browser's viewport.", parameters: { type: "object", properties: { x: { type: "number", description: "X coordinate" }, y: { type: "number", description: "Y coordinate" } }, required: ["x", "y"] } },
+  { name: "browser_click", description: "Click a coordinate or CSS selector in the shared browser's viewport.", parameters: { type: "object", properties: { x: { type: "number", description: "X coordinate" }, y: { type: "number", description: "Y coordinate" }, selector: { type: "string", description: "Optional CSS selector to click instead of coordinates" } }, required: [] } },
   { name: "browser_type", description: "Type text into the focused element, or into a CSS selector, in the shared browser.", parameters: { type: "object", properties: { text: { type: "string", description: "Text to type" }, selector: { type: "string", description: "Optional CSS selector to type into" } }, required: ["text"] } },
+  { name: "browser_select", description: "Select an option in a <select> element by CSS selector and value or label.", parameters: { type: "object", properties: { selector: { type: "string", description: "CSS selector for the select element" }, value: { type: "string", description: "Option value to select" }, label: { type: "string", description: "Option label text to select when value is unknown" } }, required: ["selector"] } },
+  { name: "browser_key", description: "Send keyboard input such as Enter, Escape, Tab, ArrowDown, or Backspace to the browser.", parameters: { type: "object", properties: { key: { type: "string", description: "Keyboard key name" }, text: { type: "string", description: "Optional literal text to insert" } }, required: [] } },
   { name: "browser_close", description: "Close the shared browser.", parameters: { type: "object", properties: {}, required: [] } },
   { name: "send_axl_message", description: "Send a CommonOS fleet message over AXL/P2P. Only use when explicitly requested — OpenClaw/channel connectors are the normal messaging surface.", parameters: { type: "object", properties: { target: { type: "string", description: "Agent id, AXL peer id, role/name like Pumba, fleet manager, or fleet master" }, content: { type: "string", description: "Message to send" } }, required: ["target", "content"] } },
   { name: "wallet_address", description: "Return this agent's wallet address.", parameters: { type: "object", properties: {}, required: [] } },
@@ -1904,7 +2064,8 @@ ${buildWorkspaceSnapshot(WORKSPACE_DIR)}
 4. For markdown file requests, write the .md file with \`cli_write_file\` and return its path.
 5. For website, app, package, build, install, test, or localhost/dev-server requests, use \`cli_run_command\` for finite commands and \`cli_start_process\` for dev servers that must stay alive. Use \`timeout_seconds: 600\` for dependency installs, create-app scaffolds, and production builds. Standard agent pods include Node.js, npm, npx, pnpm, bun, and git unless a command check proves otherwise.
 6. Never say npm, node, npx, git, package managers, files, terminal commands, or localhost are unavailable until you have called \`cli_run_command\` to verify, such as \`node --version\`, \`npm --version\`, \`which npm\`, or the requested command itself.
-7. If the user asks you to create and run an app/site, create the files, install dependencies as needed, start the dev server with \`cli_start_process\`, open it with \`cli_browser_open\`, inspect it with \`cli_browser_wait\`, \`cli_browser_eval\`, and screenshots, then fix any errors and re-check before reporting the localhost URL.
+7. If the user asks you to create and run an app/site, create the files, install dependencies as needed, start the dev server with \`cli_start_process\`, open it with \`cli_browser_open\`, inspect it with \`cli_browser_wait\`, \`cli_browser_inspect\`, and screenshots, then fix any console/runtime/framework errors and re-check before reporting the localhost URL.
+8. Treat any \`Browser is error\`, \`pageError=\`, console error, runtime exception, Next.js/Vite/React overlay, or failed browser inspection as a real bug to fix before saying the page works.
 
 ### Available CLI tools
 
@@ -1928,6 +2089,7 @@ ${toolTable}
 {"id":"vite-dev","command":"npm","args":["run","dev","--","--host","0.0.0.0","--port","3000"],"cwd":"vite-site","wait_seconds":5}
 {"url":"http://127.0.0.1:3000"}
 {"timeout_seconds":30}
+{}
 {"expression":"({ title: document.title, text: document.body.innerText.slice(0, 2000), errors: Array.from(document.querySelectorAll('nextjs-portal')).map(e => e.textContent) })"}
 \`\`\`
 
@@ -2166,6 +2328,7 @@ async function executeLocalTool(name: string, args: Record<string, unknown>): Pr
       `Browser is ${status.status}.`,
       `url=${status.url ?? url}`,
       `title=${status.title ?? ""}`,
+      ...diagnosticSummary(status),
       status.screenshot ? "screenshot=available in CommonOS UI" : "",
     ].filter(Boolean).join("\n");
   }
@@ -2180,8 +2343,23 @@ async function executeLocalTool(name: string, args: Record<string, unknown>): Pr
       `Browser is ${status.status}.`,
       `url=${status.url ?? ""}`,
       `title=${status.title ?? ""}`,
+      ...diagnosticSummary(status),
       status.screenshot ? "screenshot=available in CommonOS UI" : "",
     ].filter(Boolean).join("\n");
+  }
+
+  if (tool === "browser_inspect") {
+    const inspection = await inspectBrowserPage();
+    const status = await browserSnapshot("inspect");
+    await emitBrowserStatus(status);
+    return formatBrowserValue({
+      status: status.status,
+      url: status.url,
+      title: status.title,
+      pageError: status.error,
+      diagnostics: status.diagnostics ?? inspection.diagnostics,
+      page: inspection.page,
+    });
   }
 
   if (tool === "browser_eval") {
@@ -2200,7 +2378,7 @@ async function executeLocalTool(name: string, args: Record<string, unknown>): Pr
       status.url ? `url=${status.url}` : "",
       status.title ? `title=${status.title}` : "",
       status.lastAction ? `lastAction=${status.lastAction}` : "",
-      status.error ? `error=${status.error}` : "",
+      ...diagnosticSummary(status),
       status.screenshot ? "screenshot=available in CommonOS UI" : "",
     ].filter(Boolean).join("\n");
   }
@@ -2213,21 +2391,38 @@ async function executeLocalTool(name: string, args: Record<string, unknown>): Pr
       `Captured browser screenshot.`,
       `url=${status.url ?? ""}`,
       `title=${status.title ?? ""}`,
+      ...diagnosticSummary(status),
       "screenshot=available in CommonOS UI",
     ].join("\n");
   }
 
   if (tool === "browser_click") {
-    const x = Number(args.x);
-    const y = Number(args.y);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('browser_click requires numeric "x" and "y"');
+    const selector = args.selector !== undefined ? String(args.selector) : "";
     await ensureBrowser();
+    let x = Number(args.x);
+    let y = Number(args.y);
+    if (selector) {
+      const point = await browserEvaluate(`(() => {
+        const el = document.querySelector(${JSON.stringify(selector)});
+        if (!el) throw new Error("selector not found");
+        el.scrollIntoView({ block: "center", inline: "center" });
+        const r = el.getBoundingClientRect();
+        return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+      })()`, 10_000) as { x?: unknown; y?: unknown } | null;
+      x = Number(point?.x);
+      y = Number(point?.y);
+    }
+    if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('browser_click requires numeric "x" and "y", or "selector"');
     await cdpSend("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 }, browserSessionId);
     await cdpSend("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 }, browserSessionId);
     await sleep(500);
-    const status = await browserSnapshot(`click ${Math.round(x)},${Math.round(y)}`);
+    const status = await browserSnapshot(selector ? `click ${selector}` : `click ${Math.round(x)},${Math.round(y)}`);
     await emitBrowserStatus(status);
-    return `Clicked browser at ${Math.round(x)},${Math.round(y)}. url=${status.url ?? ""}`;
+    return [
+      `Clicked browser ${selector ? selector : `at ${Math.round(x)},${Math.round(y)}`}.`,
+      `url=${status.url ?? ""}`,
+      ...diagnosticSummary(status),
+    ].join("\n");
   }
 
   if (tool === "browser_type") {
@@ -2237,7 +2432,19 @@ async function executeLocalTool(name: string, args: Record<string, unknown>): Pr
     await ensureBrowser();
     if (selector) {
       await cdpSend("Runtime.evaluate", {
-        expression: `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) throw new Error("selector not found"); el.focus(); el.value = ${JSON.stringify(text)}; el.dispatchEvent(new Event("input", { bubbles: true })); el.dispatchEvent(new Event("change", { bubbles: true })); return true; })()`,
+        expression: `(() => {
+          const el = document.querySelector(${JSON.stringify(selector)});
+          if (!el) throw new Error("selector not found");
+          el.focus();
+          if (el.isContentEditable) {
+            el.textContent = ${JSON.stringify(text)};
+          } else {
+            el.value = ${JSON.stringify(text)};
+          }
+          el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: ${JSON.stringify(text)} }));
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+          return true;
+        })()`,
         awaitPromise: true,
         returnByValue: true,
       }, browserSessionId);
@@ -2246,7 +2453,60 @@ async function executeLocalTool(name: string, args: Record<string, unknown>): Pr
     }
     const status = await browserSnapshot(selector ? `type into ${selector}` : "type");
     await emitBrowserStatus(status);
-    return `Typed ${text.length} characters${selector ? ` into ${selector}` : ""}.`;
+    return [
+      `Typed ${text.length} characters${selector ? ` into ${selector}` : ""}.`,
+      ...diagnosticSummary(status),
+    ].join("\n");
+  }
+
+  if (tool === "browser_select") {
+    const selector = String(args.selector ?? "");
+    const value = args.value !== undefined ? String(args.value) : "";
+    const label = args.label !== undefined ? String(args.label) : "";
+    if (!selector) throw new Error('browser_select requires "selector"');
+    if (!value && !label) throw new Error('browser_select requires "value" or "label"');
+    await ensureBrowser();
+    await browserEvaluate(`(() => {
+      const el = document.querySelector(${JSON.stringify(selector)});
+      if (!el) throw new Error("selector not found");
+      if (el.tagName.toLowerCase() !== "select") throw new Error("selector does not match a select element");
+      const options = Array.from(el.options);
+      const option = ${JSON.stringify(value)}
+        ? options.find((item) => item.value === ${JSON.stringify(value)})
+        : options.find((item) => item.textContent.trim() === ${JSON.stringify(label)});
+      if (!option) throw new Error("option not found");
+      el.value = option.value;
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      return true;
+    })()`, 10_000);
+    const status = await browserSnapshot(`select ${selector}`);
+    await emitBrowserStatus(status);
+    return [
+      `Selected ${value || label} in ${selector}.`,
+      ...diagnosticSummary(status),
+    ].join("\n");
+  }
+
+  if (tool === "browser_key") {
+    const key = args.key !== undefined ? String(args.key) : "";
+    const text = args.text !== undefined ? String(args.text) : "";
+    if (!key && !text) throw new Error('browser_key requires "key" or "text"');
+    await ensureBrowser();
+    if (text) {
+      await cdpSend("Input.insertText", { text }, browserSessionId);
+    }
+    if (key) {
+      await cdpSend("Input.dispatchKeyEvent", { type: "rawKeyDown", key }, browserSessionId);
+      await cdpSend("Input.dispatchKeyEvent", { type: "keyUp", key }, browserSessionId);
+    }
+    await sleep(250);
+    const status = await browserSnapshot(key ? `key ${key}` : "insert text");
+    await emitBrowserStatus(status);
+    return [
+      `Sent ${key || `${text.length} characters`} to browser.`,
+      ...diagnosticSummary(status),
+    ].join("\n");
   }
 
   if (tool === "browser_close") {
