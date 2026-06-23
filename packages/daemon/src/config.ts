@@ -21,6 +21,7 @@ export interface DaemonConfig {
   integrationPath: "native" | "openclaw" | "hermes" | "guest";
   workspaceDir: string;        // where this runtime writes files — watched by file watcher
   role: string;
+  systemPrompt: string;
   worldRoom: string;
   worldX: number;
   worldY: number;
@@ -47,5 +48,9 @@ export function loadConfig(path = process.env.COMMONOS_CONFIG_PATH ?? "/etc/comm
   cfg.workspaceDir ??= "/mnt/shared";
   cfg.walletAddress ??= "";
   cfg.walletChainId ??= 84532;
+  const encodedPrompt = (cfg as DaemonConfig & { systemPromptBase64?: string }).systemPromptBase64;
+  cfg.systemPrompt ??= encodedPrompt
+    ? Buffer.from(encodedPrompt, "base64").toString("utf-8")
+    : `You are a ${cfg.role || "worker"} agent.`;
   return cfg;
 }

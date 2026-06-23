@@ -17,6 +17,7 @@ interface ProvisionAgentOptions {
 	room: string;
 	integrationPath: "native" | "openclaw" | "hermes" | "guest";
 	dockerImage: string | null;
+	nativeConfig: AgentDoc["config"]["nativeConfig"];
 	openclawConfig: AgentDoc["config"]["openclawConfig"];
 	hermesConfig: AgentDoc["config"]["hermesConfig"];
 }
@@ -58,7 +59,7 @@ export async function provisionAgent(
 	const commons =
 		opts.integrationPath === "openclaw" || opts.integrationPath === "hermes"
 			? { agentId: null, apiKey: null, walletAddress: null, registryAgentId: null }
-			: await registerWithAgentCommons(agentId, opts.role, opts.systemPrompt);
+			: await registerWithAgentCommons(agentId, opts.role, opts.systemPrompt, opts.nativeConfig);
 
 	if (opts.integrationPath === "native" && !commons.agentId) {
 		console.warn("[provisioner] Agent Commons registration returned no agentId; native agent will run without AGC identity");
@@ -82,6 +83,7 @@ export async function provisionAgent(
 			systemPrompt: opts.systemPrompt,
 			integrationPath: opts.integrationPath,
 			dockerImage: opts.dockerImage,
+			nativeConfig: opts.nativeConfig ?? null,
 			openclawConfig: opts.openclawConfig ?? null,
 			hermesConfig: opts.hermesConfig ?? null,
 			tools: [],
@@ -147,6 +149,7 @@ export async function registerWithAgentCommons(
 	agentId: string,
 	role: string,
 	systemPrompt: string,
+	nativeConfig?: AgentDoc["config"]["nativeConfig"],
 ): Promise<AgentDoc["commons"]> {
 	const platformKey = process.env.AGENTCOMMONS_API_KEY;
 	if (!platformKey) {
@@ -169,8 +172,9 @@ export async function registerWithAgentCommons(
 			body: JSON.stringify({
 				name: `${role}-${agentId}`,
 				instructions: systemPrompt,
-				modelProvider: "openai",
-				modelId: "gpt-4o",
+				modelProvider: nativeConfig?.modelProvider ?? process.env.AGENTCOMMONS_MODEL_PROVIDER ?? "openai",
+				modelId: nativeConfig?.modelId ?? process.env.AGENTCOMMONS_MODEL_ID ?? "gpt-5.4-mini",
+				...(nativeConfig?.modelApiKey ? { modelApiKey: nativeConfig.modelApiKey } : {}),
 			}),
 			signal: AbortSignal.timeout(15_000),
 		});
@@ -216,6 +220,7 @@ async function launchCloudInstance(
 		tenantId: agentDoc.tenantId,
 		apiUrl,
 		role: opts.role,
+		systemPrompt: opts.systemPrompt,
 		integrationPath: opts.integrationPath,
 		dockerImage: opts.dockerImage,
 		commonsApiKey: commonsApiKey ?? "",

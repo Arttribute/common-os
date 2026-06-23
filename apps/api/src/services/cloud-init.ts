@@ -18,6 +18,7 @@ export interface LaunchOptions {
 	tenantId: string;
 	apiUrl: string;
 	role: string;
+	systemPrompt: string;
 	integrationPath: "native" | "openclaw" | "hermes" | "guest";
 	dockerImage: string | null;
 	commonsApiKey: string;
@@ -69,6 +70,7 @@ function commonRuntimeEnv(opts: LaunchOptions, imageUrl: string): k8s.V1EnvVar[]
 		{ name: "TENANT_ID",             value: opts.tenantId },
 		{ name: "API_URL",               value: opts.apiUrl },
 		{ name: "ROLE",                  value: opts.role },
+		{ name: "SYSTEM_PROMPT_B64",     value: Buffer.from(opts.systemPrompt).toString("base64") },
 		{ name: "INTEGRATION_PATH",      value: opts.integrationPath },
 		{ name: "COMMONS_API_KEY",       value: opts.commonsApiKey },
 		{ name: "COMMONS_AGENT_ID",      value: opts.commonsAgentId },

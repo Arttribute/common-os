@@ -806,6 +806,7 @@ router.post('/:agentId/bootstrap', async (c) => {
       agentId,
       agent.config.role,
       agent.config.systemPrompt,
+      agent.config.nativeConfig,
     )
 
     if (commons.agentId) {

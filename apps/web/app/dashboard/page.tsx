@@ -383,6 +383,9 @@ export default function DashboardPage() {
   const [agentPrompt, setAgentPrompt] = useState('')
   const [agentTier, setAgentTier] = useState<'manager' | 'worker'>('worker')
   const [agentPath, setAgentPath] = useState<AgentPath>('native')
+  const [nativeModelProvider, setNativeModelProvider] = useState('openai')
+  const [nativeModelId, setNativeModelId] = useState('gpt-5.4-mini')
+  const [nativeModelApiKey, setNativeModelApiKey] = useState('')
   const [openclawModelProvider, setOpenclawModelProvider] = useState('openai')
   const [openclawModelId, setOpenclawModelId] = useState('')
   const [openclawModelApiKey, setOpenclawModelApiKey] = useState('')
@@ -442,6 +445,9 @@ export default function DashboardPage() {
     setAgentPrompt('')
     setAgentTier('worker')
     setAgentPath('native')
+    setNativeModelProvider('openai')
+    setNativeModelId('gpt-5.4-mini')
+    setNativeModelApiKey('')
     setOpenclawModelProvider('openai')
     setOpenclawModelId('')
     setOpenclawModelApiKey('')
@@ -514,7 +520,15 @@ export default function DashboardPage() {
           systemPrompt: agentPrompt.trim() || `You are a ${agentRole.trim()} agent.`,
           permissionTier: agentTier,
           integrationPath: agentPath,
-          ...(agentPath === 'openclaw'
+          ...(agentPath === 'native'
+            ? {
+                nativeConfig: {
+                  modelProvider: nativeModelProvider,
+                  modelId: nativeModelId.trim() || 'gpt-5.4-mini',
+                  modelApiKey: nativeModelApiKey.trim() || undefined,
+                },
+              }
+            : agentPath === 'openclaw'
             ? {
                 openclawConfig: {
                   modelProvider: openclawModelProvider,
@@ -819,6 +833,46 @@ export default function DashboardPage() {
                   </select>
                 </div>
               </div>
+              {agentPath === 'native' && (
+                <div className="rounded-md border bg-muted/20 p-4">
+                  <div className="mb-4">
+                    <div className="text-sm font-medium">Agent Commons model</div>
+                    <div className="mt-1 text-xs leading-5 text-muted-foreground">
+                      GPT-5.4 mini is the balanced default for autonomous tool-heavy work. Choose another provider or model when your Agent Commons account supports it.
+                    </div>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="native-model-provider">Model provider</Label>
+                      <Input
+                        id="native-model-provider"
+                        placeholder="openai, anthropic, openrouter, ollama…"
+                        value={nativeModelProvider}
+                        onChange={(e) => setNativeModelProvider(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="native-model-id">Model ID</Label>
+                      <Input
+                        id="native-model-id"
+                        placeholder="gpt-5.4-mini"
+                        value={nativeModelId}
+                        onChange={(e) => setNativeModelId(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2 sm:col-span-2">
+                      <Label htmlFor="native-model-api-key">Provider API key</Label>
+                      <Input
+                        id="native-model-api-key"
+                        type="password"
+                        placeholder="Optional when managed by Agent Commons"
+                        value={nativeModelApiKey}
+                        onChange={(e) => setNativeModelApiKey(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
               {agentPath === 'openclaw' && (
                 <div className="rounded-md border bg-muted/20 p-4">
                   <div className="grid gap-4 sm:grid-cols-2">

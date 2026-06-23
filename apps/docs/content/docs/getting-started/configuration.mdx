@@ -25,6 +25,8 @@ The API reads from `apps/api/.env.local` during local development.
 | `AGENTCOMMONS_API_KEY` | Native runtime | Platform key for Agent Commons registration and bootstrap. |
 | `AGC_API_URL` | Optional | Agent Commons API base URL. |
 | `AGC_INITIATOR` | Optional | Initiator header/value for Agent Commons calls. |
+| `AGENTCOMMONS_MODEL_PROVIDER` | Native runtime | Default provider for newly registered native agents. Defaults to `openai`. |
+| `AGENTCOMMONS_MODEL_ID` | Native runtime | Default model for newly registered native agents. Defaults to `gpt-5.4-mini`. |
 | `OPENCLAW_IMAGE_URL` | OpenClaw runtime | Image used for the per-agent OpenClaw Gateway sidecar. Required for one-click OpenClaw deploys unless `OPENCLAW_GATEWAY_URL` is set. |
 | `OPENCLAW_GATEWAY_URL` | OpenClaw runtime | Existing OpenClaw Gateway URL. When set without an image, CommonOS targets this Gateway instead of launching a sidecar. |
 | `OPENCLAW_MODEL_PROVIDER` | OpenClaw runtime | Default provider injected for OpenClaw agents. |

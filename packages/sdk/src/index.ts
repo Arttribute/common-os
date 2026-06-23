@@ -165,4 +165,18 @@ export class CommonOSAgentClient {
 			},
 		);
 	}
+
+	async failTask(taskId: string, error: string): Promise<void> {
+		await fetch(
+			`${this.apiUrl}/agents/${this.agentId}/tasks/${taskId}/complete`,
+			{
+				method: "POST",
+				headers: {
+					Authorization: `Bearer ${this.agentToken}`,
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({ error }),
+			},
+		);
+	}
 }

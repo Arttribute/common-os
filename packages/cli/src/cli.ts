@@ -162,9 +162,9 @@ agentCmd.addCommand(
     .option("--prompt <prompt>",  "System prompt string")
     .option("--image <image>",    "Docker image URI (enables guest path)")
     .option("--runtime <runtime>", "Runtime: native, openclaw, hermes, or guest")
-    .option("--model-provider <provider>", "Model provider for OpenClaw/Hermes", "openai")
-    .option("--model <model>", "Model ID for OpenClaw/Hermes")
-    .option("--model-api-key <key>", "Model provider API key for OpenClaw/Hermes")
+    .option("--model-provider <provider>", "Model provider", "openai")
+    .option("--model <model>", "Model ID (native default: gpt-5.4-mini)")
+    .option("--model-api-key <key>", "Model provider API key")
     .option("--gateway-api-key <key>", "Gateway API key for Hermes")
     .option("--plugins <plugins>", "Comma-separated OpenClaw plugins")
     .option("--tier <tier>",      "Permission tier: manager or worker", "worker")
@@ -190,6 +190,15 @@ agentCmd.addCommand(
           dockerImage:     opts.image ?? null,
           integrationPath,
           instanceType:    opts.type,
+          ...(integrationPath === "native"
+            ? {
+                nativeConfig: {
+                  modelProvider: opts.modelProvider,
+                  modelId: opts.model,
+                  modelApiKey: opts.modelApiKey,
+                },
+              }
+            : {}),
           ...(integrationPath === "openclaw"
             ? {
                 openclawConfig: {

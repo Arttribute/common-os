@@ -39,6 +39,7 @@ const AgentSchema = new Schema<AgentDoc>(
       systemPrompt: String,
       integrationPath: String,
       dockerImage: String,
+      nativeConfig: { type: Schema.Types.Mixed, default: null },
       openclawConfig: { type: Schema.Types.Mixed, default: null },
       hermesConfig: { type: Schema.Types.Mixed, default: null },
       tools: [String],

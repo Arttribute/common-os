@@ -119,6 +119,11 @@ export interface AgentDoc {
     systemPrompt: string
     integrationPath: 'native' | 'openclaw' | 'hermes' | 'guest'
     dockerImage: string | null
+    nativeConfig: {
+      modelProvider: string | null
+      modelId: string | null
+      modelApiKey: string | null
+    } | null
     openclawConfig: {
       modelProvider: string | null        // 'anthropic' | 'openai' | 'google' | 'openrouter' | etc.
       modelId: string | null

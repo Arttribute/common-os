@@ -72,11 +72,11 @@ function normalizeProvider(value: string | null | undefined, integrationPath?: s
 }
 
 function defaultModel(provider: ProviderId, integrationPath: AgentDoc["config"]["integrationPath"]): string {
-	if (integrationPath === "native") return "gpt-4o";
+	if (integrationPath === "native") return process.env.AGENTCOMMONS_MODEL_ID ?? "gpt-5.4-mini";
 	if (integrationPath === "openclaw") return (process.env.OPENCLAW_MODEL_ID ?? "openai/gpt-5.4-mini").replace(/^openai\//, "").replace(/^anthropic\//, "").replace(/^google\//, "");
 	if (provider === "anthropic") return "claude-sonnet-4-6";
 	if (provider === "google") return "gemini-2.5-flash-lite";
-	if (provider === "openai") return "gpt-4o";
+	if (provider === "openai") return "gpt-5.4-mini";
 	return "unknown";
 }
 
@@ -89,7 +89,7 @@ function normalizeModel(value: string | null | undefined, provider: ProviderId, 
 function rateFor(provider: ProviderId, model: string): ModelRate | null {
 	return MODEL_RATES.find((rate) => rate.provider === provider && rate.model === model)
 		?? MODEL_RATES.find((rate) => rate.model === model)
-		?? (provider === "agent-commons" ? MODEL_RATES.find((rate) => rate.provider === "openai" && rate.model === "gpt-4o") ?? null : null);
+		?? (provider === "agent-commons" ? MODEL_RATES.find((rate) => rate.provider === "openai" && rate.model === "gpt-5.4-mini") ?? null : null);
 }
 
 function resourceProfile(agent: AgentDoc): ResourceProfile {
@@ -220,13 +220,14 @@ export async function fleetCostReport(opts: { fleetId: string; tenantId: string;
 		const hours = activeHours(agent, since, until);
 		const estimateHours = activeHours(agent, since, estimateUntil);
 		const provider = normalizeProvider(
-			usageByAgent.get(agent._id)?.provider ?? agent.config.hermesConfig?.modelProvider ?? agent.config.openclawConfig?.modelProvider,
+			usageByAgent.get(agent._id)?.provider ?? agent.config.nativeConfig?.modelProvider ?? agent.config.hermesConfig?.modelProvider ?? agent.config.openclawConfig?.modelProvider,
 			agent.config.integrationPath,
 		);
 		const model = normalizeModel(
 			usageByAgent.get(agent._id)?.model
 				?? agent.config.hermesConfig?.modelId
 				?? agent.config.openclawConfig?.modelId
+				?? agent.config.nativeConfig?.modelId
 				?? (agent.config.integrationPath === "openclaw" ? process.env.OPENCLAW_MODEL_ID : undefined),
 			provider,
 			agent.config.integrationPath,

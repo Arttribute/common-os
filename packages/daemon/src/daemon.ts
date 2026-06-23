@@ -25,6 +25,7 @@ const HEARTBEAT_MS   = 30_000;
 const POLL_MS        = 5_000;
 const MSG_POLL_MS    = Number(process.env.MSG_POLL_MS ?? 750);
 const MESSAGE_RUN_TIMEOUT_MS = Number(process.env.MESSAGE_RUN_TIMEOUT_MS ?? 900_000);
+const TASK_RUN_TIMEOUT_MS = Number(process.env.TASK_RUN_TIMEOUT_MS ?? 1_800_000);
 const AGC_STREAM_TIMEOUT_MS = Number(process.env.AGC_STREAM_TIMEOUT_MS ?? MESSAGE_RUN_TIMEOUT_MS);
 const OPENCLAW_RESPONSE_TIMEOUT_MS = Number(process.env.OPENCLAW_RESPONSE_TIMEOUT_MS ?? 600_000);
 const OPENCLAW_READY_TIMEOUT_MS = Number(process.env.OPENCLAW_READY_TIMEOUT_MS ?? 30_000);
@@ -1855,7 +1856,11 @@ async function handleTask(
   await worldInteract(workObjectId, truncate(task.description, 40), pos.room, pos.x, pos.y);
 
   try {
-    const runResult = await executeTask(task.description);
+    const runResult = await withTimeout(
+      executeTask(task.description),
+      TASK_RUN_TIMEOUT_MS,
+      "agent task runtime",
+    );
     const output = typeof runResult === "string" ? runResult : runResult.response;
 
     await worldCreateObject("artifact", pos.room, pos.x + 1, pos.y, truncate(task.description, 24));
@@ -1878,6 +1883,9 @@ async function handleTask(
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    await agent.failTask(task.id, msg).catch((reportErr) => {
+      console.warn("[daemon] task failure report error:", reportErr instanceof Error ? reportErr.message : reportErr);
+    });
     await agent.emit({ type: "error", payload: { message: msg } });
     console.error(`[daemon] task ${task.id} failed:`, err);
   } finally {
@@ -1899,7 +1907,19 @@ async function executeTask(
   if (config.integrationPath === "openclaw") return await runViaOpenClaw(description, messages, hooks);
   if (config.integrationPath === "hermes") return await runViaHermes(description, messages, hooks);
   if (config.integrationPath === "native") {
-    const result = await runViaNative(description, agcSessionId, messages, routing, hooks);
+    let result = await runViaNative(description, agcSessionId, messages, routing, hooks);
+
+    if (shouldContinueAutonomously(description, result.response, result.toolCallCount)) {
+      await hooks?.onStatus?.("continuing_until_verified").catch(() => {});
+      const continuation = [
+        "Continue the assignment autonomously now.",
+        "Your previous response stopped before executing or verifying the requested outcome.",
+        "Use the available tools, resolve routine choices yourself, repair failures, and do not return until the result is verified or a genuine blocker requiring user input is proven.",
+        "",
+        `Original assignment: ${description}`,
+      ].join("\n");
+      result = await runViaNative(continuation, result.agcSessionId, undefined, routing, hooks, false);
+    }
 
     if (result.response.trim()) return result;
 
@@ -1912,6 +1932,14 @@ async function executeTask(
     };
   }
   throw new Error("guest runtime execution is handled by the tenant image");
+}
+
+function shouldContinueAutonomously(description: string, response: string, toolCallCount: number): boolean {
+  if (toolCallCount > 0 || !response.trim()) return false;
+  const actionable = /\b(?:build|create|implement|fix|debug|install|update|change|delete|remove|move|run|start|restart|stop|open|launch|deploy|test|verify|inspect|make|set up|setup)\b/i.test(description);
+  if (!actionable) return false;
+  const premature = /\b(?:would you like|let me know|i can proceed|we can proceed|here are the steps|let'?s (?:start|begin)|i will|i'll|next,? i|do you want|please specify)\b/i.test(response);
+  return premature;
 }
 
 async function maybeWriteMarkdownFallback(description: string, messages?: AgcMessage[]): Promise<string | null> {
@@ -1987,7 +2015,7 @@ function cleanAgcOutput(raw: string): string {
 function buildRunPrompt(description: string, messages?: AgcMessage[], routing?: AxlRoutingContext): string {
   const routingContext = buildAxlRoutingPromptContext(routing);
   if (!messages || messages.length <= 1) {
-    return [buildCliContext(), orchestrationContext(), routingContext, description].filter(Boolean).join("\n\n");
+    return [agentOperatingContract(), buildCliContext(), orchestrationContext(), routingContext, `## Current assignment\n\n${description}`].filter(Boolean).join("\n\n");
   }
 
   const transcript = messages
@@ -1996,6 +2024,7 @@ function buildRunPrompt(description: string, messages?: AgcMessage[], routing?: 
     .join("\n\n");
 
   return [
+    agentOperatingContract(),
     buildCliContext(),
     orchestrationContext(),
     routingContext,
@@ -2004,6 +2033,26 @@ function buildRunPrompt(description: string, messages?: AgcMessage[], routing?: 
     "",
     transcript,
   ].join("\n");
+}
+
+function agentOperatingContract(): string {
+  return `
+## CommonOS autonomous operating contract
+
+Role instructions:
+${config.systemPrompt}
+
+Own the current assignment from intent to verified outcome.
+
+1. If the request is clear enough to act, begin execution immediately. Ask a question only when a missing answer would materially change the result or authorize a significant external side effect.
+2. After execution begins, keep working across as many tool calls and repair cycles as needed. Do not hand routine decisions, debugging, retries, or verification back to the user.
+3. Treat a plan as internal scaffolding, not task completion. Never stop after merely describing commands, code, or next steps when the tools can perform them.
+4. Inspect the existing workspace before creating parallel structures. Preserve useful work, choose one coherent architecture, and remove conflicts only when safe.
+5. Validate the real outcome. For code, run the relevant install, typecheck, test, or build commands. For web apps, start the server, open the page, inspect it, and repair visible, console, runtime, routing, and framework errors.
+6. Retry recoverable failures with a changed approach. Use available evidence—files, logs, process state, browser state, and command output—instead of guessing.
+7. Stop only when the requested outcome is verified, a genuine blocker requires user input or new authority, or the configured execution limit is reached. If blocked, report the exact blocker, evidence, and smallest decision needed.
+8. Final responses are concise handoffs: state what is working, what was verified, and any material caveat. Do not end with generic offers for more work.
+`.trim();
 }
 
 function buildAxlRoutingPromptContext(routing?: AxlRoutingContext): string {
@@ -2724,7 +2773,7 @@ async function runViaNative(
   routing?: AxlRoutingContext,
   hooks?: MessageRunHooks,
   retryOnEmpty = true,
-): Promise<{ response: string; agcSessionId?: string; axlToolCalled: boolean }> {
+): Promise<{ response: string; agcSessionId?: string; axlToolCalled: boolean; toolCallCount: number }> {
   const sessionIdToUse = agcSessionId ?? agentSessionId;
   const agentId = config.commonsAgentId || config.agentId;
   const prompt = buildRunPrompt(description, messages, routing);
@@ -2851,7 +2900,12 @@ async function runViaNative(
   console.log(
     `[daemon] agc stream done  runtime=${DAEMON_RUNTIME}  length=${response.length}  tools=${toolRequestCount}  axl=${axlToolCalled}  session=${observedSessionId?.slice(0, 12) ?? "none"}`,
   );
-  return { response, axlToolCalled, ...(observedSessionId ? { agcSessionId: observedSessionId } : {}) };
+  return {
+    response,
+    axlToolCalled,
+    toolCallCount: toolRequestCount,
+    ...(observedSessionId ? { agcSessionId: observedSessionId } : {}),
+  };
 }
 
 async function runViaOpenClaw(description: string, messages?: AgcMessage[], hooks?: MessageRunHooks): Promise<string> {

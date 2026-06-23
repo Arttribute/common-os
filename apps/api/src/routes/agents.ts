@@ -23,6 +23,11 @@ router.post("/:id/agents", async (c) => {
 		room?: string;
 		integrationPath?: "native" | "openclaw" | "hermes" | "guest";
 		dockerImage?: string;
+		nativeConfig?: {
+			modelProvider?: string;
+			modelId?: string;
+			modelApiKey?: string;
+		};
 		openclawConfig?: {
 			modelProvider?: string;
 			modelId?: string;
@@ -57,6 +62,13 @@ router.post("/:id/agents", async (c) => {
 			room: body.room ?? fleet.worldConfig.rooms[0]?.id ?? "dev-room",
 			integrationPath: body.integrationPath ?? "native",
 			dockerImage: body.dockerImage ?? null,
+			nativeConfig: body.nativeConfig
+				? {
+						modelProvider: body.nativeConfig.modelProvider ?? "openai",
+						modelId: body.nativeConfig.modelId ?? null,
+						modelApiKey: body.nativeConfig.modelApiKey ?? null,
+					}
+				: null,
 			openclawConfig: body.openclawConfig
 				? {
 						modelProvider: body.openclawConfig.modelProvider ?? null,

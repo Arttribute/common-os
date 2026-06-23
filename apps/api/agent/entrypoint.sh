@@ -19,6 +19,7 @@ cat > /etc/common-os/config.json << CONFIGEOF
   "integrationPath":    "${INTEGRATION_PATH:-native}",
   "dockerImage":        $([ -n "${DOCKER_IMAGE:-}" ] && printf '"%s"' "${DOCKER_IMAGE}" || echo "null"),
   "role":               "${ROLE:-worker}",
+  "systemPromptBase64": "${SYSTEM_PROMPT_B64:-}",
   "runnerUrl":          "${RUNNER_URL:-}",
   "worldRoom":          "${WORLD_ROOM:-dev-room}",
   "worldX":             ${WORLD_X:-2},

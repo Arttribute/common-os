@@ -19,6 +19,19 @@ CommonOS owns the runtime. Agent Commons owns native agent capabilities.
 
 When `AGENTCOMMONS_API_KEY` is configured and an agent uses `integrationPath: "native"`, the provisioner calls Agent Commons to create an agent record.
 
+Native agents default to `openai/gpt-5.4-mini`, balancing tool-use quality, speed, and cost. Override the provider and model per deployment in the dashboard or CLI:
+
+```bash
+commonos agent deploy \
+  --fleet flt_xxx \
+  --role product-engineer \
+  --runtime native \
+  --model-provider openai \
+  --model gpt-5.4-mini
+```
+
+The runtime sends the agent's role instructions, live workspace context, tool catalog, and autonomous execution contract on every assignment. Clear requests proceed without another confirmation turn. The agent continues through implementation, retries, process management, browser inspection, and verification until the outcome is complete or a genuine blocker requires user input.
+
 The CommonOS agent stores:
 
 - Agent Commons agent ID
