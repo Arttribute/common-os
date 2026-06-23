@@ -610,7 +610,23 @@ function diagnosticSummary(status: BrowserRuntimeStatus): string[] {
 async function inspectBrowserDiagnostics(): Promise<BrowserDiagnostic[]> {
   if (!browserWs || !browserSessionId) return [];
   const expression = `(() => {
-    const textOf = (node) => (node && (node.innerText || node.textContent) || "").replace(/\\s+/g, " ").trim();
+    const textOf = (node) => {
+      if (!node) return "";
+      if (node.innerText) return node.innerText.replace(/\\s+/g, " ").trim();
+      const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, {
+        acceptNode(textNode) {
+          const parent = textNode.parentElement;
+          if (!parent) return NodeFilter.FILTER_ACCEPT;
+          const tag = parent.tagName.toLowerCase();
+          return tag === "style" || tag === "script" || tag === "template"
+            ? NodeFilter.FILTER_REJECT
+            : NodeFilter.FILTER_ACCEPT;
+        }
+      });
+      const parts = [];
+      while (walker.nextNode()) parts.push(walker.currentNode.textContent || "");
+      return parts.join(" ").replace(/\\s+/g, " ").trim();
+    };
     const selectors = [
       "nextjs-portal",
       "[data-nextjs-dialog-overlay]",
@@ -625,17 +641,6 @@ async function inspectBrowserDiagnostics(): Promise<BrowserDiagnostic[]> {
     const push = (level, source, message) => {
       if (message) entries.push({ level, source, message: String(message).slice(0, 2000), ts: new Date().toISOString() });
     };
-    for (const selector of selectors) {
-      for (const el of Array.from(document.querySelectorAll(selector))) {
-        const direct = textOf(el);
-        if (direct) push("error", selector, direct);
-        if (el.shadowRoot) {
-          const shadow = textOf(el.shadowRoot);
-          if (shadow) push("error", selector + " shadowRoot", shadow);
-        }
-      }
-    }
-    const bodyText = textOf(document.body);
     const patterns = [
       /missing\\s*<html>\\s*and\\s*<body>\\s*tags[^\\n]*/i,
       /Unhandled Runtime Error[^\\n]*/i,
@@ -644,12 +649,33 @@ async function inspectBrowserDiagnostics(): Promise<BrowserDiagnostic[]> {
       /ReferenceError:[^\\n]*/i,
       /TypeError:[^\\n]*/i,
       /SyntaxError:[^\\n]*/i,
-      /Module not found:[^\\n]*/i
+      /Module not found:[^\\n]*/i,
+      /Failed to compile[^\\n]*/i,
+      /Build Error[^\\n]*/i,
+      /Runtime Error[^\\n]*/i
     ];
-    for (const pattern of patterns) {
-      const match = bodyText.match(pattern);
-      if (match) push("error", "page-text", match[0]);
+    const errorSnippet = (text) => {
+      for (const pattern of patterns) {
+        const match = text.match(pattern);
+        if (match) return match[0];
+      }
+      return "";
+    };
+    for (const selector of selectors) {
+      for (const el of Array.from(document.querySelectorAll(selector))) {
+        const direct = textOf(el);
+        const directError = errorSnippet(direct);
+        if (directError) push("error", selector, directError);
+        if (el.shadowRoot) {
+          const shadow = textOf(el.shadowRoot);
+          const shadowError = errorSnippet(shadow);
+          if (shadowError) push("error", selector + " shadowRoot", shadowError);
+        }
+      }
     }
+    const bodyText = textOf(document.body);
+    const bodyError = errorSnippet(bodyText);
+    if (bodyError) push("error", "page-text", bodyError);
     return entries;
   })()`;
   const value = await browserEvaluate(expression, 5_000);
