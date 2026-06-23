@@ -7,6 +7,7 @@ import {
   readdirSync,
   existsSync,
   statSync,
+  unlinkSync,
 } from "fs";
 import { join, dirname, resolve, relative } from "path";
 import { loadConfig } from "./config.js";
@@ -352,6 +353,20 @@ async function registerSessionWithApi(): Promise<void> {
     console.log(`[daemon] session registered with API  agcSessionId=${agentSessionId.slice(0, 12)}…`)
   } catch (err) {
     console.warn('[daemon] session registration failed:', err instanceof Error ? err.message : err)
+  }
+}
+
+function clearAgentCommonsSession(reason: string): void {
+  if (agentSessionId) {
+    console.warn(`[daemon] clearing AGC session ${agentSessionId.slice(0, 12)}…: ${reason}`);
+  } else {
+    console.warn(`[daemon] clearing AGC session: ${reason}`);
+  }
+  agentSessionId = null;
+  try {
+    if (existsSync(SESSION_FILE)) unlinkSync(SESSION_FILE);
+  } catch (err) {
+    console.warn("[daemon] session file cleanup failed:", err instanceof Error ? err.message : String(err));
   }
 }
 
@@ -829,18 +844,27 @@ function startAgentToolsServer(): void {
 // ─── File watcher ──────────────────────────────────────────────────────────
 
 let snapshotDebounce: ReturnType<typeof setTimeout> | null = null;
+const WATCH_SKIP_RE = /(^|[/\\])(?:\.git|node_modules|\.cache|__pycache__|\.next|dist|build)(?:[/\\]|$)|(?:^|[/\\])[^/\\]+\.tmp(?:\.|$)/;
+
+function shouldIgnoreWorkspacePath(path: string): boolean {
+  const rel = relative(WORKSPACE_DIR, path);
+  return rel.startsWith("..") || rel === ".." || WATCH_SKIP_RE.test(rel);
+}
 
 function startFileWatcher() {
   try {
     const watcher = watch(WORKSPACE_DIR, {
       ignoreInitial: true,
       persistent: true,
-      ignored: /(node_modules|\.git)/,
+      ignored: shouldIgnoreWorkspacePath,
     });
 
     watcher.on("add",    (path) => emitFileChange(path, "create"));
     watcher.on("change", (path) => emitFileChange(path, "modify"));
     watcher.on("unlink", (path) => emitFileChange(path, "delete"));
+    watcher.on("error", (err) => {
+      console.warn("[daemon] workspace watcher error:", err instanceof Error ? err.message : String(err));
+    });
 
     console.log(`[daemon] watching ${WORKSPACE_DIR}`);
   } catch {
@@ -849,6 +873,7 @@ function startFileWatcher() {
 }
 
 function emitFileChange(path: string, op: "create" | "modify" | "delete") {
+  if (shouldIgnoreWorkspacePath(path)) return;
   agent.emit({ type: "file_changed", payload: { path, op } }).catch(() => {});
   // Debounce snapshot refresh so rapid file writes don't flood the API
   if (snapshotDebounce) clearTimeout(snapshotDebounce);
@@ -2412,6 +2437,7 @@ async function runViaNative(
   messages?: AgcMessage[],
   routing?: AxlRoutingContext,
   hooks?: MessageRunHooks,
+  retryOnEmpty = true,
 ): Promise<{ response: string; agcSessionId?: string; axlToolCalled: boolean }> {
   const sessionIdToUse = agcSessionId ?? agentSessionId;
   const agentId = config.commonsAgentId || config.agentId;
@@ -2531,6 +2557,11 @@ async function runViaNative(
   if (observedUsage) await emitTokenUsage(observedUsage);
 
   const response = cleanAgcOutput(finalText ?? output);
+  if (!response.trim() && toolRequestCount === 0 && retryOnEmpty) {
+    clearAgentCommonsSession("empty AGC stream with no tool calls");
+    await hooks?.onStatus?.("retrying_agent_commons_session").catch(() => {});
+    return await runViaNative(description, undefined, [], routing, hooks, false);
+  }
   console.log(
     `[daemon] agc stream done  runtime=${DAEMON_RUNTIME}  length=${response.length}  tools=${toolRequestCount}  axl=${axlToolCalled}  session=${observedSessionId?.slice(0, 12) ?? "none"}`,
   );
