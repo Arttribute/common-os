@@ -1,5 +1,16 @@
 # @common-os/cli
 
+## 0.3.0
+
+### Minor Changes
+
+- e7cd2f2: Add autonomous end-to-end execution behavior, reliable task failure reporting, native Agent Commons model selection, and provider-aware deployment controls across the daemon, SDK, CLI, API, and web dashboard.
+
+### Patch Changes
+
+- Updated dependencies [e7cd2f2]
+  - @common-os/sdk@0.3.0
+
 ## 0.2.0
 
 ### Minor Changes
