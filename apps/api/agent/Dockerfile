@@ -25,7 +25,7 @@ RUN apk add --no-cache curl git jq bash ca-certificates openssl chromium nss fre
 COPY --from=axl-builder /axl-node /usr/local/bin/axl-node
 
 # Agent Commons CLI — used by the runner service for native task execution
-RUN bun install -g @agent-commons/cli@0.1.18
+RUN bun install -g @agent-commons/cli@0.2.0
 
 RUN mkdir -p /workspace /etc/common-os /etc/axl /app
 

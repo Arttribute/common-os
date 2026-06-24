@@ -168,8 +168,8 @@ importers:
         version: 4.12.15
     devDependencies:
       '@agent-commons/cli':
-        specifier: ^0.1.18
-        version: 0.1.18
+        specifier: ^0.2.0
+        version: 0.2.0
       '@types/bun':
         specifier: ^1.3.13
         version: 1.3.13
@@ -389,13 +389,13 @@ packages:
   '@adraffy/ens-normalize@1.11.1':
     resolution: {integrity: sha512-nhCBV3quEgesuf7c7KYfperqSS14T8bYuvJ8PcLJp6znkZpFc0AuW4qBtr8eKVyPPe/8RSr7sglCWPU5eaxwKQ==}
 
-  '@agent-commons/cli@0.1.18':
-    resolution: {integrity: sha512-peXjtUyX5aljad2ImSZP34BA0yb82WH5PIT1iz7FzmewCtEFmmvqdg2GXQ7sAVONAiOFj4w8KTn9bLob66Q4YA==}
+  '@agent-commons/cli@0.2.0':
+    resolution: {integrity: sha512-AbLJgJAcN1dlXLFAlfEvHnAOR0mcpL5O2pL1uDq0czZ6O28zQ/6wES9TZMbcHRJgNwSxbEYWwGe4wFJwBmT9Cw==}
     engines: {node: '>=18'}
     hasBin: true
 
-  '@agent-commons/sdk@0.1.13':
-    resolution: {integrity: sha512-QGCJfwRtM8H+20armIInFGX+lj8iqtPAskN6YyF8WBkzlCcrEGh1y7uywvOAJ+jQWpz5grF286FnmtEw+jCYUA==}
+  '@agent-commons/sdk@0.2.0':
+    resolution: {integrity: sha512-URES8VKUNe/kZcEl+TDoBw+ZiCS/c7XU43wNFe1uaDU2+J8oFgxiXSiNPlG3CpJqEHnEyzewt0DAw8wU6HZfxg==}
 
   '@alloc/quick-lru@5.2.0':
     resolution: {integrity: sha512-UrcABB+4bUrFABwbluTIBErXwvbsU/V7TZWfmbgJfbkwiBuziS9gxdODUyuiecfdGQ85jglMW6juS3+z5TsKLw==}
@@ -7459,16 +7459,16 @@ snapshots:
 
   '@adraffy/ens-normalize@1.11.1': {}
 
-  '@agent-commons/cli@0.1.18':
+  '@agent-commons/cli@0.2.0':
     dependencies:
-      '@agent-commons/sdk': 0.1.13
+      '@agent-commons/sdk': 0.2.0
       '@types/pdf-parse': 1.1.5
       chalk: 5.6.2
       commander: 12.1.0
       ora: 8.2.0
       pdf-parse: 1.1.4
 
-  '@agent-commons/sdk@0.1.13': {}
+  '@agent-commons/sdk@0.2.0': {}
 
   '@alloc/quick-lru@5.2.0': {}
 
