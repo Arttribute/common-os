@@ -974,6 +974,58 @@ async function getEksKubeConfig(region: string, clusterName: string): Promise<k8
 	return kc;
 }
 
+async function ensureEksEfsStorageClass(
+	kc: k8s.KubeConfig,
+	configuredName: string,
+	fileSystemId: string,
+): Promise<string> {
+	const storageApi = kc.makeApiClient(k8s.StorageV1Api);
+	let storageClassName = configuredName;
+
+	try {
+		const existing = await storageApi.readStorageClass({ name: configuredName });
+		if (existing.parameters?.fileSystemId === fileSystemId) {
+			return configuredName;
+		}
+
+		// Preserve an existing class that may still back older claims. New claims
+		// use a filesystem-specific class with the correct immutable parameters.
+		storageClassName = `${configuredName}-${fileSystemId.slice(-8).toLowerCase()}`;
+	} catch (err: unknown) {
+		const code = (err as { statusCode?: number; code?: number })?.statusCode
+			?? (err as { code?: number })?.code;
+		if (code !== 404) throw err;
+	}
+
+	try {
+		await storageApi.createStorageClass({
+			body: {
+				apiVersion: "storage.k8s.io/v1",
+				kind: "StorageClass",
+				metadata: { name: storageClassName },
+				provisioner: "efs.csi.aws.com",
+				parameters: {
+					provisioningMode: "efs-ap",
+					fileSystemId,
+					directoryPerms: "700",
+					basePath: "/agents",
+					ensureUniqueDirectory: "true",
+				},
+				reclaimPolicy: "Retain",
+				mountOptions: ["tls"],
+				volumeBindingMode: "Immediate",
+			},
+		});
+		console.log(`[cloud-init] EFS storage class "${storageClassName}" configured`);
+	} catch (err: unknown) {
+		const code = (err as { statusCode?: number; code?: number })?.statusCode
+			?? (err as { code?: number })?.code;
+		if (code !== 409) throw err;
+	}
+
+	return storageClassName;
+}
+
 /**
  * Provisions one Kubernetes namespace + pod per agent on the shared EKS cluster.
  * Storage: EFS CSI volume if EFS_FILE_SYSTEM_ID is set, otherwise emptyDir.
@@ -992,6 +1044,9 @@ export async function launchAgentPodEks(opts: LaunchOptions): Promise<LaunchedSe
 
 	const kc = await getEksKubeConfig(region, clusterName);
 	const coreApi = kc.makeApiClient(k8s.CoreV1Api);
+	const storageClassName = efsId
+		? await ensureEksEfsStorageClass(kc, efsStorageClass, efsId)
+		: "";
 
 	try {
 		await coreApi.createNamespace({
@@ -1027,7 +1082,7 @@ export async function launchAgentPodEks(opts: LaunchOptions): Promise<LaunchedSe
 					spec: {
 						accessModes: ["ReadWriteMany"],
 						resources: { requests: { storage: "5Gi" } },
-						storageClassName: efsStorageClass,
+						storageClassName,
 					},
 				},
 			});
