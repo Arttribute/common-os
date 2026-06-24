@@ -14,13 +14,11 @@ The API reads from `apps/api/.env.local` during local development.
 | `MONGODB_URI` | Yes | MongoDB connection string. Most API routes fail without it. |
 | `PRIVY_APP_ID` | Optional | Privy app ID for JWT verification. |
 | `PRIVY_APP_SECRET` | Optional | Privy secret for server-side auth checks. |
-| `CLOUD_PROVIDER` | Provisioning | `gcp` or `aws`. Defaults toward the GCP path in provisioner code. |
-| `GCP_PROJECT_ID` | GCP | Google Cloud project ID. |
-| `GCP_REGION` | GCP | Region, defaulting to `europe-west1`. |
-| `GCP_SERVICE_ACCOUNT_KEY` | GCP | Service account key, raw JSON or base64 depending on deployment setup. |
-| `GKE_CLUSTER` | GCP | Cluster name, default `common-os-agents`. |
+| `CLOUD_PROVIDER` | Provisioning | Production uses `aws` and defaults to AWS. GCP support is retained only for archived migration recovery. |
+| `AWS_REGION` | AWS | EKS and service region, defaulting to `eu-west-1`. |
+| `EKS_CLUSTER` | AWS | EKS cluster name. |
 | `AGENT_IMAGE_URL` | Provisioning | Container image used for agent pods. |
-| `RUNNER_URL` | Native runtime | Cloud Run runner URL used by native agents. |
+| `RUNNER_URL` | Native runtime | Shared runner service URL used by native agents. |
 | `AXL_MODE` | Optional | P2P mode for agent pods. Defaults to `explicit`, which exposes the AXL tool but does not run background inbox routing. Use `auto` for automatic inbound AXL polling/replies, or `off` to skip AXL entirely. |
 | `AGENTCOMMONS_API_KEY` | Native runtime | Platform key for Agent Commons registration and bootstrap. |
 | `AGC_API_URL` | Optional | Agent Commons API base URL. |
@@ -38,8 +36,6 @@ The API reads from `apps/api/.env.local` during local development.
 | `HERMES_MODEL_ID` | Hermes runtime | Default Hermes model route for generated gateway config, for example `openai/gpt-5.4-mini`. |
 | `HERMES_MODEL_API_KEY` | Hermes runtime | Default model provider key injected for Hermes agents. |
 | `HERMES_GATEWAY_API_KEY` | Hermes runtime | Optional bearer token used when the daemon calls a secured Hermes Gateway. |
-| `AWS_REGION` | AWS | Region for EKS operations. |
-| `EKS_CLUSTER` | AWS | EKS cluster name. |
 
 ## Web
 

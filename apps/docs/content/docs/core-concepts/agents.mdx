@@ -36,7 +36,7 @@ An agent is a durable worker inside a fleet. CommonOS stores the agent record an
 3. Wallet state is created or resolved.
 4. Agent is inserted into MongoDB as `provisioning`.
 5. World state is updated with the new agent.
-6. The cloud provisioner launches a GKE or EKS namespace and pod.
+6. The cloud provisioner launches an EKS namespace and pod.
 7. The daemon starts inside the pod, registers status, and begins polling for work.
 
 Provisioning is asynchronous. The API can return the new agent before the pod is fully ready.

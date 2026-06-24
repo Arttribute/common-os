@@ -29,7 +29,7 @@ Open the web UI at `http://localhost:3000`. Open this docs app at `http://localh
 | Send work to agents | [Send tasks](/guides/send-tasks) |
 | Use the CLI | [CLI reference](/reference/cli) |
 | Use the SDK | [SDK reference](/reference/sdk) |
-| Deploy the platform | [GCP deployment](/operations/gcp-deployment) |
+| Deploy the platform | [Agent image operations](/operations/agent-image) |
 
 ## Architecture At A Glance
 
@@ -54,7 +54,7 @@ Every agent runs as its own operational unit. The control plane handles lifecycl
 | --- | --- |
 | `apps/web` | Next.js 15 app for landing, auth, dashboard, settings, and World UI. |
 | `apps/api` | Hono control plane for auth, fleets, agents, tasks, messages, events, wallets, and world state. |
-| `apps/runner` | Cloud Run service that wraps Agent Commons CLI execution. |
+| `apps/runner` | Shared runner service that wraps Agent Commons CLI execution. |
 | `apps/docs` | This Fumadocs documentation app. |
 | `packages/sdk` | TypeScript SDK for tenant operators and agent runtimes. |
 | `packages/cli` | `commonos` CLI for auth, fleet, agent, task, and world commands. |
@@ -64,6 +64,6 @@ Every agent runs as its own operational unit. The control plane handles lifecycl
 
 ## Current Shape
 
-The repository has a full local and cloud-oriented implementation: Mongo-backed control plane, API key and agent token auth, GKE and EKS pod provisioners, Agent Commons registration hooks, wallet helpers, an agent daemon, a CLI, a TypeScript SDK, and a real-time world UI.
+The repository has a full local and cloud-oriented implementation: Mongo-backed control plane, API key and agent token auth, an AWS EKS pod provisioner, Agent Commons registration hooks, wallet helpers, an agent daemon, a CLI, a TypeScript SDK, and a real-time world UI. The former GCP provider remains available only as archived compatibility code.
 
-Some integrations depend on external credentials or live services. For example, real GKE provisioning requires GCP credentials, `MONGODB_URI`, an agent image, and `RUNNER_URL`. Without a live API connection, the World UI can still run in demo mode.
+Some integrations depend on external credentials or live services. Real EKS provisioning requires AWS credentials, `MONGODB_URI`, an agent image, and `RUNNER_URL`. Without a live API connection, the World UI can still run in demo mode.

@@ -1,9 +1,13 @@
 ---
-title: GCP Deployment
+title: Archived GCP Deployment
 description: Deploy the API dependencies, runner, agent image, and GKE-backed agent pods.
 ---
 
-The primary cloud target is GCP with GKE, GCS FUSE, and Cloud Run.
+> Archived in June 2026. CommonOS production now runs exclusively on AWS.
+> These commands are retained for historical reference and must not be wired
+> to automatic build triggers.
+
+The former cloud target used GCP with GKE, GCS FUSE, and Cloud Run.
 
 ## Required Pieces
 
@@ -21,7 +25,7 @@ The primary cloud target is GCP with GKE, GCS FUSE, and Cloud Run.
 From the repository root:
 
 ```bash
-gcloud builds submit --config=apps/api/agent/cloudbuild.yaml .
+gcloud builds submit --config=archive/gcp/apps/api/agent/cloudbuild.yaml .
 ```
 
 Set the resulting image as:
@@ -33,7 +37,7 @@ AGENT_IMAGE_URL=europe-west1-docker.pkg.dev/<project>/<repo>/common-os-agent:lat
 ## Deploy Runner
 
 ```bash
-gcloud builds submit --config=apps/runner/cloudbuild.yaml .
+gcloud builds submit --config=archive/gcp/apps/runner/cloudbuild.yaml .
 ```
 
 Set:

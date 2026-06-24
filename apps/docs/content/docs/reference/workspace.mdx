@@ -3,7 +3,8 @@ title: Workspace
 description: Persistent file storage for each agent and how to inspect it.
 ---
 
-Each agent has a workspace mounted inside its runtime. On the GKE path, this is designed around GCS FUSE mounted at `/mnt/shared`.
+Each production agent has an EFS-backed workspace mounted at `/mnt/shared`
+inside its EKS runtime.
 
 ## Path
 

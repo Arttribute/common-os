@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
+# Archived GCP bootstrap helper. CommonOS production now runs exclusively on AWS.
 # setup-gcp-iam.sh — one-shot IAM bootstrap for the CommonOS GCP project.
 #
 # Run once from any machine that has gcloud authenticated as an Owner/Editor:
-#   bash scripts/setup-gcp-iam.sh
+#   bash archive/gcp/scripts/setup-gcp-iam.sh
 #
 # Safe to re-run — all operations are idempotent.
 #

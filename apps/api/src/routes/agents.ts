@@ -6,6 +6,7 @@ import { provisionAgent } from "../services/provisioner.js";
 import { readAgentWorkspaceFile, terminateAgentPod, terminateAgentPodEks, WorkspaceReadError } from "../services/cloud-init.js";
 import { removeAgentFromWorldState } from "../services/world.js";
 import type { Env, MessageDoc } from "../types.js";
+import { publicAgent } from "../utils/public-agent.js";
 
 const router = new Hono<Env>();
 
@@ -88,7 +89,7 @@ router.post("/:id/agents", async (c) => {
 					}
 				: null,
 		});
-		return c.json(agent, 201);
+		return c.json(publicAgent(agent), 201);
 	} catch (err) {
 		return c.json(
 			{ error: err instanceof Error ? err.message : "provisioning failed" },
@@ -104,7 +105,7 @@ router.get("/:id/agents", async (c) => {
 			.find({ fleetId: c.req.param("id"), tenantId: c.get("tenantId") })
 			.sort({ createdAt: -1 })
 			.lean();
-		return c.json(list);
+		return c.json(list.map(publicAgent));
 	} catch {
 		return c.json({ error: "database error" }, 503);
 	}
@@ -119,7 +120,7 @@ router.get("/:id/agents/:agentId", async (c) => {
 			tenantId: c.get("tenantId"),
 		}).lean();
 		if (!agent) return c.json({ error: "agent not found" }, 404);
-		return c.json(agent);
+		return c.json(publicAgent(agent));
 	} catch {
 		return c.json({ error: "database error" }, 503);
 	}

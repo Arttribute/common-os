@@ -1,3 +1,5 @@
+# Archived June 2026 after agent images moved to GitHub Actions + GHCR for AWS.
+# Retained for historical reference; do not attach to a Cloud Build trigger.
 steps:
   # Step 1: Build the daemon bundle (self-contained daemon.mjs)
   # Runs from repo root so pnpm workspace resolution works across packages.

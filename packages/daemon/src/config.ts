@@ -12,7 +12,7 @@ export interface DaemonConfig {
   walletAddress: string;
   walletChainId: number;
   // native path — runner service
-  runnerUrl: string;           // URL of the shared runner Cloud Run service
+  runnerUrl: string;           // URL of the shared runner service
   // gateway-backed paths
   openclawGatewayUrl: string;  // defaults to http://localhost:18789
   hermesGatewayUrl: string;    // defaults to http://localhost:17890

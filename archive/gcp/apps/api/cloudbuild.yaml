@@ -1,3 +1,5 @@
+# Archived June 2026 after production moved to AWS.
+# Retained for historical reference; do not attach to a Cloud Build trigger.
 steps:
   - name: "gcr.io/cloud-builders/docker"
     args:

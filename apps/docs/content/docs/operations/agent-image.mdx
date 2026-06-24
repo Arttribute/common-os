@@ -70,7 +70,9 @@ cli_stop_process    -> stop or restart the server
 ## Build
 
 ```bash
-gcloud builds submit --config=apps/api/agent/cloudbuild.yaml .
+The production image is built and pushed to GHCR by
+`.github/workflows/agent.yml` on changes to the daemon, SDK, event schema, or
+agent image files.
 ```
 
 The build config bundles workspace packages first, then builds and pushes the runtime image.

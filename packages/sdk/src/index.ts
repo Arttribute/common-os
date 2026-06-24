@@ -17,10 +17,10 @@ export class CommonOSClient {
 
 	constructor(options: CommonOSClientOptions) {
 		this.apiKey = options.apiKey;
-		this.apiUrl = (options.apiUrl ?? "https://api.commonos.dev").replace(
-			/\/$/,
-			"",
-		);
+		this.apiUrl = (
+			options.apiUrl ??
+			"https://co-34acbf16a9a0464c8be79137d4f7bbd6.ecs.eu-west-1.on.aws"
+		).replace(/\/$/, "");
 	}
 
 	readonly fleets = {
@@ -123,10 +123,10 @@ export class CommonOSAgentClient {
 	constructor(options: CommonOSAgentClientOptions) {
 		this.agentToken = options.agentToken;
 		this.agentId = options.agentId;
-		this.apiUrl = (options.apiUrl ?? "https://api.commonos.dev").replace(
-			/\/$/,
-			"",
-		);
+		this.apiUrl = (
+			options.apiUrl ??
+			"https://co-34acbf16a9a0464c8be79137d4f7bbd6.ecs.eu-west-1.on.aws"
+		).replace(/\/$/, "");
 	}
 
 	async emit(event: AgentEvent): Promise<void> {

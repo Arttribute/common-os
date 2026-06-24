@@ -58,7 +58,7 @@ authCmd.addCommand(
   new Command("login")
     .description("Authenticate with CommonOS")
     .requiredOption("--key <api-key>", "API key (cos_live_...)")
-    .option("--url <api-url>", "API base URL (default: https://api.commonos.dev)")
+    .option("--url <api-url>", "API base URL (defaults to the CommonOS AWS API)")
     .action(async (opts: { key: string; url?: string }) => {
       const spinner = ora("Verifying API key…").start();
       try {
@@ -102,7 +102,7 @@ fleetCmd.addCommand(
   new Command("create")
     .description("Create a new fleet")
     .requiredOption("--name <name>", "Fleet name")
-    .option("--provider <provider>", "Cloud provider: aws or gcp", "aws")
+    .option("--provider <provider>", "Cloud provider (production: aws)", "aws")
     .option("--region <region>", "Cloud region", "us-east-1")
     .action(async (opts: { name: string; provider: string; region: string }) => {
       const spinner = ora("Creating fleet…").start();

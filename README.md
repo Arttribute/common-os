@@ -14,7 +14,7 @@ Open the world UI — your agents appear in an office, walking to their desks, d
 
 ## What it is
 
-CommonOS is a deployment and management platform for persistent AI agent fleets. The core primitive: every agent runs in a dedicated GKE pod (gVisor-sandboxed) with a GCS-backed persistent workspace and a P2P communication sidecar (Gensyn AXL). Fleets are managed through a control plane API, a TypeScript SDK, and a CLI.
+CommonOS is a deployment and management platform for persistent AI agent fleets. The core primitive: every agent runs in a dedicated EKS pod with an EFS-backed persistent workspace and a P2P communication sidecar (Gensyn AXL). Fleets are managed through a control plane API, a TypeScript SDK, and a CLI.
 
 The World UI makes the fleet visible — agents appear as characters in a 2.5D isometric simulation that reflects real compute state in real time. When an agent starts a task, it walks to its desk. When it finishes, an artifact appears in the world. When two agents communicate via AXL, you see the message exchange.
 
@@ -39,7 +39,7 @@ The World UI makes the fleet visible — agents appear as characters in a 2.5D i
 │                  Agent Commons API                     │
 │        identity · wallets · sessions · memory          │
 ├────────────────────────────────────────────────────────┤
-│         GKE Cluster  (gVisor sandboxed pods)           │
+│                  AWS EKS Cluster                       │
 │                                                        │
 │  ┌─────────────────┐  ┌─────────────────┐             │
 │  │  Agent Pod       │  │  Agent Pod       │  ...       │
@@ -48,7 +48,7 @@ The World UI makes the fleet visible — agents appear as characters in a 2.5D i
 │  │  agc runtime    │  │  openclaw gw    │             │
 │  │  AXL sidecar    │  │  AXL sidecar    │             │
 │  │  /mnt/shared    │  │  /mnt/shared    │             │
-│  │  (GCS FUSE)     │  │  (GCS FUSE)     │             │
+│  │  (EFS)          │  │  (EFS)          │             │
 │  └─────────────────┘  └─────────────────┘             │
 └────────────────────────────────────────────────────────┘
 ```
@@ -86,8 +86,8 @@ Agent daemon  →  POST /events  →  API broadcasts via WebSocket
 /common-os
 ├── apps/
 │   ├── api/              # Hono fleet control plane (port 3001)
-│   │   └── agent/        # Agent container image (Dockerfile, entrypoint.sh, cloudbuild.yaml)
-│   ├── runner/           # Cloud Run service — wraps agent-commons CLI execution
+│   │   └── agent/        # Agent container image (Dockerfile, entrypoint.sh)
+│   ├── runner/           # Shared runner — wraps agent-commons CLI execution
 │   └── web/              # Next.js 15 world UI + dashboard (port 3000)
 │
 └── packages/
@@ -154,37 +154,16 @@ Open `http://localhost:3000`. Without Privy or an API key the world runs in **de
 
 ---
 
-## Deploying to GCP
+## Deploying to AWS
 
-### Agent image (GCR / Artifact Registry)
+Production is AWS-only:
 
-```bash
-# From repo root — Cloud Build handles daemon bundle then Docker image
-gcloud builds submit --config=apps/api/agent/cloudbuild.yaml .
-```
+- `.github/workflows/deploy-aws.yml` deploys the API.
+- `.github/workflows/agent.yml` builds and pushes the agent image.
+- `.github/workflows/runner.yml` builds and pushes the runner image.
 
-Set `AGENT_IMAGE_URL=europe-west1-docker.pkg.dev/<project>/common-os/agent:latest` on the API server.
-
-### Runner service (Cloud Run)
-
-```bash
-gcloud builds submit --config=apps/runner/cloudbuild.yaml .
-```
-
-This deploys `common-os-runner-prod` to Cloud Run (europe-west1). Set `RUNNER_URL` on the API server.
-
-### GKE cluster env vars (API server)
-
-```
-GCP_PROJECT_ID=
-GCP_SERVICE_ACCOUNT_KEY=   # JSON key, base64 or raw
-GKE_CLUSTER=common-os-agents
-CLOUD_PROVIDER=gcp
-AGENT_IMAGE_URL=
-RUNNER_URL=
-```
-
-The cluster `common-os-agents` auto-creates on first `launchAgentPod()` call if credentials are set. It needs the GCS FUSE CSI driver and Workload Identity enabled.
+The former Google Cloud deployment files are archived under `archive/gcp/`
+and are intentionally disconnected from CI/CD.
 
 ---
 
@@ -264,7 +243,7 @@ All routes require `Authorization: Bearer <token>`. Two token types:
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/fleets/:id/agents` | Deploy agent (provisions GKE pod) |
+| `POST` | `/fleets/:id/agents` | Deploy agent (provisions EKS pod) |
 | `GET` | `/fleets/:id/agents` | List agents |
 | `GET` | `/fleets/:id/agents/:agentId` | Get agent |
 | `PATCH` | `/fleets/:id/agents/:agentId` | Update agent (world pos, AXL multiaddr) |
@@ -409,12 +388,10 @@ Worker agent (permissionTier: worker)
 | `PORT` | No | Default 3001 |
 | `PRIVY_APP_ID` | No | Privy app ID for JWT verification |
 | `PRIVY_APP_SECRET` | No | Privy app secret |
-| `CLOUD_PROVIDER` | No | `gcp` or `aws` (default `aws`) |
-| `GCP_PROJECT_ID` | GCP | GCP project |
-| `GCP_SERVICE_ACCOUNT_KEY` | GCP | Service account JSON (base64 or raw) |
-| `GKE_CLUSTER` | GCP | GKE cluster name (default `common-os-agents`) |
-| `AGENT_IMAGE_URL` | GCP | Container image for agent pods |
-| `RUNNER_URL` | Yes | URL of the deployed runner Cloud Run service |
+| `CLOUD_PROVIDER` | No | Production value and default: `aws` |
+| `EKS_CLUSTER` | AWS | EKS cluster name |
+| `AGENT_IMAGE_URL` | AWS | Container image for agent pods |
+| `RUNNER_URL` | Yes | URL of the shared runner service |
 | `AWS_ACCESS_KEY_ID` | AWS | AWS credentials |
 | `AWS_SECRET_ACCESS_KEY` | AWS | AWS credentials |
 | `AGENTCOMMONS_API_KEY` | No | Platform key for Agent Commons registration |
@@ -437,9 +414,8 @@ Worker agent (permissionTier: worker)
 | MongoDB collections + indexes + Mongoose schemas | ✅ |
 | Fleet control plane API (all routes) | ✅ |
 | Privy JWT + tenant API key + agent token auth | ✅ |
-| GKE pod provisioner (`launchAgentPod`) | ✅ |
 | AWS EKS pod provisioner (`launchAgentPodEks`) | ✅ |
-| Agent container image (Dockerfile + cloudbuild.yaml) | ✅ |
+| Agent container image (Dockerfile + GitHub Actions) | ✅ |
 | Fleet daemon (task loop, heartbeat, file watcher, health monitor) | ✅ |
 | Gensyn AXL — peer registration, inbox loop, outbound P2P | ✅ |
 | World tools — `worldMove`, `worldInteract`, `worldCreateObject` | ✅ |
@@ -450,5 +426,5 @@ Worker agent (permissionTier: worker)
 | Dynamic world objects (agent-created artifacts, whiteboards, etc.) | ✅ |
 | Fleet dashboard (create fleets, deploy agents, terminate) | ✅ |
 | Settings page (API key, CLI setup guide) | ✅ |
-| Runner service (Cloud Run, wraps agent-commons CLI) | ✅ |
+| Runner service (AWS image workflow, wraps agent-commons CLI) | ✅ |
 | ENS agent identity | ⬜ |

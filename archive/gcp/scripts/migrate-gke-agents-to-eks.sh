@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Archived one-time migration helper from GKE to EKS.
 set -euo pipefail
 
 MODE="${1:-}"

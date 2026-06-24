@@ -21,7 +21,7 @@ const client = new CommonOSClient({
 ### Fleets
 
 ```ts
-await client.fleets.create({ name: "eng-team", provider: "gcp", region: "europe-west1" });
+await client.fleets.create({ name: "eng-team", provider: "aws", region: "eu-west-1" });
 await client.fleets.list();
 await client.fleets.get("flt_xxx");
 ```

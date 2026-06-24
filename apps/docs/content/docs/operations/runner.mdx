@@ -1,6 +1,6 @@
 ---
 title: Runner Service
-description: The shared Cloud Run service that executes native Agent Commons tasks.
+description: The shared runner service that executes native Agent Commons tasks.
 ---
 
 The runner is in `apps/runner`.
@@ -38,4 +38,5 @@ daemon executeTask()
 pnpm --filter @common-os/runner dev
 ```
 
-The runner uses Bun for development. In cloud deployment, use the provided Cloud Build config.
+The runner uses Bun for development. Production images are built by
+`.github/workflows/runner.yml` and deployed on AWS.

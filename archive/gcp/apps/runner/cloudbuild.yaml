@@ -1,3 +1,5 @@
+# Archived June 2026 after runner images moved to GitHub Actions + GHCR.
+# Retained for historical reference; do not attach to a Cloud Build trigger.
 steps:
   - name: node
     dir: "./apps/runner"

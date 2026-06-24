@@ -51,10 +51,10 @@ export async function provisionAgent(
 	const startX = roomDef ? roomDef.bounds.x + 2 : 2;
 	const startY = roomDef ? roomDef.bounds.y + 2 : 2;
 
-	const provider = process.env.CLOUD_PROVIDER === "aws" ? "aws" : "gcp";
-	const region = provider === "aws"
-		? process.env.AWS_REGION ?? process.env.CLOUD_REGION ?? "eu-west-1"
-		: process.env.GCP_REGION ?? process.env.CLOUD_REGION ?? "europe-west1";
+	const provider = process.env.CLOUD_PROVIDER === "gcp" ? "gcp" : "aws";
+	const region = provider === "gcp"
+		? process.env.GCP_REGION ?? process.env.CLOUD_REGION ?? "europe-west1"
+		: process.env.AWS_REGION ?? process.env.CLOUD_REGION ?? "eu-west-1";
 
 	const commons =
 		opts.integrationPath === "openclaw" || opts.integrationPath === "hermes"

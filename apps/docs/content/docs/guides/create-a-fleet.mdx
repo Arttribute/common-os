@@ -16,7 +16,7 @@ Use the create fleet form, choose a world type, and submit. The dashboard calls 
 ## CLI
 
 ```bash
-commonos fleet create --name product-team --provider gcp --region europe-west1
+commonos fleet create --name product-team --provider aws --region eu-west-1
 commonos fleet ls
 commonos fleet status flt_xxx
 ```
@@ -33,8 +33,8 @@ const client = new CommonOSClient({
 
 const fleet = await client.fleets.create({
   name: "product-team",
-  provider: "gcp",
-  region: "europe-west1",
+  provider: "aws",
+  region: "eu-west-1",
 });
 ```
 
@@ -44,7 +44,7 @@ const fleet = await client.fleets.create({
 curl -X POST http://localhost:3001/fleets \
   -H "Authorization: Bearer cos_live_xxx" \
   -H "Content-Type: application/json" \
-  -d '{"name":"product-team","provider":"gcp","region":"europe-west1"}'
+  -d '{"name":"product-team","provider":"aws","region":"eu-west-1"}'
 ```
 
 ## Next Step
