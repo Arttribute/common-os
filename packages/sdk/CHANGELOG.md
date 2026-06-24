@@ -1,5 +1,12 @@
 # @common-os/sdk
 
+## 0.3.2
+
+### Patch Changes
+
+- e9c3efe: Surface rejected agent event requests instead of silently discarding heartbeat
+  and runtime telemetry failures.
+
 ## 0.3.1
 
 ### Patch Changes

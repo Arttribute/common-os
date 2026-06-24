@@ -1,5 +1,12 @@
 # @common-os/daemon
 
+## 0.3.2
+
+### Patch Changes
+
+- Updated dependencies [e9c3efe]
+  - @common-os/sdk@0.3.2
+
 ## 0.3.1
 
 ### Patch Changes
