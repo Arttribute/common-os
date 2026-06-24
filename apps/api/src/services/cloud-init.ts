@@ -1141,6 +1141,76 @@ export async function terminateAgentPodEks(namespace: string): Promise<void> {
 	}
 }
 
+export async function inspectAgentPodEks(
+	namespace: string,
+	agentId: string,
+): Promise<{
+	phase: string | null;
+	nodeName: string | null;
+	podIp: string | null;
+	conditions: Array<{ type: string; status: string; reason: string | null; message: string | null }>;
+	containers: Array<{
+		name: string;
+		ready: boolean;
+		restartCount: number;
+		state: string;
+		reason: string | null;
+		message: string | null;
+	}>;
+	pvc: { phase: string | null; volumeName: string | null } | null;
+}> {
+	const region = process.env.AWS_REGION ?? "us-east-1";
+	const clusterName = process.env.EKS_CLUSTER ?? "common-os-agents";
+	const kc = await getEksKubeConfig(region, clusterName);
+	const coreApi = kc.makeApiClient(k8s.CoreV1Api);
+	const podName = `agent-${agentId.replace(/_/g, "-")}`;
+
+	const pod = await coreApi.readNamespacedPod({ namespace, name: podName });
+	const containers = (pod.status?.containerStatuses ?? []).map((container) => {
+		const waiting = container.state?.waiting;
+		const terminated = container.state?.terminated;
+		const running = container.state?.running;
+		return {
+			name: container.name,
+			ready: container.ready,
+			restartCount: container.restartCount,
+			state: waiting ? "waiting" : terminated ? "terminated" : running ? "running" : "unknown",
+			reason: waiting?.reason ?? terminated?.reason ?? null,
+			message: waiting?.message ?? terminated?.message ?? null,
+		};
+	});
+
+	let pvc: { phase: string | null; volumeName: string | null } | null = null;
+	try {
+		const claim = await coreApi.readNamespacedPersistentVolumeClaim({
+			namespace,
+			name: "agent-storage",
+		});
+		pvc = {
+			phase: claim.status?.phase ?? null,
+			volumeName: claim.spec?.volumeName ?? null,
+		};
+	} catch (err: unknown) {
+		const code = (err as { statusCode?: number; code?: number })?.statusCode
+			?? (err as { code?: number })?.code;
+		if (code !== 404) throw err;
+	}
+
+	return {
+		phase: pod.status?.phase ?? null,
+		nodeName: pod.spec?.nodeName ?? null,
+		podIp: pod.status?.podIP ?? null,
+		conditions: (pod.status?.conditions ?? []).map((condition) => ({
+			type: condition.type,
+			status: condition.status,
+			reason: condition.reason ?? null,
+			message: condition.message ?? null,
+		})),
+		containers,
+		pvc,
+	};
+}
+
 // ─── AWS EC2 startup script ────────────────────────────────────────────────
 
 export interface StartupScriptOptions {

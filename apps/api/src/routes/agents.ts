@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { agents, fleets, messages } from "../db/mongo.js";
 import { broadcastToFleet } from "../db/memory.js";
 import { provisionAgent } from "../services/provisioner.js";
-import { readAgentWorkspaceFile, terminateAgentPod, terminateAgentPodEks, WorkspaceReadError } from "../services/cloud-init.js";
+import { inspectAgentPodEks, readAgentWorkspaceFile, terminateAgentPod, terminateAgentPodEks, WorkspaceReadError } from "../services/cloud-init.js";
 import { removeAgentFromWorldState } from "../services/world.js";
 import type { Env, MessageDoc } from "../types.js";
 import { publicAgent } from "../utils/public-agent.js";
@@ -123,6 +123,29 @@ router.get("/:id/agents/:agentId", async (c) => {
 		return c.json(publicAgent(agent));
 	} catch {
 		return c.json({ error: "database error" }, 503);
+	}
+});
+
+// GET /fleets/:id/agents/:agentId/runtime-status
+router.get("/:id/agents/:agentId/runtime-status", async (c) => {
+	try {
+		const agent = await (await agents()).findOne({
+			_id: c.req.param("agentId"),
+			fleetId: c.req.param("id"),
+			tenantId: c.get("tenantId"),
+		}).lean();
+		if (!agent) return c.json({ error: "agent not found" }, 404);
+		if (!agent.pod.namespaceId) {
+			return c.json({ error: "agent pod is not ready" }, 409);
+		}
+		if (agent.pod.provider !== "aws") {
+			return c.json({ error: "runtime diagnostics are available for AWS agents" }, 409);
+		}
+
+		return c.json(await inspectAgentPodEks(agent.pod.namespaceId, agent._id));
+	} catch (err) {
+		console.error("[agents] runtime diagnostics failed:", err);
+		return c.json({ error: "could not inspect agent runtime" }, 502);
 	}
 });
 
