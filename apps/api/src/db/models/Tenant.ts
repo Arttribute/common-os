@@ -6,6 +6,7 @@ const TenantSchema = new Schema<TenantDoc>(
     _id: { type: String },
     identityUserId: String,
     workspaceId: String,
+    mergedIntoTenantId: String,
     name: String,
     email: String,
     privyUserId: String,
@@ -22,5 +23,6 @@ TenantSchema.index({ apiKeyHash: 1 }, { unique: true })
 TenantSchema.index({ privyUserId: 1 }, { unique: true, sparse: true })
 TenantSchema.index({ identityUserId: 1 }, { unique: true, sparse: true })
 TenantSchema.index({ workspaceId: 1 }, { sparse: true })
+TenantSchema.index({ mergedIntoTenantId: 1 }, { sparse: true })
 
 export default mongoose.models.Tenant || mongoose.model<TenantDoc>('Tenant', TenantSchema)

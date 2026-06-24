@@ -26,6 +26,7 @@ export interface TenantDoc {
   _id: string
   identityUserId?: string
   workspaceId?: string
+  mergedIntoTenantId?: string
   name?: string
   email?: string
   privyUserId?: string

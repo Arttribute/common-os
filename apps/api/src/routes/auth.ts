@@ -45,9 +45,15 @@ router.post('/tenant', async (c) => {
         : { privyUserId },
     ).lean()
     if (existing) {
+      const canonical = existing.mergedIntoTenantId
+        ? await col.findOne({ _id: existing.mergedIntoTenantId }).lean()
+        : existing
+      if (!canonical) {
+        return c.json({ error: 'merged tenant not found' }, 409)
+      }
       if (identity && !existing.identityUserId) {
         await col.updateOne(
-          { _id: existing._id },
+          { _id: canonical._id },
           {
             $set: {
               identityUserId: identity.sub,
@@ -57,7 +63,7 @@ router.post('/tenant', async (c) => {
           },
         )
       }
-      const { apiKeyHash: _, ...safe } = existing
+      const { apiKeyHash: _, ...safe } = canonical
       return c.json(safe)
     }
 

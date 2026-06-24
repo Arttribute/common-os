@@ -78,6 +78,13 @@ export interface ResolvedToken {
   authType: 'tenant' | 'agent' | 'privy' | 'identity' | 'service' | 'gateway'
 }
 
+async function canonicalTenantId(tenant: {
+  _id: string
+  mergedIntoTenantId?: string
+}) {
+  return tenant.mergedIntoTenantId ?? tenant._id
+}
+
 /**
  * Resolves any supported token (cos_live_*, cos_agent_*, Privy JWT) to
  * a tenantId. Returns null if the token is invalid or unrecognized.
@@ -123,7 +130,7 @@ export async function resolveToken(token: string): Promise<ResolvedToken | null>
     }
     if (!tenant) return null
     return {
-      tenantId: tenant._id,
+      tenantId: await canonicalTenantId(tenant),
       userId: identity.sub,
       workspaceId: identity.workspace_id ?? tenant.workspaceId,
       authType: 'identity',
@@ -134,7 +141,7 @@ export async function resolveToken(token: string): Promise<ResolvedToken | null>
     const hash = createHash('sha256').update(token).digest('hex')
     const tenant = await (await tenants()).findOne({ apiKeyHash: hash }).lean()
     if (!tenant) return null
-    return { tenantId: tenant._id, authType: 'tenant' }
+    return { tenantId: await canonicalTenantId(tenant), authType: 'tenant' }
   }
 
   if (token.startsWith('cos_agent_')) {
@@ -149,5 +156,5 @@ export async function resolveToken(token: string): Promise<ResolvedToken | null>
   if (!privyUserId) return null
   const tenant = await (await tenants()).findOne({ privyUserId }).lean()
   if (!tenant) return null
-  return { tenantId: tenant._id, authType: 'privy' }
+  return { tenantId: await canonicalTenantId(tenant), authType: 'privy' }
 }
