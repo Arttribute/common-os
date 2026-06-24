@@ -2,7 +2,10 @@ import { randomBytes } from "crypto";
 import { Hono } from "hono";
 import { agents, fleets, messages } from "../db/mongo.js";
 import { broadcastToFleet } from "../db/memory.js";
-import { provisionAgent } from "../services/provisioner.js";
+import {
+	agentCommonsServiceToken,
+	provisionAgent,
+} from "../services/provisioner.js";
 import { inspectAgentPodEks, readAgentWorkspaceFile, terminateAgentPod, terminateAgentPodEks, WorkspaceReadError } from "../services/cloud-init.js";
 import { removeAgentFromWorldState } from "../services/world.js";
 import type { Env, MessageDoc } from "../types.js";
@@ -55,15 +58,34 @@ router.post("/:id/agents", async (c) => {
 
 	if (body.agentCommonsId) {
 		const agcUrl = (process.env.AGC_API_URL ?? "https://api.agentcommons.io").replace(/\/$/, "");
-		const authorization = c.req.header("Authorization");
+		const serviceToken = await agentCommonsServiceToken();
+		if (!serviceToken || !c.get("userId")) {
+			return c.json({ error: "Could not verify Agent Commons ownership" }, 503);
+		}
 		const verifyResponse = await fetch(
 			`${agcUrl}/v1/agents/${encodeURIComponent(body.agentCommonsId)}`,
-			{ headers: authorization ? { Authorization: authorization } : {} },
+			{ headers: { Authorization: `Bearer ${serviceToken}` } },
 		);
 		if (!verifyResponse.ok) {
 			return c.json(
 				{ error: "Agent Commons agent was not found or is not owned by this Commons account" },
 				verifyResponse.status === 404 ? 404 : 403,
+			);
+		}
+		const rawAgent = (await verifyResponse.json()) as Record<string, unknown>;
+		const agent = (rawAgent.data ?? rawAgent) as {
+			ownerUserId?: string;
+			workspaceId?: string;
+		};
+		if (
+			agent.ownerUserId !== c.get("userId") ||
+			(c.get("workspaceId") &&
+				agent.workspaceId &&
+				agent.workspaceId !== c.get("workspaceId"))
+		) {
+			return c.json(
+				{ error: "Agent Commons agent was not found or is not owned by this Commons account" },
+				403,
 			);
 		}
 	}

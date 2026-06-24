@@ -10,7 +10,7 @@ let cachedAgentCommonsServiceToken:
 	| { value: string; expiresAt: number }
 	| undefined;
 
-async function agentCommonsServiceToken(): Promise<string | null> {
+export async function agentCommonsServiceToken(): Promise<string | null> {
 	if (
 		cachedAgentCommonsServiceToken &&
 		cachedAgentCommonsServiceToken.expiresAt > Date.now() + 30_000
@@ -29,7 +29,7 @@ async function agentCommonsServiceToken(): Promise<string | null> {
 			},
 			body: new URLSearchParams({
 				grant_type: "client_credentials",
-				scope: "agents:create activity:read",
+				scope: "agents:create agents:read activity:read",
 				resource: "commons-platform",
 			}),
 		});
