@@ -18,14 +18,22 @@ ENV COMMONOS_COMMIT_SHA=$COMMONOS_COMMIT_SHA
 ENV COMMONOS_BUILD_DATE=$COMMONOS_BUILD_DATE
 
 RUN apk add --no-cache curl git jq bash ca-certificates openssl chromium nss freetype harfbuzz ttf-freefont \
-    python3 make g++ ripgrep \
-    && npm install -g bun@1.3.12 pnpm@9.15.3
+    python3 make g++ ripgrep unzip \
+    && curl -fsSL https://github.com/oven-sh/bun/releases/download/bun-v1.3.12/bun-linux-x64-musl.zip \
+      -o /tmp/bun.zip \
+    && unzip -q /tmp/bun.zip -d /tmp \
+    && mv /tmp/bun-linux-x64-musl/bun /usr/local/bin/bun \
+    && chmod +x /usr/local/bin/bun \
+    && npm install -g pnpm@9.15.3 \
+    && npm cache clean --force \
+    && rm -rf /tmp/* /root/.npm /root/.cache
 
 # AXL — P2P inter-agent communication binary (built from source above)
 COPY --from=axl-builder /axl-node /usr/local/bin/axl-node
 
 # Agent Commons CLI — used by the runner service for native task execution
-RUN bun install -g @agent-commons/cli@0.2.0
+RUN bun install -g @agent-commons/cli@0.2.0 \
+    && rm -rf /root/.bun/install/cache
 
 RUN mkdir -p /workspace /etc/common-os /etc/axl /app
 
