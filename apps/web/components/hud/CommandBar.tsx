@@ -1,7 +1,6 @@
 'use client'
 import { useMemo, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { usePrivy } from '@privy-io/react-auth'
 import { Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -10,6 +9,7 @@ import { cn } from '@/lib/utils'
 import { useAgentStore } from '@/store/agentStore'
 import { useWorldStore } from '@/store/worldStore'
 import { useAuthStore } from '@/store/authStore'
+import { useAuth } from '@/hooks/useAuth'
 
 export function CommandBar() {
   const [input, setInput] = useState('')
@@ -44,7 +44,7 @@ export function CommandBar() {
       .slice(0, 6)
   ), [agents, selectedId, mentionQuery])
 
-  const { getAccessToken, authenticated } = usePrivy()
+  const { getAccessToken, authenticated } = useAuth()
   const apiUrl = getCommonOsApiUrl()
   // URL param takes priority; store value is fallback (set from snapshot)
   const urlFleet = searchParams.get('fleet')

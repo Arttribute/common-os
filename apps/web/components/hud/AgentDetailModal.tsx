@@ -6,7 +6,7 @@ import type { AgentCommonsIdentity } from '@/store/agentStore'
 import { getCommonOsApiUrl } from '@/lib/api-url'
 import { useWorldStore } from '@/store/worldStore'
 import { useAuthStore } from '@/store/authStore'
-import { usePrivy } from '@privy-io/react-auth'
+import { useAuth } from '@/hooks/useAuth'
 import { useSearchParams } from 'next/navigation'
 
 // ─── Types ─────────────────────────────────────────────────────────────────
@@ -1388,7 +1388,7 @@ export function AgentDetailModal() {
   const storeFleetId = useWorldStore((s) => s.fleetId)
   const storedApiKey = useAuthStore((s) => s.apiKey)
   const searchParams = useSearchParams()
-  const { getAccessToken, authenticated } = usePrivy()
+  const { getAccessToken, authenticated } = useAuth()
 
   const [tab, setTab] = useState<'sessions' | 'computer' | 'browser' | 'wallet'>('sessions')
   const [sessions, setSessions]   = useState<AgentSession[]>([])

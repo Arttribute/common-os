@@ -3,6 +3,10 @@ import { randomBytes, createHash } from 'crypto'
 import { tenants } from '../db/mongo.js'
 import { authMiddleware } from '../middleware/auth.js'
 import type { Env } from '../types.js'
+import {
+  privyUserIdFromToken,
+  verifyCommonsIdentityToken,
+} from '../utils/resolveToken.js'
 
 const router = new Hono<Env>()
 
@@ -10,21 +14,12 @@ function generateId(prefix: string) {
   return `${prefix}_${Date.now().toString(36)}${randomBytes(4).toString('hex')}`
 }
 
-// POST /auth/tenant — first Privy login creates tenant; subsequent calls return existing record
+// POST /auth/tenant — canonical Commons identity is preferred. Privy remains a
+// compatibility login until all existing users have migrated.
 router.post('/tenant', async (c) => {
   const raw = c.req.header('Authorization') ?? ''
   const token = raw.replace('Bearer ', '')
   if (!token) return c.json({ error: 'Authorization header required' }, 401)
-
-  let privyUserId: string
-  try {
-    const parts = token.split('.')
-    const payload = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8'))
-    privyUserId = payload.sub
-    if (!privyUserId) throw new Error('no sub')
-  } catch {
-    return c.json({ error: 'invalid Privy token' }, 401)
-  }
 
   const body = await c.req.json<{ email?: string; walletAddress?: string }>().catch(() => ({})) as {
     email?: string
@@ -33,8 +28,35 @@ router.post('/tenant', async (c) => {
 
   try {
     const col = await tenants()
-    const existing = await col.findOne({ privyUserId }).lean()
+    const identity = await verifyCommonsIdentityToken(token)
+    const privyUserId = identity ? null : await privyUserIdFromToken(token)
+    if (!identity && !privyUserId) {
+      return c.json({ error: 'invalid identity token' }, 401)
+    }
+    const email = (identity?.email ?? body.email)?.trim().toLowerCase()
+    const existing = await col.findOne(
+      identity
+        ? {
+            $or: [
+              { identityUserId: identity.sub },
+              ...(email ? [{ email }] : []),
+            ],
+          }
+        : { privyUserId },
+    ).lean()
     if (existing) {
+      if (identity && !existing.identityUserId) {
+        await col.updateOne(
+          { _id: existing._id },
+          {
+            $set: {
+              identityUserId: identity.sub,
+              ...(identity.workspace_id ? { workspaceId: identity.workspace_id } : {}),
+              updatedAt: new Date(),
+            },
+          },
+        )
+      }
       const { apiKeyHash: _, ...safe } = existing
       return c.json(safe)
     }
@@ -42,8 +64,9 @@ router.post('/tenant', async (c) => {
     const apiKey = `cos_live_${randomBytes(24).toString('hex')}`
     const doc = {
       _id: generateId('ten'),
-      privyUserId,
-      email: body.email,
+      ...(identity ? { identityUserId: identity.sub } : { privyUserId: privyUserId! }),
+      ...(identity?.workspace_id ? { workspaceId: identity.workspace_id } : {}),
+      email,
       walletAddress: body.walletAddress,
       apiKeyHash: createHash('sha256').update(apiKey).digest('hex'),
       plan: 'free' as const,

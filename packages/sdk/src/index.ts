@@ -14,13 +14,15 @@ export interface CommonOSAgentClientOptions {
 export class CommonOSClient {
 	private readonly apiKey: string;
 	private readonly apiUrl: string;
+	private readonly basePath: string;
 
 	constructor(options: CommonOSClientOptions) {
 		this.apiKey = options.apiKey;
 		this.apiUrl = (
 			options.apiUrl ??
-			"https://co-34acbf16a9a0464c8be79137d4f7bbd6.ecs.eu-west-1.on.aws"
+			"https://api.agentcommons.io"
 		).replace(/\/$/, "");
+		this.basePath = this.apiUrl === "https://api.agentcommons.io" ? "/v1/compute" : "";
 	}
 
 	readonly fleets = {
@@ -55,7 +57,11 @@ export class CommonOSClient {
 	readonly world = {
 		snapshot: (fleetId: string) => this.get(`/fleets/${fleetId}/world`),
 		streamUrl: (fleetId: string): string =>
-			`${this.apiUrl.replace(/^http/, "ws")}/fleets/${fleetId}/stream?token=${this.apiKey}`,
+			`${(
+				this.basePath
+					? "https://co-34acbf16a9a0464c8be79137d4f7bbd6.ecs.eu-west-1.on.aws"
+					: this.apiUrl
+			).replace(/^http/, "ws")}/fleets/${fleetId}/stream?token=${this.apiKey}`,
 		peers: (fleetId: string) => this.get(`/fleets/${fleetId}/peers`),
 	};
 
@@ -72,7 +78,7 @@ export class CommonOSClient {
 	};
 
 	private async get(path: string) {
-		const res = await fetch(`${this.apiUrl}${path}`, {
+		const res = await fetch(`${this.apiUrl}${this.basePath}${path}`, {
 			headers: { Authorization: `Bearer ${this.apiKey}` },
 		});
 		if (!res.ok) throw new Error(`GET ${path} failed: ${res.status} ${res.statusText}`);
@@ -80,7 +86,7 @@ export class CommonOSClient {
 	}
 
 	private async post(path: string, body: unknown) {
-		const res = await fetch(`${this.apiUrl}${path}`, {
+		const res = await fetch(`${this.apiUrl}${this.basePath}${path}`, {
 			method: "POST",
 			headers: {
 				Authorization: `Bearer ${this.apiKey}`,
@@ -93,7 +99,7 @@ export class CommonOSClient {
 	}
 
 	private async patch(path: string, body: unknown) {
-		const res = await fetch(`${this.apiUrl}${path}`, {
+		const res = await fetch(`${this.apiUrl}${this.basePath}${path}`, {
 			method: "PATCH",
 			headers: {
 				Authorization: `Bearer ${this.apiKey}`,
@@ -106,7 +112,7 @@ export class CommonOSClient {
 	}
 
 	private async delete(path: string) {
-		const res = await fetch(`${this.apiUrl}${path}`, {
+		const res = await fetch(`${this.apiUrl}${this.basePath}${path}`, {
 			method: "DELETE",
 			headers: { Authorization: `Bearer ${this.apiKey}` },
 		});
@@ -119,18 +125,20 @@ export class CommonOSAgentClient {
 	private readonly agentToken: string;
 	private readonly agentId: string;
 	private readonly apiUrl: string;
+	private readonly basePath: string;
 
 	constructor(options: CommonOSAgentClientOptions) {
 		this.agentToken = options.agentToken;
 		this.agentId = options.agentId;
 		this.apiUrl = (
 			options.apiUrl ??
-			"https://co-34acbf16a9a0464c8be79137d4f7bbd6.ecs.eu-west-1.on.aws"
+			"https://api.agentcommons.io"
 		).replace(/\/$/, "");
+		this.basePath = this.apiUrl === "https://api.agentcommons.io" ? "/v1/compute" : "";
 	}
 
 	async emit(event: AgentEvent): Promise<void> {
-		const res = await fetch(`${this.apiUrl}/events`, {
+		const res = await fetch(`${this.apiUrl}${this.basePath}/events`, {
 			method: "POST",
 			headers: {
 				Authorization: `Bearer ${this.agentToken}`,
@@ -145,7 +153,7 @@ export class CommonOSAgentClient {
 
 	async nextTask(): Promise<{ id: string; description: string } | null> {
 		const res = await fetch(
-			`${this.apiUrl}/agents/${this.agentId}/tasks/next`,
+			`${this.apiUrl}${this.basePath}/agents/${this.agentId}/tasks/next`,
 			{ headers: { Authorization: `Bearer ${this.agentToken}` } },
 		);
 		if (res.status === 204) return null;
@@ -157,7 +165,7 @@ export class CommonOSAgentClient {
 
 	async completeTask(taskId: string, output?: string): Promise<void> {
 		await fetch(
-			`${this.apiUrl}/agents/${this.agentId}/tasks/${taskId}/complete`,
+			`${this.apiUrl}${this.basePath}/agents/${this.agentId}/tasks/${taskId}/complete`,
 			{
 				method: "POST",
 				headers: {
@@ -171,7 +179,7 @@ export class CommonOSAgentClient {
 
 	async failTask(taskId: string, error: string): Promise<void> {
 		await fetch(
-			`${this.apiUrl}/agents/${this.agentId}/tasks/${taskId}/complete`,
+			`${this.apiUrl}${this.basePath}/agents/${this.agentId}/tasks/${taskId}/complete`,
 			{
 				method: "POST",
 				headers: {

@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { usePrivy } from '@privy-io/react-auth'
+import { useSession } from 'next-auth/react'
 import {
   Box,
   Bot,
@@ -360,8 +360,7 @@ function hasWalletIdentity(value: string | null | undefined): boolean {
 }
 
 export default function DashboardPage() {
-  const { ready } = usePrivy()
-  const { authenticated, tenantId, onboarding, logout, apiFetch } = useAuth()
+  const { ready, authenticated, tenantId, onboarding, logout, apiFetch } = useAuth()
   const router = useRouter()
 
   const [fleets, setFleets] = useState<Fleet[]>([])
@@ -1273,8 +1272,8 @@ function CenteredState({ label }: { label: string }) {
 }
 
 function UserEmail() {
-  const { user } = usePrivy()
-  const email = user?.email?.address ?? user?.wallet?.address?.slice(0, 10)
+  const { data: session } = useSession()
+  const email = session?.user?.email ?? session?.user?.id
   if (!email) return null
   return (
     <span className="hidden max-w-44 truncate text-sm text-muted-foreground md:inline">

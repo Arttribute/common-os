@@ -2,7 +2,11 @@
 export interface HonoVariables {
   tenantId: string
   agentId: string | undefined
-  authType: 'tenant' | 'agent' | 'privy'
+  userId: string | undefined
+  workspaceId: string | undefined
+  projectId: string | undefined
+  scopes: string[]
+  authType: 'tenant' | 'agent' | 'privy' | 'identity' | 'service' | 'gateway'
 }
 
 export type Env = { Variables: HonoVariables }
@@ -20,6 +24,8 @@ export type AgentStatus =
 
 export interface TenantDoc {
   _id: string
+  identityUserId?: string
+  workspaceId?: string
   name?: string
   email?: string
   privyUserId?: string
@@ -88,6 +94,8 @@ export interface AgentDoc {
   tenantId: string
   commons: {
     agentId: string | null
+    ownerUserId?: string | null
+    workspaceId?: string | null
     apiKey: string | null
     walletAddress: string | null
     registryAgentId?: string | null

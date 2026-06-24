@@ -1,11 +1,15 @@
 'use client'
 import { useCallback, useEffect, useState } from 'react'
-import { usePrivy } from '@privy-io/react-auth'
+import { signIn, signOut, useSession } from 'next-auth/react'
 import { getCommonOsApiUrl } from '@/lib/api-url'
 import { useAuthStore } from '@/store/authStore'
 
 export function useAuth() {
-  const { ready, authenticated, getAccessToken, user, logout: privyLogout } = usePrivy()
+  const { data: session, status } = useSession()
+  const ready = status !== 'loading'
+  const authenticated = status === 'authenticated'
+  const getAccessToken = useCallback(async () => session?.accessToken ?? null, [session?.accessToken])
+  const user = session?.user
   const { tenantId, apiKey, setTenant, clear } = useAuthStore()
   const [onboarding, setOnboarding] = useState(false)
   const apiUrl = getCommonOsApiUrl()
@@ -25,8 +29,7 @@ export function useAuth() {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            email: user?.email?.address,
-            walletAddress: user?.wallet?.address,
+            email: user?.email,
           }),
         })
         if (res.ok) {
@@ -40,11 +43,11 @@ export function useAuth() {
       }
     })()
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, authenticated, tenantId, apiUrl])
+  }, [ready, authenticated, tenantId, apiUrl, getAccessToken, user?.email, setTenant])
 
   const logout = async () => {
     clear()
-    await privyLogout()
+    await signOut({ callbackUrl: '/' })
   }
 
   return {
@@ -55,6 +58,7 @@ export function useAuth() {
     onboarding,
     getAccessToken,
     user,
+    login: () => signIn('commons', { callbackUrl: '/dashboard' }),
     logout,
     // Helper: call any API endpoint with the current Privy JWT
     apiFetch: useCallback(async (path: string, init?: RequestInit) => {

@@ -29,6 +29,7 @@
 		"@smithy/signature-v4": "^5.3.14",
 		"google-auth-library": "^10.6.2",
 		"hono": "^4.12.14",
+		"jose": "^6.2.2",
 		"mongodb": "^6.15.0",
 		"mongoose": "^9.6.1",
 		"uuid": "^14.0.0",

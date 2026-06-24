@@ -1,5 +1,6 @@
 import { createHash } from 'crypto'
 import { PrivyClient } from '@privy-io/server-auth'
+import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose'
 import { tenants, agents } from '../db/mongo.js'
 
 let _privy: PrivyClient | null = null
@@ -12,7 +13,7 @@ function getPrivy(): PrivyClient | null {
   return _privy
 }
 
-async function privyUserIdFromToken(token: string): Promise<string | null> {
+export async function privyUserIdFromToken(token: string): Promise<string | null> {
   const privy = getPrivy()
   if (privy) {
     try {
@@ -34,10 +35,47 @@ async function privyUserIdFromToken(token: string): Promise<string | null> {
   }
 }
 
+export interface CommonsIdentityClaims extends JWTPayload {
+  sub: string
+  azp?: string
+  workspace_id?: string | null
+  actor_type?: 'user' | 'agent' | 'service'
+  email?: string
+}
+
+let identityJwks: ReturnType<typeof createRemoteJWKSet> | null = null
+
+export async function verifyCommonsIdentityToken(
+  token: string,
+): Promise<CommonsIdentityClaims | null> {
+  const issuer = process.env.COMMONS_IDENTITY_ISSUER
+  const jwksUrl = process.env.COMMONS_IDENTITY_JWKS_URL
+  if (!issuer || !jwksUrl) return null
+  identityJwks ??= createRemoteJWKSet(new URL(jwksUrl))
+  try {
+    const { payload } = await jwtVerify(token, identityJwks, {
+      issuer,
+      audience: process.env.COMMONS_IDENTITY_AUDIENCE ?? 'commons-platform',
+      algorithms: ['ES256'],
+    })
+    const claims = payload as CommonsIdentityClaims
+    if (!claims.sub && claims.actor_type === 'service' && claims.azp) {
+      claims.sub = claims.azp
+    }
+    return claims.sub ? claims : null
+  } catch {
+    return null
+  }
+}
+
 export interface ResolvedToken {
   tenantId: string
   agentId?: string
-  authType: 'tenant' | 'agent' | 'privy'
+  userId?: string
+  workspaceId?: string
+  projectId?: string
+  scopes?: string[]
+  authType: 'tenant' | 'agent' | 'privy' | 'identity' | 'service' | 'gateway'
 }
 
 /**
@@ -46,6 +84,51 @@ export interface ResolvedToken {
  */
 export async function resolveToken(token: string): Promise<ResolvedToken | null> {
   if (!token) return null
+
+  if (
+    process.env.COMMON_OS_SERVICE_TOKEN &&
+    token === process.env.COMMON_OS_SERVICE_TOKEN
+  ) {
+    return { tenantId: '*', authType: 'service' }
+  }
+
+  const identity = await verifyCommonsIdentityToken(token)
+  if (identity) {
+    if (identity.actor_type === 'service') {
+      return {
+        tenantId: '*',
+        userId: identity.sub,
+        workspaceId: identity.workspace_id ?? undefined,
+        authType: 'service',
+      }
+    }
+    const collection = await tenants()
+    let tenant = await collection.findOne({ identityUserId: identity.sub }).lean()
+    if (!tenant && identity.email) {
+      tenant = await collection.findOne({
+        email: identity.email.trim().toLowerCase(),
+      }).lean()
+      if (tenant) {
+        await collection.updateOne(
+          { _id: tenant._id },
+          {
+            $set: {
+              identityUserId: identity.sub,
+              ...(identity.workspace_id ? { workspaceId: identity.workspace_id } : {}),
+              updatedAt: new Date(),
+            },
+          },
+        )
+      }
+    }
+    if (!tenant) return null
+    return {
+      tenantId: tenant._id,
+      userId: identity.sub,
+      workspaceId: identity.workspace_id ?? tenant.workspaceId,
+      authType: 'identity',
+    }
+  }
 
   if (token.startsWith('cos_live_')) {
     const hash = createHash('sha256').update(token).digest('hex')

@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { usePrivy } from '@privy-io/react-auth'
+import { useSession } from 'next-auth/react'
 import { ArrowLeft, Check, Copy, Eye, EyeOff, KeyRound, Terminal, User } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -12,7 +12,7 @@ import { getCommonOsApiUrl } from '@/lib/api-url'
 import { useAuthStore } from '@/store/authStore'
 
 export default function SettingsPage() {
-  const { user } = usePrivy()
+  const { data: session } = useSession()
   const { apiKey, tenantId } = useAuthStore()
   const router = useRouter()
   const [copiedKey, setCopiedKey] = useState(false)
@@ -20,7 +20,7 @@ export default function SettingsPage() {
   const [showKey, setShowKey] = useState(false)
 
   const apiUrl = getCommonOsApiUrl()
-  const email = user?.email?.address ?? user?.wallet?.address?.slice(0, 16) ?? '-'
+  const email = session?.user?.email ?? session?.user?.id ?? '-'
   const loginCmd = apiKey
     ? `cos auth login --key ${apiKey} --url ${apiUrl}`
     : `cos auth login --key <your-api-key> --url ${apiUrl}`

@@ -2,15 +2,13 @@
 
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { usePrivy } from '@privy-io/react-auth'
 import { ArrowRight, Loader2, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useAuth } from '@/hooks/useAuth'
 
 export default function PrivyLogin() {
-  const { ready, login } = usePrivy()
-  const { authenticated, tenantId, onboarding } = useAuth()
+  const { ready, login, authenticated, tenantId, onboarding } = useAuth()
   const router = useRouter()
 
   useEffect(() => {

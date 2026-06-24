@@ -6,10 +6,57 @@ import { ensureAgentWallet } from "./agentWallet.js";
 
 const AGC_BASE_URL = (process.env.AGC_API_URL ?? "https://api.agentcommons.io").replace(/\/$/, "");
 const DEFAULT_API_URL = "https://co-34acbf16a9a0464c8be79137d4f7bbd6.ecs.eu-west-1.on.aws";
+let cachedAgentCommonsServiceToken:
+	| { value: string; expiresAt: number }
+	| undefined;
+
+async function agentCommonsServiceToken(): Promise<string | null> {
+	if (
+		cachedAgentCommonsServiceToken &&
+		cachedAgentCommonsServiceToken.expiresAt > Date.now() + 30_000
+	) {
+		return cachedAgentCommonsServiceToken.value;
+	}
+	const issuer = process.env.COMMONS_IDENTITY_ISSUER;
+	const clientId = process.env.AGENTCOMMONS_SERVICE_CLIENT_ID;
+	const clientSecret = process.env.AGENTCOMMONS_SERVICE_CLIENT_SECRET;
+	if (issuer && clientId && clientSecret) {
+		const response = await fetch(`${issuer.replace(/\/$/, "")}/oauth2/token`, {
+			method: "POST",
+			headers: {
+				Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`,
+				"Content-Type": "application/x-www-form-urlencoded",
+			},
+			body: new URLSearchParams({
+				grant_type: "client_credentials",
+				scope: "agents:create activity:read",
+				resource: "commons-platform",
+			}),
+		});
+		if (!response.ok) throw new Error("Could not obtain Agent Commons service token");
+		const token = (await response.json()) as {
+			access_token: string;
+			expires_in?: number;
+		};
+		cachedAgentCommonsServiceToken = {
+			value: token.access_token,
+			expiresAt: Date.now() + (token.expires_in ?? 600) * 1000,
+		};
+		return token.access_token;
+	}
+	return (
+		process.env.AGENTCOMMONS_SERVICE_TOKEN ??
+		process.env.AGENTCOMMONS_API_KEY ??
+		null
+	);
+}
 
 interface ProvisionAgentOptions {
 	fleetId: string;
 	tenantId: string;
+	userId?: string;
+	workspaceId?: string;
+	existingCommonsAgentId?: string;
 	fleet: FleetDoc;
 	role: string;
 	systemPrompt: string;
@@ -57,9 +104,24 @@ export async function provisionAgent(
 		: process.env.AWS_REGION ?? process.env.CLOUD_REGION ?? "eu-west-1";
 
 	const commons =
-		opts.integrationPath === "openclaw" || opts.integrationPath === "hermes"
+		opts.existingCommonsAgentId
+			? {
+					agentId: opts.existingCommonsAgentId,
+					ownerUserId: opts.userId ?? null,
+					workspaceId: opts.workspaceId ?? null,
+					apiKey: null,
+					walletAddress: null,
+					registryAgentId: opts.existingCommonsAgentId,
+				}
+			: opts.integrationPath === "openclaw" || opts.integrationPath === "hermes"
 			? { agentId: null, apiKey: null, walletAddress: null, registryAgentId: null }
-			: await registerWithAgentCommons(agentId, opts.role, opts.systemPrompt, opts.nativeConfig);
+			: await registerWithAgentCommons(
+					agentId,
+					opts.role,
+					opts.systemPrompt,
+					opts.nativeConfig,
+					{ userId: opts.userId, workspaceId: opts.workspaceId },
+				);
 
 	if (opts.integrationPath === "native" && !commons.agentId) {
 		console.warn("[provisioner] Agent Commons registration returned no agentId; native agent will run without AGC identity");
@@ -150,8 +212,9 @@ export async function registerWithAgentCommons(
 	role: string,
 	systemPrompt: string,
 	nativeConfig?: AgentDoc["config"]["nativeConfig"],
+	owner?: { userId?: string; workspaceId?: string },
 ): Promise<AgentDoc["commons"]> {
-	const platformKey = process.env.AGENTCOMMONS_API_KEY;
+	const platformKey = await agentCommonsServiceToken();
 	if (!platformKey) {
 		return { agentId: null, apiKey: null, walletAddress: null, registryAgentId: null };
 	}
@@ -172,6 +235,8 @@ export async function registerWithAgentCommons(
 			body: JSON.stringify({
 				name: `${role}-${agentId}`,
 				instructions: systemPrompt,
+				...(owner?.userId ? { ownerUserId: owner.userId } : {}),
+				...(owner?.workspaceId ? { workspaceId: owner.workspaceId } : {}),
 				modelProvider: nativeConfig?.modelProvider ?? process.env.AGENTCOMMONS_MODEL_PROVIDER ?? "openai",
 				modelId: nativeConfig?.modelId ?? process.env.AGENTCOMMONS_MODEL_ID ?? "gpt-5.4-mini",
 				...(nativeConfig?.modelApiKey ? { modelApiKey: nativeConfig.modelApiKey } : {}),
@@ -194,6 +259,8 @@ export async function registerWithAgentCommons(
 		// in all AGC API calls. Wallet routes are not yet available.
 		return {
 			agentId: registryAgentId,
+			ownerUserId: owner?.userId ?? null,
+			workspaceId: owner?.workspaceId ?? null,
 			apiKey: null, // platform key injected at runtime by bootstrap; never stored in DB
 			walletAddress: null,
 			registryAgentId,

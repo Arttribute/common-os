@@ -2,7 +2,6 @@
 import { Suspense, useEffect, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { useSearchParams, useRouter } from 'next/navigation'
-import { usePrivy } from '@privy-io/react-auth'
 import { useAuth } from '@/hooks/useAuth'
 import { HUD } from '@/components/hud/HUD'
 import { useWorldStore } from '@/store/worldStore'
@@ -104,8 +103,7 @@ function formatCompact(value: number): string {
 
 // Inner component uses useSearchParams — must be inside <Suspense>
 function WorldContent() {
-  const { ready } = usePrivy()
-  const { authenticated, getAccessToken, apiFetch } = useAuth()
+  const { ready, authenticated, getAccessToken, apiFetch } = useAuth()
   const router = useRouter()
   const searchParams = useSearchParams()
   const fleetId = searchParams.get('fleet') ?? undefined
@@ -115,16 +113,16 @@ function WorldContent() {
   const [costError, setCostError] = useState<string | null>(null)
   const initialized = useWorldStore((s) => s.initialized)
 
-  const privyEnabled = !!process.env.NEXT_PUBLIC_PRIVY_APP_ID
+  const identityEnabled = !!process.env.NEXT_PUBLIC_COMMONS_IDENTITY_ENABLED
   useEffect(() => {
-    if (privyEnabled && ready && !authenticated) {
+    if (identityEnabled && ready && !authenticated) {
       router.replace('/auth')
     }
-  }, [privyEnabled, ready, authenticated, router])
+  }, [identityEnabled, ready, authenticated, router])
 
   const { isLive } = useWorldConnection(
     fleetId,
-    privyEnabled ? getAccessToken : undefined,
+    identityEnabled ? getAccessToken : undefined,
   )
 
   useEffect(() => {
@@ -149,7 +147,7 @@ function WorldContent() {
     }
   }, [apiFetch, authenticated, fleetId, tab])
 
-  if (privyEnabled && (!ready || !authenticated)) {
+  if (identityEnabled && (!ready || !authenticated)) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-background text-sm text-muted-foreground">
         <Loader2 className="mr-2 size-4 animate-spin" />

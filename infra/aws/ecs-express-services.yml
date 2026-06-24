@@ -90,6 +90,18 @@ Resources:
             ValueFrom: !Sub "${RuntimeSecretArn}:OPENCLAW_MODEL_ID::"
           - Name: OPENCLAW_MODEL_API_KEY
             ValueFrom: !Sub "${RuntimeSecretArn}:OPENCLAW_MODEL_API_KEY::"
+          - Name: COMMONS_IDENTITY_ISSUER
+            ValueFrom: !Sub "${RuntimeSecretArn}:COMMONS_IDENTITY_ISSUER::"
+          - Name: COMMONS_IDENTITY_JWKS_URL
+            ValueFrom: !Sub "${RuntimeSecretArn}:COMMONS_IDENTITY_JWKS_URL::"
+          - Name: COMMONS_IDENTITY_AUDIENCE
+            ValueFrom: !Sub "${RuntimeSecretArn}:COMMONS_IDENTITY_AUDIENCE::"
+          - Name: COMMONS_GATEWAY_INTERNAL_SECRET
+            ValueFrom: !Sub "${RuntimeSecretArn}:COMMONS_GATEWAY_INTERNAL_SECRET::"
+          - Name: AGENTCOMMONS_SERVICE_CLIENT_ID
+            ValueFrom: !Sub "${RuntimeSecretArn}:AGENTCOMMONS_SERVICE_CLIENT_ID::"
+          - Name: AGENTCOMMONS_SERVICE_CLIENT_SECRET
+            ValueFrom: !Sub "${RuntimeSecretArn}:AGENTCOMMONS_SERVICE_CLIENT_SECRET::"
       ScalingTarget:
         MinTaskCount: 1
         MaxTaskCount: 4

@@ -8,6 +8,8 @@ const AgentSchema = new Schema<AgentDoc>(
     tenantId: { type: String, required: true },
     commons: {
       agentId: { type: String, default: null },
+      ownerUserId: { type: String, default: null },
+      workspaceId: { type: String, default: null },
       apiKey: { type: String, default: null },
       walletAddress: { type: String, default: null },
       registryAgentId: { type: String, default: null },

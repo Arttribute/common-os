@@ -43,6 +43,7 @@ router.post("/:id/agents", async (c) => {
 			modelApiKey?: string;
 			gatewayApiKey?: string;
 		};
+		agentCommonsId?: string;
 	}>();
 	if (!body.role) return c.json({ error: "role is required" }, 400);
 
@@ -52,10 +53,28 @@ router.post("/:id/agents", async (c) => {
 	}).lean();
 	if (!fleet) return c.json({ error: "fleet not found" }, 404);
 
+	if (body.agentCommonsId) {
+		const agcUrl = (process.env.AGC_API_URL ?? "https://api.agentcommons.io").replace(/\/$/, "");
+		const authorization = c.req.header("Authorization");
+		const verifyResponse = await fetch(
+			`${agcUrl}/v1/agents/${encodeURIComponent(body.agentCommonsId)}`,
+			{ headers: authorization ? { Authorization: authorization } : {} },
+		);
+		if (!verifyResponse.ok) {
+			return c.json(
+				{ error: "Agent Commons agent was not found or is not owned by this Commons account" },
+				verifyResponse.status === 404 ? 404 : 403,
+			);
+		}
+	}
+
 	try {
 		const agent = await provisionAgent({
 			fleetId,
 			tenantId: c.get("tenantId"),
+			userId: c.get("userId"),
+			workspaceId: c.get("workspaceId"),
+			existingCommonsAgentId: body.agentCommonsId,
 			fleet,
 			role: body.role,
 			systemPrompt: body.systemPrompt ?? `You are a ${body.role} agent.`,

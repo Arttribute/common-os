@@ -16,6 +16,7 @@ import { agentRuntimeRouter } from './routes/agentRuntime.js'
 import { streamRouter } from './routes/stream.js'
 import { sessionsRouter } from './routes/sessions.js'
 import { walletsRouter } from './routes/wallets.js'
+import { activityRouter } from './routes/activity.js'
 import { worldStates, ensureIndexes } from './db/mongo.js'
 import { subscribeToFleet, unsubscribeFromFleet } from './db/memory.js'
 import type { Env } from './types.js'
@@ -36,6 +37,7 @@ app.route('/auth', authRouter)
 app.use('/fleets/*', authMiddleware)
 app.use('/agents/*', authMiddleware)
 app.use('/events', authMiddleware)
+app.use('/activity/*', authMiddleware)
 
 app.route('/fleets', fleetsRouter)
 app.route('/fleets', agentsRouter)
@@ -46,6 +48,7 @@ app.route('/fleets', sessionsRouter)
 app.route('/fleets', walletsRouter)
 app.route('/agents', agentRuntimeRouter)
 app.route('/events', eventsRouter)
+app.route('/activity', activityRouter)
 
 const port = Number(process.env.PORT ?? 3001)
 const server = serve({ fetch: app.fetch, port }, () => {
