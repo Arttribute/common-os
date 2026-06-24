@@ -146,10 +146,12 @@ router.post("/", async (c) => {
 			const heartbeatProvesRunning = ["provisioning", "starting", "stopped"].includes(agentDoc.status);
 			const runtimePayload = event.payload
 				? {
-					"runtime.name": event.payload.runtime ?? null,
-					"runtime.commitSha": event.payload.commitSha ?? null,
-					"runtime.agentImage": event.payload.agentImage ?? null,
-					"runtime.updatedAt": now,
+					runtime: {
+						name: event.payload.runtime ?? null,
+						commitSha: event.payload.commitSha ?? null,
+						agentImage: event.payload.agentImage ?? null,
+						updatedAt: now,
+					},
 				}
 				: {};
 			await agentCol.updateOne(

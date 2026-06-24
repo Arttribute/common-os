@@ -130,7 +130,7 @@ export class CommonOSAgentClient {
 	}
 
 	async emit(event: AgentEvent): Promise<void> {
-		await fetch(`${this.apiUrl}/events`, {
+		const res = await fetch(`${this.apiUrl}/events`, {
 			method: "POST",
 			headers: {
 				Authorization: `Bearer ${this.agentToken}`,
@@ -138,6 +138,9 @@ export class CommonOSAgentClient {
 			},
 			body: JSON.stringify({ agentId: this.agentId, ...event }),
 		});
+		if (!res.ok) {
+			throw new Error(`POST /events failed: ${res.status} ${res.statusText}`);
+		}
 	}
 
 	async nextTask(): Promise<{ id: string; description: string } | null> {
