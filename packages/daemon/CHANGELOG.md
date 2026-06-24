@@ -1,5 +1,12 @@
 # @common-os/daemon
 
+## 0.3.1
+
+### Patch Changes
+
+- Updated dependencies [e130e82]
+  - @common-os/sdk@0.3.1
+
 ## 0.3.0
 
 ### Minor Changes

@@ -1,6 +1,6 @@
 {
 	"name": "@common-os/sdk",
-	"version": "0.3.0",
+	"version": "0.3.1",
 	"description": "TypeScript client SDK for CommonOS — tenant and agent runtime clients",
 	"main": "./dist/index.cjs",
 	"module": "./dist/index.mjs",

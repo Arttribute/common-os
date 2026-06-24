@@ -1,5 +1,14 @@
 # @common-os/cli
 
+## 0.3.1
+
+### Patch Changes
+
+- e130e82: Use the production AWS API by default, clarify AWS-first CLI help, and keep
+  agent credentials out of public API responses.
+- Updated dependencies [e130e82]
+  - @common-os/sdk@0.3.1
+
 ## 0.3.0
 
 ### Minor Changes
