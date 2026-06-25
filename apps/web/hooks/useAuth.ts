@@ -12,13 +12,16 @@ export function useAuth() {
   const user = session?.user
   const { tenantId, apiKey, setTenant, clear } = useAuthStore()
   const [onboarding, setOnboarding] = useState(false)
+  const [onboardingError, setOnboardingError] = useState<string | null>(null)
   const apiUrl = getCommonOsApiUrl()
 
-  // After Privy login, ensure this user has a tenant record in the API
+  // Resolve the canonical tenant after every authenticated browser session.
+  // Persisted tenant IDs are only a cache and must never override identity.
   useEffect(() => {
-    if (!ready || !authenticated || tenantId || !apiUrl) return
+    if (!ready || !authenticated || !apiUrl) return
 
     setOnboarding(true)
+    setOnboardingError(null)
     void (async () => {
       try {
         const token = await getAccessToken()
@@ -35,15 +38,17 @@ export function useAuth() {
         if (res.ok) {
           const data = (await res.json()) as { _id: string; apiKey?: string }
           setTenant(data._id, data.apiKey)
+        } else {
+          setOnboardingError(`Could not connect your CommonOS account (${res.status}).`)
         }
       } catch {
-        // Non-fatal — user can retry by refreshing
+        setOnboardingError('Could not connect to the CommonOS API.')
       } finally {
         setOnboarding(false)
       }
     })()
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, authenticated, tenantId, apiUrl, getAccessToken, user?.email, setTenant])
+  }, [ready, authenticated, apiUrl, getAccessToken, user?.email, setTenant])
 
   const logout = async () => {
     clear()
@@ -56,6 +61,7 @@ export function useAuth() {
     tenantId,
     apiKey,
     onboarding,
+    onboardingError,
     getAccessToken,
     user,
     login: () => signIn('commons', { callbackUrl: '/dashboard' }),

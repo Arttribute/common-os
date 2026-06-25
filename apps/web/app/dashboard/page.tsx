@@ -360,7 +360,7 @@ function hasWalletIdentity(value: string | null | undefined): boolean {
 }
 
 export default function DashboardPage() {
-  const { ready, authenticated, tenantId, onboarding, logout, apiFetch } = useAuth()
+  const { ready, authenticated, tenantId, onboarding, onboardingError, logout, apiFetch } = useAuth()
   const router = useRouter()
 
   const [fleets, setFleets] = useState<Fleet[]>([])
@@ -622,6 +622,9 @@ export default function DashboardPage() {
   }
 
   if (onboarding || (authenticated && !tenantId)) {
+    if (onboardingError) {
+      return <CenteredState label={onboardingError} />
+    }
     return <CenteredState label="Setting up your account..." />
   }
 
