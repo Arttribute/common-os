@@ -1,5 +1,7 @@
 import Link from 'next/link'
-import { Box, Loader2 } from 'lucide-react'
+import { Box } from 'lucide-react'
+import { redirect } from 'next/navigation'
+import { auth } from '@/auth'
 
 type Props = {
   searchParams: Promise<Record<string, string | string[] | undefined>>
@@ -21,21 +23,11 @@ export default async function AuthPage({ searchParams }: Props) {
     process.env.NEXTAUTH_URL ??
     'https://os.agentcommons.io'
   const returnTo = `${appUrl}/auth?callbackUrl=${encodeURIComponent(callbackUrl)}`
+  const session = await auth()
+  if (session?.user) redirect(callbackUrl)
 
   if (!oauthQuery) {
-    return (
-      <Shell>
-        <h1 className="mb-2 text-center text-2xl font-semibold">Sign in to Common<span className="text-primary">OS</span></h1>
-        <p className="mb-8 text-center text-sm text-muted-foreground">Access your fleets and agent compute.</p>
-        <form method="post" action="/api/auth/native/start">
-          <input type="hidden" name="callbackUrl" value={callbackUrl} />
-          <button className="flex w-full items-center justify-center rounded-md bg-primary px-4 py-3 font-semibold text-primary-foreground">
-            <Loader2 className="mr-2 size-4 animate-spin" /> Preparing sign in…
-          </button>
-        </form>
-        <script dangerouslySetInnerHTML={{ __html: 'document.forms[0].submit()' }} />
-      </Shell>
-    )
+    redirect(`/api/auth/native/start?callbackUrl=${encodeURIComponent(callbackUrl)}`)
   }
 
   return (
