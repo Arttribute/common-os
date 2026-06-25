@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { Box } from 'lucide-react'
 import { redirect } from 'next/navigation'
 import { auth } from '@/auth'
+import { GoogleLogo } from '@/components/auth/google-logo'
 
 type Props = {
   searchParams: Promise<Record<string, string | string[] | undefined>>
@@ -44,7 +45,7 @@ export default async function AuthPage({ searchParams }: Props) {
         className="mb-5 flex w-full items-center justify-center gap-2 rounded-md border px-4 py-3 font-semibold hover:bg-accent"
         href={`${identityUrl}/native/sign-in/google?app=common-os&oauth_query=${encodeURIComponent(oauthQuery)}&return_to=${encodeURIComponent(returnTo)}`}
       >
-        <span className="font-bold text-blue-500">G</span> Continue with Google
+        <GoogleLogo /> Continue with Google
       </a>
       <div className="mb-5 flex items-center gap-3 text-xs uppercase text-muted-foreground">
         <span className="h-px flex-1 bg-border" /> or <span className="h-px flex-1 bg-border" />
