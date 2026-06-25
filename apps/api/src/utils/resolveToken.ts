@@ -50,19 +50,53 @@ export async function verifyCommonsIdentityToken(
 ): Promise<CommonsIdentityClaims | null> {
   const issuer = process.env.COMMONS_IDENTITY_ISSUER
   const jwksUrl = process.env.COMMONS_IDENTITY_JWKS_URL
-  if (!issuer || !jwksUrl) return null
-  identityJwks ??= createRemoteJWKSet(new URL(jwksUrl))
-  try {
-    const { payload } = await jwtVerify(token, identityJwks, {
-      issuer,
-      audience: process.env.COMMONS_IDENTITY_AUDIENCE ?? 'commons-platform',
-      algorithms: ['ES256'],
-    })
-    const claims = payload as CommonsIdentityClaims
-    if (!claims.sub && claims.actor_type === 'service' && claims.azp) {
-      claims.sub = claims.azp
+  if (issuer && jwksUrl) {
+    identityJwks ??= createRemoteJWKSet(new URL(jwksUrl))
+    try {
+      const { payload } = await jwtVerify(token, identityJwks, {
+        issuer,
+        audience: process.env.COMMONS_IDENTITY_AUDIENCE ?? 'commons-platform',
+        algorithms: ['ES256'],
+      })
+      const claims = payload as CommonsIdentityClaims
+      if (!claims.sub && claims.actor_type === 'service' && claims.azp) {
+        claims.sub = claims.azp
+      }
+      if (claims.sub) return claims
+    } catch {
+      // Browser OAuth access tokens are opaque and are validated below.
     }
-    return claims.sub ? claims : null
+  }
+
+  const internalSecret = process.env.COMMONS_GATEWAY_INTERNAL_SECRET
+  if (!issuer || !internalSecret) return null
+  try {
+    const response = await fetch(
+      `${issuer.replace(/\/api\/auth\/?$/, '')}/internal/oauth-tokens/introspect`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-commons-internal-secret': internalSecret,
+        },
+        body: JSON.stringify({ token }),
+      },
+    )
+    if (!response.ok) return null
+    const result = await response.json() as {
+      active?: boolean
+      actorId?: string
+      actorType?: 'user' | 'agent' | 'service'
+      workspaceId?: string | null
+      scopes?: string[]
+    }
+    if (!result.active || !result.actorId) return null
+    return {
+      sub: result.actorId,
+      actor_type: result.actorType ?? 'user',
+      workspace_id: result.workspaceId,
+      scopes: result.scopes,
+    }
   } catch {
     return null
   }
