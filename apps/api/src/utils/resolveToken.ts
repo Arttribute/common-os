@@ -72,7 +72,7 @@ export async function verifyCommonsIdentityToken(
   if (!issuer || !internalSecret) return null
   try {
     const response = await fetch(
-      `${issuer.replace(/\/api\/auth\/?$/, '')}/internal/oauth-tokens/introspect`,
+      `${issuer.replace(/\/api\/auth\/?$/, '')}/api/platform/internal/oauth-tokens/introspect`,
       {
         method: 'POST',
         headers: {
