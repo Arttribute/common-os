@@ -9,8 +9,8 @@ export default async function AuthPage({ searchParams }: Props) {
   const params = await searchParams
   const callbackUrl =
     typeof params.callbackUrl === 'string' ? params.callbackUrl : '/dashboard'
-  const authorizeUrl =
-    typeof params.authorize_url === 'string' ? params.authorize_url : ''
+  const oauthQuery =
+    typeof params.oauth_query === 'string' ? params.oauth_query : ''
   const error = typeof params.authError === 'string' ? params.authError : ''
   const registered = params.registered === '1'
   const identityUrl =
@@ -22,7 +22,7 @@ export default async function AuthPage({ searchParams }: Props) {
     'https://os.agentcommons.io'
   const returnTo = `${appUrl}/auth?callbackUrl=${encodeURIComponent(callbackUrl)}`
 
-  if (!authorizeUrl) {
+  if (!oauthQuery) {
     return (
       <Shell>
         <h1 className="mb-2 text-center text-2xl font-semibold">Sign in to Common<span className="text-primary">OS</span></h1>
@@ -50,7 +50,7 @@ export default async function AuthPage({ searchParams }: Props) {
       {error && <p className="mb-4 text-center text-sm text-destructive">{error}</p>}
       <a
         className="mb-5 flex w-full items-center justify-center gap-2 rounded-md border px-4 py-3 font-semibold hover:bg-accent"
-        href={`${identityUrl}/native/sign-in/google?app=common-os&authorize_url=${encodeURIComponent(authorizeUrl)}&return_to=${encodeURIComponent(returnTo)}`}
+        href={`${identityUrl}/native/sign-in/google?app=common-os&oauth_query=${encodeURIComponent(oauthQuery)}&return_to=${encodeURIComponent(returnTo)}`}
       >
         <span className="font-bold text-blue-500">G</span> Continue with Google
       </a>
@@ -59,7 +59,7 @@ export default async function AuthPage({ searchParams }: Props) {
       </div>
       <form method="post" action={`${identityUrl}/native/sign-in/email`} className="space-y-4">
         <input type="hidden" name="app" value="common-os" />
-        <input type="hidden" name="authorize_url" value={authorizeUrl} />
+        <input type="hidden" name="oauth_query" value={oauthQuery} />
         <input type="hidden" name="return_to" value={returnTo} />
         <Field label="Email" name="email" type="email" autoComplete="email" />
         <Field label="Password" name="password" type="password" autoComplete="current-password" />
@@ -69,7 +69,7 @@ export default async function AuthPage({ searchParams }: Props) {
         <summary className="cursor-pointer text-center font-medium">Create an account</summary>
         <form method="post" action={`${identityUrl}/native/sign-up/email`} className="mt-4 space-y-4">
           <input type="hidden" name="app" value="common-os" />
-          <input type="hidden" name="authorize_url" value={authorizeUrl} />
+          <input type="hidden" name="oauth_query" value={oauthQuery} />
           <input type="hidden" name="return_to" value={returnTo} />
           <Field label="Name" name="name" autoComplete="name" />
           <Field label="Email" name="email" type="email" autoComplete="email" />
