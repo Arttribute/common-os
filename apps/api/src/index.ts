@@ -11,6 +11,7 @@ import { fleetsRouter } from './routes/fleets.js'
 import { agentsRouter } from './routes/agents.js'
 import { tasksRouter } from './routes/tasks.js'
 import { messagesRouter } from './routes/messages.js'
+import { computersRouter } from './routes/computers.js'
 import { eventsRouter } from './routes/events.js'
 import { agentRuntimeRouter } from './routes/agentRuntime.js'
 import { streamRouter } from './routes/stream.js'
@@ -35,6 +36,8 @@ app.route('/auth', authRouter)
 
 // All other routes require authentication
 app.use('/fleets/*', authMiddleware)
+app.use('/computers', authMiddleware)
+app.use('/computers/*', authMiddleware)
 app.use('/agents/*', authMiddleware)
 app.use('/events', authMiddleware)
 app.use('/activity/*', authMiddleware)
@@ -46,6 +49,7 @@ app.route('/fleets', messagesRouter)
 app.route('/fleets', streamRouter)
 app.route('/fleets', sessionsRouter)
 app.route('/fleets', walletsRouter)
+app.route('/computers', computersRouter)
 app.route('/agents', agentRuntimeRouter)
 app.route('/events', eventsRouter)
 app.route('/activity', activityRouter)

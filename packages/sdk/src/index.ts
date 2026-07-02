@@ -47,6 +47,39 @@ export class CommonOSClient {
 			this.patch(`/fleets/${fleetId}/agents/${agentId}`, body),
 	};
 
+	readonly computers = {
+		create: (body: {
+			fleetId?: string;
+			name?: string;
+			role?: string;
+			systemPrompt?: string;
+			permissionTier?: "manager" | "worker";
+			room?: string;
+			integrationPath?: "native" | "openclaw" | "hermes" | "guest";
+			dockerImage?: string | null;
+			image?: string | null;
+			agentCommonsId?: string;
+			[key: string]: unknown;
+		}) => this.post("/computers", body),
+		list: (query: { fleetId?: string; includeTerminated?: boolean } = {}) => {
+			const params = new URLSearchParams();
+			if (query.fleetId) params.set("fleetId", query.fleetId);
+			if (query.includeTerminated) params.set("includeTerminated", "true");
+			const qs = params.toString();
+			return this.get(`/computers${qs ? `?${qs}` : ""}`);
+		},
+		get: (computerId: string) => this.get(`/computers/${computerId}`),
+		runtimeStatus: (computerId: string) =>
+			this.get(`/computers/${computerId}/runtime-status`),
+		readFile: (computerId: string, path: string) =>
+			this.get(`/computers/${computerId}/workspace/read?path=${encodeURIComponent(path)}`),
+		instruct: (computerId: string, body: { content: string; sessionId?: string }) =>
+			this.post(`/computers/${computerId}/instructions`, body),
+		instructions: (computerId: string) =>
+			this.get(`/computers/${computerId}/instructions`),
+		terminate: (computerId: string) => this.delete(`/computers/${computerId}`),
+	};
+
 	readonly tasks = {
 		send: (fleetId: string, agentId: string, body: { description: string }) =>
 			this.post(`/fleets/${fleetId}/agents/${agentId}/task`, body),

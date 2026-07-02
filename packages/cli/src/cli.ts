@@ -272,6 +272,152 @@ agentCmd.addCommand(
 
 program.addCommand(agentCmd);
 
+// ─── computer ────────────────────────────────────────────────────────────────
+
+const computerCmd = new Command("computer").description("General computer pod commands");
+
+computerCmd.addCommand(
+  new Command("create")
+    .description("Provision a CommonOS computer pod")
+    .option("--fleet <fleet-id>", "Placement fleet ID")
+    .option("--name <name>", "Computer name", "computer")
+    .option("--prompt <prompt>", "Runtime system prompt")
+    .option("--image <image>", "Docker image URI")
+    .option("--runtime <runtime>", "Runtime: native, openclaw, hermes, or guest")
+    .option("--agent-commons-id <agent-id>", "Agent Commons agent ID to bind ownership")
+    .option("--tier <tier>", "Permission tier: manager or worker", "worker")
+    .option("--room <room>", "Room to place computer in", "dev-room")
+    .action(async (opts: {
+      fleet?: string;
+      name: string;
+      prompt?: string;
+      image?: string;
+      runtime?: "native" | "openclaw" | "hermes" | "guest";
+      agentCommonsId?: string;
+      tier: string;
+      room: string;
+    }) => {
+      const spinner = ora(`Provisioning ${opts.name}…`).start();
+      try {
+        const integrationPath = opts.runtime ?? (opts.image ? "guest" : "native");
+        if (!["native", "openclaw", "hermes", "guest"].includes(integrationPath)) {
+          throw new Error(`Unsupported runtime "${integrationPath}"`);
+        }
+        const result = await getClient().computers.create({
+          fleetId: opts.fleet,
+          name: opts.name,
+          role: opts.name,
+          systemPrompt: opts.prompt,
+          dockerImage: opts.image ?? null,
+          integrationPath,
+          permissionTier: opts.tier as "manager" | "worker",
+          room: opts.room,
+          agentCommonsId: opts.agentCommonsId,
+        });
+        const id = (result as { _id?: string })?._id ?? "";
+        spinner.succeed(chalk.green(`Computer provisioned${id ? `  ${id}` : ""}`));
+        print(result);
+      } catch (err) {
+        spinner.fail(chalk.red("Provisioning failed"));
+        console.error(err);
+        process.exit(1);
+      }
+    }),
+);
+
+computerCmd.addCommand(
+  new Command("ls")
+    .description("List computer pods")
+    .option("--fleet <fleet-id>", "Filter by placement fleet")
+    .option("--all", "Include terminated computers")
+    .action(async (opts: { fleet?: string; all?: boolean }) => {
+      print(await getClient().computers.list({
+        fleetId: opts.fleet,
+        includeTerminated: Boolean(opts.all),
+      }));
+    }),
+);
+
+computerCmd.addCommand(
+  new Command("status")
+    .description("Show computer status")
+    .argument("<computer-id>", "Computer ID")
+    .action(async (computerId: string) => {
+      print(await getClient().computers.get(computerId));
+    }),
+);
+
+computerCmd.addCommand(
+  new Command("runtime")
+    .description("Show runtime diagnostics for a computer")
+    .argument("<computer-id>", "Computer ID")
+    .action(async (computerId: string) => {
+      print(await getClient().computers.runtimeStatus(computerId));
+    }),
+);
+
+computerCmd.addCommand(
+  new Command("read")
+    .description("Read a workspace file from a computer")
+    .argument("<computer-id>", "Computer ID")
+    .argument("<path>", "Workspace path")
+    .action(async (computerId: string, path: string) => {
+      print(await getClient().computers.readFile(computerId, path));
+    }),
+);
+
+computerCmd.addCommand(
+  new Command("instruct")
+    .description("Send a runtime instruction to a computer")
+    .argument("<computer-id>", "Computer ID")
+    .argument("<content>", "Instruction content")
+    .option("--session <session-id>", "Runtime session ID")
+    .action(async (computerId: string, content: string, opts: { session?: string }) => {
+      const spinner = ora("Sending instruction…").start();
+      try {
+        const result = await getClient().computers.instruct(computerId, {
+          content,
+          sessionId: opts.session,
+        });
+        spinner.succeed(chalk.green("Instruction queued"));
+        print(result);
+      } catch (err) {
+        spinner.fail(chalk.red("Instruction failed"));
+        console.error(err);
+        process.exit(1);
+      }
+    }),
+);
+
+computerCmd.addCommand(
+  new Command("instructions")
+    .description("List recent computer instructions")
+    .argument("<computer-id>", "Computer ID")
+    .action(async (computerId: string) => {
+      print(await getClient().computers.instructions(computerId));
+    }),
+);
+
+computerCmd.addCommand(
+  new Command("terminate")
+    .description("Terminate a computer pod")
+    .argument("<computer-id>", "Computer ID")
+    .action(async (computerId: string) => {
+      const spinner = ora("Terminating computer…").start();
+      try {
+        const result = await getClient().computers.terminate(computerId);
+        spinner.succeed(chalk.yellow("Computer terminated"));
+        print(result);
+      } catch (err) {
+        spinner.fail(chalk.red("Termination failed"));
+        console.error(err);
+        process.exit(1);
+      }
+    }),
+);
+
+program.addCommand(computerCmd);
+
 // ─── task ───────────────────────────────────────────────────────────────────
 
 const taskCmd = new Command("task").description("Task management commands");
