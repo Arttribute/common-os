@@ -54,6 +54,31 @@ export interface LaunchedService {
 	sessionId: string;
 }
 
+function k8sLabelValue(value: string): string {
+	const raw = value || "unknown";
+	const sanitized = raw
+		.trim()
+		.replace(/[^A-Za-z0-9_.-]+/g, "-")
+		.replace(/^[^A-Za-z0-9]+/, "")
+		.replace(/[^A-Za-z0-9]+$/, "");
+	if (sanitized && sanitized.length <= 63) return sanitized;
+
+	const hash = createHash("sha256").update(raw).digest("hex").slice(0, 10);
+	const prefix = sanitized
+		.slice(0, 52)
+		.replace(/[^A-Za-z0-9]+$/, "");
+	return prefix ? `${prefix}-${hash}` : `value-${hash}`;
+}
+
+function commonK8sLabels(opts: Pick<LaunchOptions, "agentId" | "fleetId" | "tenantId">): Record<string, string> {
+	return {
+		"managed-by": "common-os",
+		"agent-id": k8sLabelValue(opts.agentId),
+		"fleet-id": k8sLabelValue(opts.fleetId),
+		"tenant-id": k8sLabelValue(opts.tenantId),
+	};
+}
+
 function commonRuntimeEnv(opts: LaunchOptions, imageUrl: string): k8s.V1EnvVar[] {
 	const openclawConfigJson = JSON.stringify(buildOpenClawGatewayConfig(opts));
 	const openclawModel = openClawModelId(opts);
@@ -602,7 +627,7 @@ async function agentPodName(kc: k8s.KubeConfig, namespace: string, agentId: stri
 	const coreApi = kc.makeApiClient(k8s.CoreV1Api);
 	const pods = await coreApi.listNamespacedPod({
 		namespace,
-		labelSelector: `agent-id=${agentId}`,
+		labelSelector: `agent-id=${k8sLabelValue(agentId)}`,
 	});
 	const pod = pods.items.find((item) => item.status?.phase !== "Succeeded" && item.status?.phase !== "Failed")
 		?? pods.items[0];
@@ -809,12 +834,7 @@ export async function launchAgentPod(
 
 	// Namespace per agent — provides isolation boundary
 	console.log(`[cloud-init] creating namespace ${namespace}...`);
-	await ensureNamespaceWithRetry(projectId, region, clusterName, namespace, {
-		"managed-by": "common-os",
-		"agent-id": opts.agentId,
-		"fleet-id": opts.fleetId,
-		"tenant-id": opts.tenantId,
-	});
+	await ensureNamespaceWithRetry(projectId, region, clusterName, namespace, commonK8sLabels(opts));
 	console.log(`[cloud-init] namespace ready, creating pod ${podName} with image ${imageUrl}...`);
 
 	const envVars = commonRuntimeEnv(opts, imageUrl);
@@ -846,7 +866,7 @@ export async function launchAgentPod(
 			namespace,
 			labels: {
 				"managed-by": "common-os",
-				"agent-id": opts.agentId,
+				"agent-id": k8sLabelValue(opts.agentId),
 			},
 			annotations: {
 				"common-os/agent-image": imageUrl,
@@ -1053,12 +1073,7 @@ export async function launchAgentPodEks(opts: LaunchOptions): Promise<LaunchedSe
 			body: {
 				metadata: {
 					name: namespace,
-					labels: {
-						"managed-by": "common-os",
-						"agent-id":   opts.agentId,
-						"fleet-id":   opts.fleetId,
-						"tenant-id":  opts.tenantId,
-					},
+					labels: commonK8sLabels(opts),
 				},
 			},
 		});
@@ -1106,7 +1121,7 @@ export async function launchAgentPodEks(opts: LaunchOptions): Promise<LaunchedSe
 			metadata: {
 				name: podName,
 				namespace,
-				labels: { "managed-by": "common-os", "agent-id": opts.agentId },
+				labels: { "managed-by": "common-os", "agent-id": k8sLabelValue(opts.agentId) },
 				annotations: { "common-os/agent-image": imageUrl },
 			},
 			spec: {
