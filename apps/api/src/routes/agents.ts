@@ -59,7 +59,8 @@ router.post("/:id/agents", async (c) => {
 	if (body.agentCommonsId) {
 		const agcUrl = (process.env.AGC_API_URL ?? "https://api.agentcommons.io").replace(/\/$/, "");
 		const serviceToken = await agentCommonsServiceToken();
-		if (!serviceToken || !c.get("userId")) {
+		const trustedServiceCaller = c.get("authType") === "service";
+		if (!serviceToken || (!trustedServiceCaller && !c.get("userId"))) {
 			return c.json({ error: "Could not verify Agent Commons ownership" }, 503);
 		}
 		const verifyResponse = await fetch(
@@ -78,10 +79,11 @@ router.post("/:id/agents", async (c) => {
 			workspaceId?: string;
 		};
 		if (
-			agent.ownerUserId !== c.get("userId") ||
-			(c.get("workspaceId") &&
-				agent.workspaceId &&
-				agent.workspaceId !== c.get("workspaceId"))
+			!trustedServiceCaller &&
+			(agent.ownerUserId !== c.get("userId") ||
+				(c.get("workspaceId") &&
+					agent.workspaceId &&
+					agent.workspaceId !== c.get("workspaceId")))
 		) {
 			return c.json(
 				{ error: "Agent Commons agent was not found or is not owned by this Commons account" },

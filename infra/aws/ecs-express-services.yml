@@ -102,6 +102,8 @@ Resources:
             ValueFrom: !Sub "${RuntimeSecretArn}:AGENTCOMMONS_SERVICE_CLIENT_ID::"
           - Name: AGENTCOMMONS_SERVICE_CLIENT_SECRET
             ValueFrom: !Sub "${RuntimeSecretArn}:AGENTCOMMONS_SERVICE_CLIENT_SECRET::"
+          - Name: COMMON_OS_SERVICE_TOKEN
+            ValueFrom: !Sub "${RuntimeSecretArn}:COMMON_OS_SERVICE_TOKEN::"
       ScalingTarget:
         MinTaskCount: 1
         MaxTaskCount: 4
