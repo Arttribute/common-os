@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { randomBytes } from "crypto";
-import { agents, agentSessions, fleets, humanMessages } from "../db/mongo.js";
+import { agents, fleets, humanMessages } from "../db/mongo.js";
 import { enqueueHumanMessage, broadcastToFleet } from "../db/memory.js";
 import {
 	agentCommonsServiceToken,
@@ -13,7 +13,10 @@ import {
 	terminateAgentPodEks,
 	WorkspaceReadError,
 } from "../services/cloud-init.js";
-import { ensureDefaultRuntimeSession } from "../services/runtimeSessions.js";
+import {
+	ensureDefaultRuntimeSession,
+	ensureRuntimeSessionForAgcSession,
+} from "../services/runtimeSessions.js";
 import { removeAgentFromWorldState } from "../services/world.js";
 import type { Env, HumanMessageDoc } from "../types.js";
 import { publicAgent } from "../utils/public-agent.js";
@@ -263,11 +266,9 @@ router.post("/:computerId/instructions", async (c) => {
 
 		let sessionId: string | null = body.sessionId ?? null;
 		if (sessionId) {
-			const sess = await (await agentSessions()).findOne({
-				agentId: computer._id,
-				$or: [{ _id: sessionId }, { agcSessionId: sessionId }],
-			}).lean();
-			if (!sess) return c.json({ error: "session not found" }, 404);
+			const sess = await ensureRuntimeSessionForAgcSession(computer, sessionId, {
+				title: "Agent Commons computer session",
+			});
 			sessionId = sess._id as string;
 		} else {
 			const session = await ensureDefaultRuntimeSession(computer);

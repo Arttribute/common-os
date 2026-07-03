@@ -81,6 +81,62 @@ export async function createRuntimeSession(
   return doc
 }
 
+export async function ensureRuntimeSessionForAgcSession(
+  agent: AgentDoc,
+  agcSessionId: string | null | undefined,
+  opts: { title?: string; source?: 'human' | 'axl'; isDefault?: boolean } = {},
+): Promise<AgentSessionDoc> {
+  const externalId = agcSessionId?.trim()
+  if (!externalId) return ensureDefaultRuntimeSession(agent)
+
+  const col = await agentSessions()
+  const existing = await col.findOne({
+    agentId: agent._id,
+    $or: [{ _id: externalId }, { agcSessionId: externalId }],
+  }).lean()
+
+  if (existing) {
+    const patch: Record<string, unknown> = {}
+    if (!existing.agcSessionId) patch.agcSessionId = externalId
+    if (opts.isDefault !== undefined && existing.isDefault !== opts.isDefault) {
+      patch.isDefault = opts.isDefault
+    }
+    if (Object.keys(patch).length) {
+      await col.updateOne({ _id: existing._id }, { $set: patch })
+      return { ...existing, ...patch } as AgentSessionDoc
+    }
+    return existing as AgentSessionDoc
+  }
+
+  const now = new Date()
+  const doc: AgentSessionDoc = {
+    _id: externalId,
+    agentId: agent._id,
+    fleetId: agent.fleetId,
+    tenantId: agent.tenantId,
+    agcSessionId: externalId,
+    title: opts.title?.trim() || sessionTitle('Agent Commons'),
+    source: opts.source ?? 'human',
+    isDefault: opts.isDefault ?? false,
+    messageCount: 0,
+    lastMessageAt: null,
+    createdAt: now,
+  }
+
+  try {
+    await col.create(doc as never)
+    return doc
+  } catch (error: any) {
+    if (error?.code !== 11000) throw error
+    const raced = await col.findOne({
+      agentId: agent._id,
+      $or: [{ _id: externalId }, { agcSessionId: externalId }],
+    }).lean()
+    if (raced) return raced as AgentSessionDoc
+    throw error
+  }
+}
+
 export async function ensureDefaultRuntimeSession(agent: AgentDoc): Promise<AgentSessionDoc> {
   const col = await agentSessions()
   const existing = await col.findOne({ agentId: agent._id, source: 'human', isDefault: true }).lean()

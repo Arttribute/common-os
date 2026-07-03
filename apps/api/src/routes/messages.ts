@@ -1,8 +1,11 @@
 import { Hono } from 'hono'
 import { randomBytes } from 'crypto'
-import { agents, agentSessions, humanMessages } from '../db/mongo.js'
+import { agents, humanMessages } from '../db/mongo.js'
 import { enqueueHumanMessage, broadcastToFleet } from '../db/memory.js'
-import { ensureDefaultRuntimeSession } from '../services/runtimeSessions.js'
+import {
+  ensureDefaultRuntimeSession,
+  ensureRuntimeSessionForAgcSession,
+} from '../services/runtimeSessions.js'
 import type { Env, HumanMessageDoc } from '../types.js'
 
 function normalizeMention(value: string): string {
@@ -101,11 +104,9 @@ router.post('/:id/agents/:agentId/human-message', async (c) => {
     // Resolve or find the target session — auto-create if none exists
     let sessionId: string | null = body.sessionId ?? null
     if (sessionId) {
-      const sess = await (await agentSessions()).findOne({
-        agentId,
-        $or: [{ _id: sessionId }, { agcSessionId: sessionId }],
-      }).lean()
-      if (!sess) return c.json({ error: 'session not found' }, 404)
+      const sess = await ensureRuntimeSessionForAgcSession(agent, sessionId, {
+        title: 'Agent Commons session',
+      })
       sessionId = sess._id as string
     } else {
       const session = await ensureDefaultRuntimeSession(agent)
