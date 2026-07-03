@@ -7,6 +7,7 @@ import {
   ensureRuntimeSessionForAgcSession,
 } from '../services/runtimeSessions.js'
 import type { Env, HumanMessageDoc } from '../types.js'
+import { tenantScopedQuery } from '../utils/tenant-scope.js'
 
 function normalizeMention(value: string): string {
   return value.toLowerCase().trim().replace(/^@/, '').replace(/[-_]+/g, ' ').replace(/\s+/g, ' ')
@@ -76,10 +77,9 @@ router.post('/:id/agents/:agentId/human-message', async (c) => {
 
   const agentId = c.req.param('agentId')
   const fleetId = c.req.param('id')
-  const tenantId = c.get('tenantId')
 
   try {
-    const agent = await (await agents()).findOne({ _id: agentId, fleetId, tenantId }).lean()
+    const agent = await (await agents()).findOne(tenantScopedQuery(c, { _id: agentId, fleetId })).lean()
     if (!agent) return c.json({ error: 'agent not found' }, 404)
 
     let axlTargetAgentId: string | null = null
@@ -89,7 +89,7 @@ router.post('/:id/agents/:agentId/human-message', async (c) => {
         const target = await resolveMentionTarget(body.content, {
           agentId,
           fleetId,
-          tenantId,
+          tenantId: agent.tenantId,
           explicitTargetAgentId: body.axlTargetAgentId,
         })
         axlTargetAgentId = target?.agentId ?? null
@@ -120,7 +120,7 @@ router.post('/:id/agents/:agentId/human-message', async (c) => {
       _id: msgId,
       agentId,
       fleetId,
-      tenantId,
+      tenantId: agent.tenantId,
       sessionId,
       content: body.content,
       status: 'pending',
@@ -166,7 +166,7 @@ router.get('/:id/agents/:agentId/human-messages', async (c) => {
       .find({
         agentId: c.req.param('agentId'),
         fleetId: c.req.param('id'),
-        tenantId: c.get('tenantId'),
+        ...tenantScopedQuery(c, {}),
       })
       .sort({ createdAt: -1 })
       .limit(50)

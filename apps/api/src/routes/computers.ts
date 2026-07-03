@@ -20,6 +20,7 @@ import {
 import { removeAgentFromWorldState } from "../services/world.js";
 import type { Env, HumanMessageDoc } from "../types.js";
 import { publicAgent } from "../utils/public-agent.js";
+import { tenantScopedQuery } from "../utils/tenant-scope.js";
 
 const router = new Hono<Env>();
 
@@ -74,10 +75,9 @@ async function verifyAgentCommonsOwnership(
 }
 
 async function getComputer(c: any) {
-	return (await agents()).findOne({
+	return (await agents()).findOne(tenantScopedQuery(c, {
 		_id: c.req.param("computerId"),
-		tenantId: c.get("tenantId"),
-	}).lean();
+	})).lean();
 }
 
 // POST /computers - deploy a general-purpose computer pod.
@@ -123,10 +123,9 @@ router.post("/", async (c) => {
 		return c.json({ error: "fleetId is required unless COMMONOS_COMPUTER_FLEET_ID is configured" }, 400);
 	}
 
-	const fleet = await (await fleets()).findOne({
+	const fleet = await (await fleets()).findOne(tenantScopedQuery(c, {
 		_id: fleetId,
-		tenantId: c.get("tenantId"),
-	}).lean();
+	})).lean();
 	if (!fleet) return c.json({ error: "computer placement fleet not found" }, 404);
 
 	const ownershipError = await verifyAgentCommonsOwnership(c, body.agentCommonsId);
@@ -134,9 +133,10 @@ router.post("/", async (c) => {
 
 	const role = body.role ?? body.name ?? "computer";
 	try {
+		const tenantId = c.get("authType") === "service" ? fleet.tenantId : c.get("tenantId");
 		const computer = await provisionAgent({
 			fleetId,
-			tenantId: c.get("tenantId"),
+			tenantId,
 			userId: c.get("userId"),
 			workspaceId: c.get("workspaceId"),
 			existingCommonsAgentId: body.agentCommonsId,
@@ -187,7 +187,7 @@ router.get("/", async (c) => {
 	try {
 		const fleetId = c.req.query("fleetId");
 		const includeTerminated = c.req.query("includeTerminated") === "true";
-		const query: Record<string, unknown> = { tenantId: c.get("tenantId") };
+		const query: Record<string, unknown> = tenantScopedQuery(c, {});
 		if (fleetId) query.fleetId = fleetId;
 		if (!includeTerminated) query.status = { $ne: "terminated" };
 		const list = await (await agents())
@@ -281,7 +281,7 @@ router.post("/:computerId/instructions", async (c) => {
 			_id: msgId,
 			agentId: computer._id,
 			fleetId: computer.fleetId,
-			tenantId: c.get("tenantId"),
+			tenantId: computer.tenantId,
 			sessionId,
 			content: body.content,
 			status: "pending",
@@ -328,7 +328,7 @@ router.get("/:computerId/instructions", async (c) => {
 			.find({
 				agentId: computer._id,
 				fleetId: computer.fleetId,
-				tenantId: c.get("tenantId"),
+				tenantId: computer.tenantId,
 			})
 			.sort({ createdAt: -1 })
 			.limit(50)
