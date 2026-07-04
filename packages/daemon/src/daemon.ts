@@ -41,7 +41,7 @@ const AXL_API_URL    = process.env.AXL_API_URL ?? "http://localhost:9002";
 const AXL_LISTEN_PORT = process.env.AXL_LISTEN_PORT ?? "9001";
 const AXL_MODE = (process.env.AXL_MODE ?? "explicit").toLowerCase();
 const ETH_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
-const DAEMON_RUNTIME = "common-os-daemon/agc-direct-stream-v11-managed-computer-processes";
+const DAEMON_RUNTIME = "common-os-daemon/agc-direct-stream-v12-managed-process-segments";
 const AGENT_IMAGE    = process.env.COMMONOS_AGENT_IMAGE ?? "";
 const COMMIT_SHA     = process.env.COMMONOS_COMMIT_SHA ?? "";
 
@@ -2048,11 +2048,20 @@ function normalizeInstructionCwd(cwd: string): string {
 }
 
 function shouldStartManagedProcess(command: string): boolean {
-  return /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?dev\b/i.test(command)
-    || /\b(?:next|vite|astro|nuxt)\s+dev\b/i.test(command)
-    || /\b(?:npm|pnpm|yarn|bun)\s+start\b/i.test(command)
-    || /\bpython3?\s+-m\s+http\.server\b/i.test(command)
-    || /\b(?:uvicorn|gunicorn|flask\s+run|rails\s+(?:server|s))\b/i.test(command);
+  const segment = lastShellSegment(command);
+  return /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?dev\b/i.test(segment)
+    || /\b(?:next|vite|astro|nuxt)\s+dev\b/i.test(segment)
+    || /\b(?:npm|pnpm|yarn|bun)\s+start\b/i.test(segment)
+    || /\bpython3?\s+-m\s+http\.server\b/i.test(segment)
+    || /\b(?:uvicorn|gunicorn|flask\s+run|rails\s+(?:server|s))\b/i.test(segment);
+}
+
+function lastShellSegment(command: string): string {
+  const parts = command
+    .split(/\s*(?:&&|\|\||;|\n)\s*/g)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return parts.at(-1) ?? command;
 }
 
 function shouldContinueAutonomously(description: string, response: string, toolCallCount: number): boolean {
