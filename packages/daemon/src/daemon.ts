@@ -41,7 +41,7 @@ const AXL_API_URL    = process.env.AXL_API_URL ?? "http://localhost:9002";
 const AXL_LISTEN_PORT = process.env.AXL_LISTEN_PORT ?? "9001";
 const AXL_MODE = (process.env.AXL_MODE ?? "explicit").toLowerCase();
 const ETH_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
-const DAEMON_RUNTIME = "common-os-daemon/agc-direct-stream-v10-direct-computer-tools";
+const DAEMON_RUNTIME = "common-os-daemon/agc-direct-stream-v11-managed-computer-processes";
 const AGENT_IMAGE    = process.env.COMMONOS_AGENT_IMAGE ?? "";
 const COMMIT_SHA     = process.env.COMMONOS_COMMIT_SHA ?? "";
 
@@ -1948,24 +1948,35 @@ async function maybeRunDirectComputerInstruction(
   if (!instruction) return null;
 
   if (instruction.kind === "terminal_command") {
-    await hooks?.onStatus?.("running_terminal_command").catch(() => {});
-    await hooks?.onToolCall?.("cli_run_command").catch(() => {});
+    const startAsProcess = shouldStartManagedProcess(instruction.command);
+    await hooks?.onStatus?.(startAsProcess ? "starting_terminal_process" : "running_terminal_command").catch(() => {});
+    await hooks?.onToolCall?.(startAsProcess ? "cli_start_process" : "cli_run_command").catch(() => {});
     const startedAt = Date.now();
     let output: string;
     try {
-      output = await executeLocalTool("run_command", {
-        command: "sh",
-        args: ["-lc", instruction.command],
-        cwd: instruction.cwd,
-        timeout_seconds: instruction.timeoutSeconds,
-      });
+      output = startAsProcess
+        ? await executeLocalTool("start_process", {
+            id: `cmd_${Date.now().toString(36)}`,
+            command: "sh",
+            args: ["-lc", instruction.command],
+            cwd: instruction.cwd,
+            wait_seconds: 10,
+          })
+        : await executeLocalTool("run_command", {
+            command: "sh",
+            args: ["-lc", instruction.command],
+            cwd: instruction.cwd,
+            timeout_seconds: instruction.timeoutSeconds,
+          });
     } catch (err) {
       output = `Error: ${err instanceof Error ? err.message : String(err)}`;
     }
-    await hooks?.onStatus?.("terminal_command_completed").catch(() => {});
+    await hooks?.onStatus?.(startAsProcess ? "terminal_process_started" : "terminal_command_completed").catch(() => {});
     return {
       response: [
-        "Command executed on the selected agent computer.",
+        startAsProcess
+          ? "Long-running command started on the selected agent computer."
+          : "Command executed on the selected agent computer.",
         `cwd: ${instruction.cwd}`,
         `duration_ms: ${Date.now() - startedAt}`,
         "",
@@ -2034,6 +2045,14 @@ function normalizeInstructionCwd(cwd: string): string {
   if (value.startsWith(`${WORKSPACE_DIR}/`)) return relative(WORKSPACE_DIR, value) || ".";
   if (value.startsWith("/mnt/shared/")) return value.slice("/mnt/shared/".length) || ".";
   return value;
+}
+
+function shouldStartManagedProcess(command: string): boolean {
+  return /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?dev\b/i.test(command)
+    || /\b(?:next|vite|astro|nuxt)\s+dev\b/i.test(command)
+    || /\b(?:npm|pnpm|yarn|bun)\s+start\b/i.test(command)
+    || /\bpython3?\s+-m\s+http\.server\b/i.test(command)
+    || /\b(?:uvicorn|gunicorn|flask\s+run|rails\s+(?:server|s))\b/i.test(command);
 }
 
 function shouldContinueAutonomously(description: string, response: string, toolCallCount: number): boolean {
