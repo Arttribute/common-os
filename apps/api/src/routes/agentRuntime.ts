@@ -10,6 +10,20 @@ import type { AgentDoc, Env, HumanMessageDoc } from '../types.js'
 const AGC_BASE_URL = (process.env.AGC_API_URL ?? 'https://api.agentcommons.io').replace(/\/$/, '')
 const AGC_INITIATOR = process.env.AGC_INITIATOR ?? process.env.AGENTCOMMONS_INITIATOR ?? null
 const MESSAGE_RECLAIM_MS = Number(process.env.MESSAGE_RECLAIM_MS ?? 3 * 60_000)
+const AGC_SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function agentCommonsSessionIdFromDoc(
+  session: { _id?: unknown; agcSessionId?: unknown } | null | undefined,
+): string | null {
+  if (!session) return null
+  if (typeof session.agcSessionId === 'string' && session.agcSessionId.trim()) {
+    return session.agcSessionId
+  }
+  if (typeof session._id === 'string' && AGC_SESSION_ID_RE.test(session._id)) {
+    return session._id
+  }
+  return null
+}
 
 async function createAgcSession(commonsAgentId: string, title: string): Promise<string | null> {
   const apiKey = process.env.AGENTCOMMONS_API_KEY
@@ -87,7 +101,7 @@ async function resolveAgcSessionId(agentId: string, sessionId: string | null | u
       { agentId, $or: [{ _id: sessionId }, { agcSessionId: sessionId }] },
       { _id: 1, agcSessionId: 1 },
     ).lean()
-    return sess?.agcSessionId ?? null
+    return agentCommonsSessionIdFromDoc(sess)
   } catch {
     return null
   }
@@ -855,7 +869,7 @@ router.get('/:agentId/session/current', async (c) => {
 
   try {
     const sess = await (await agentSessions()).findOne({ agentId, isDefault: true }).lean()
-    return c.json({ agcSessionId: sess?.agcSessionId ?? sess?._id ?? null })
+    return c.json({ agcSessionId: agentCommonsSessionIdFromDoc(sess) })
   } catch {
     return c.json({ error: 'database error' }, 503)
   }

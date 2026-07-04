@@ -247,10 +247,8 @@ function agcEnv(): NodeJS.ProcessEnv {
 }
 
 // ─── Session management ────────────────────────────────────────────────────
-// One persistent AGC session per agent. The session ID is cached in the
-// workspace and recovered from the control plane when ephemeral pod storage is
-// lost. All messages and tasks share this session, giving the agent continuous
-// conversational memory.
+// Fallback AGC session for standalone CommonOS work. Agent Commons-originated
+// messages carry their own agcSessionId and must not overwrite this value.
 
 const SESSION_FILE = join(WORKSPACE_DIR, ".common-os-session.json");
 
@@ -2774,6 +2772,7 @@ async function runViaNative(
   hooks?: MessageRunHooks,
   retryOnEmpty = true,
 ): Promise<{ response: string; agcSessionId?: string; axlToolCalled: boolean; toolCallCount: number }> {
+  const hasScopedSession = Boolean(agcSessionId);
   const sessionIdToUse = agcSessionId ?? agentSessionId;
   const agentId = config.commonsAgentId || config.agentId;
   const prompt = buildRunPrompt(description, messages, routing);
@@ -2881,21 +2880,25 @@ async function runViaNative(
     if (done) break;
   }
 
-  if (observedSessionId && observedSessionId !== agentSessionId) {
+  if (observedSessionId && !hasScopedSession && observedSessionId !== agentSessionId) {
     agentSessionId = observedSessionId;
     try {
       writeFileSync(SESSION_FILE, JSON.stringify({ sessionId: observedSessionId, agentId: config.commonsAgentId }));
     } catch {}
     void registerSessionWithApi().catch(() => {});
     console.log(`[daemon] session persisted: ${observedSessionId}`);
+  } else if (observedSessionId && hasScopedSession && observedSessionId !== agcSessionId) {
+    console.warn(
+      `[daemon] scoped AGC session changed during run  requested=${agcSessionId?.slice(0, 12)}… observed=${observedSessionId.slice(0, 12)}…`,
+    );
   }
   if (observedUsage) await emitTokenUsage(observedUsage);
 
   const response = cleanAgcOutput(finalText ?? output);
   if (!response.trim() && toolRequestCount === 0 && retryOnEmpty) {
-    clearAgentCommonsSession("empty AGC stream with no tool calls");
+    if (!hasScopedSession) clearAgentCommonsSession("empty AGC stream with no tool calls");
     await hooks?.onStatus?.("retrying_agent_commons_session").catch(() => {});
-    return await runViaNative(description, undefined, [], routing, hooks, false);
+    return await runViaNative(description, hasScopedSession ? agcSessionId : undefined, [], routing, hooks, false);
   }
   console.log(
     `[daemon] agc stream done  runtime=${DAEMON_RUNTIME}  length=${response.length}  tools=${toolRequestCount}  axl=${axlToolCalled}  session=${observedSessionId?.slice(0, 12) ?? "none"}`,
@@ -2904,7 +2907,11 @@ async function runViaNative(
     response,
     axlToolCalled,
     toolCallCount: toolRequestCount,
-    ...(observedSessionId ? { agcSessionId: observedSessionId } : {}),
+    ...(hasScopedSession
+      ? { agcSessionId }
+      : observedSessionId
+        ? { agcSessionId: observedSessionId }
+        : {}),
   };
 }
 
