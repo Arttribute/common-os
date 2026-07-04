@@ -41,7 +41,7 @@ const AXL_API_URL    = process.env.AXL_API_URL ?? "http://localhost:9002";
 const AXL_LISTEN_PORT = process.env.AXL_LISTEN_PORT ?? "9001";
 const AXL_MODE = (process.env.AXL_MODE ?? "explicit").toLowerCase();
 const ETH_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
-const DAEMON_RUNTIME = "common-os-daemon/agc-direct-stream-v9-explicit-axl";
+const DAEMON_RUNTIME = "common-os-daemon/agc-direct-stream-v10-direct-computer-tools";
 const AGENT_IMAGE    = process.env.COMMONOS_AGENT_IMAGE ?? "";
 const COMMIT_SHA     = process.env.COMMONOS_COMMIT_SHA ?? "";
 
@@ -1751,6 +1751,10 @@ interface MessageRunHooks {
   onToolCall?: (tool: string) => Promise<void>;
 }
 
+type DirectComputerInstruction =
+  | { kind: "terminal_command"; command: string; cwd: string; timeoutSeconds: number }
+  | { kind: "browser_open"; url: string };
+
 async function postMessageEvent(msgId: string, payload: MessageEventPayload): Promise<void> {
   const res = await fetch(
     `${config.apiUrl}/agents/${config.agentId}/messages/${msgId}/event`,
@@ -1905,6 +1909,9 @@ async function executeTask(
   if (config.integrationPath === "openclaw") return await runViaOpenClaw(description, messages, hooks);
   if (config.integrationPath === "hermes") return await runViaHermes(description, messages, hooks);
   if (config.integrationPath === "native") {
+    const directResult = await maybeRunDirectComputerInstruction(description, agcSessionId, hooks);
+    if (directResult) return directResult;
+
     let result = await runViaNative(description, agcSessionId, messages, routing, hooks);
 
     if (shouldContinueAutonomously(description, result.response, result.toolCallCount)) {
@@ -1930,6 +1937,103 @@ async function executeTask(
     };
   }
   throw new Error("guest runtime execution is handled by the tenant image");
+}
+
+async function maybeRunDirectComputerInstruction(
+  description: string,
+  agcSessionId?: string,
+  hooks?: MessageRunHooks,
+): Promise<{ response: string; agcSessionId?: string } | null> {
+  const instruction = parseDirectComputerInstruction(description);
+  if (!instruction) return null;
+
+  if (instruction.kind === "terminal_command") {
+    await hooks?.onStatus?.("running_terminal_command").catch(() => {});
+    await hooks?.onToolCall?.("cli_run_command").catch(() => {});
+    const startedAt = Date.now();
+    let output: string;
+    try {
+      output = await executeLocalTool("run_command", {
+        command: "sh",
+        args: ["-lc", instruction.command],
+        cwd: instruction.cwd,
+        timeout_seconds: instruction.timeoutSeconds,
+      });
+    } catch (err) {
+      output = `Error: ${err instanceof Error ? err.message : String(err)}`;
+    }
+    await hooks?.onStatus?.("terminal_command_completed").catch(() => {});
+    return {
+      response: [
+        "Command executed on the selected agent computer.",
+        `cwd: ${instruction.cwd}`,
+        `duration_ms: ${Date.now() - startedAt}`,
+        "",
+        "```text",
+        output.trim() || "(no output)",
+        "```",
+      ].join("\n"),
+      ...(agcSessionId ? { agcSessionId } : {}),
+    };
+  }
+
+  await hooks?.onStatus?.("opening_browser").catch(() => {});
+  const results: string[] = [];
+  try {
+    await hooks?.onToolCall?.("cli_browser_open").catch(() => {});
+    results.push(await executeLocalTool("browser_open", { url: instruction.url }));
+    await hooks?.onToolCall?.("cli_browser_wait").catch(() => {});
+    results.push(await executeLocalTool("browser_wait", { timeout_seconds: 30 }));
+  } catch (err) {
+    results.push(`Error: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  await hooks?.onStatus?.("browser_open_completed").catch(() => {});
+  return {
+    response: [
+      "Browser action completed on the selected agent computer.",
+      "",
+      "```text",
+      results.join("\n\n").trim() || "(no output)",
+      "```",
+    ].join("\n"),
+    ...(agcSessionId ? { agcSessionId } : {}),
+  };
+}
+
+function parseDirectComputerInstruction(description: string): DirectComputerInstruction | null {
+  const normalized = description.replace(/\r\n/g, "\n").trim();
+  return parseTerminalComputerInstruction(normalized) ?? parseBrowserComputerInstruction(normalized);
+}
+
+function parseTerminalComputerInstruction(description: string): DirectComputerInstruction | null {
+  if (!description.startsWith("Use the CommonOS pod terminal for this computer.")) return null;
+
+  const cwd = normalizeInstructionCwd(description.match(/^Working directory:\s*(.+)$/m)?.[1] ?? ".");
+  const timeoutSeconds = boundedSeconds(description.match(/^Timeout seconds:\s*(.+)$/m)?.[1], 120, 600);
+  const command = description.match(/```(?:sh|bash|shell)?\n([\s\S]*?)\n```/i)?.[1]?.trim();
+  if (!command) return null;
+
+  return { kind: "terminal_command", command, cwd, timeoutSeconds };
+}
+
+function parseBrowserComputerInstruction(description: string): DirectComputerInstruction | null {
+  if (!description.startsWith("Use this computer browser.")) return null;
+  const openLine = description
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.startsWith("Open "));
+  if (!openLine) return null;
+  const url = openLine.slice("Open ".length).replace(/\.$/, "").trim();
+  if (!/^https?:\/\//i.test(url)) return null;
+  return { kind: "browser_open", url };
+}
+
+function normalizeInstructionCwd(cwd: string): string {
+  const value = cwd.trim();
+  if (!value || value === "." || value === WORKSPACE_DIR || value === "/mnt/shared") return ".";
+  if (value.startsWith(`${WORKSPACE_DIR}/`)) return relative(WORKSPACE_DIR, value) || ".";
+  if (value.startsWith("/mnt/shared/")) return value.slice("/mnt/shared/".length) || ".";
+  return value;
 }
 
 function shouldContinueAutonomously(description: string, response: string, toolCallCount: number): boolean {
