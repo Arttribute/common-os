@@ -393,11 +393,31 @@ export async function launchCloudInstance(
 		console.error(`[provisioner] cloud launch failed for ${agentDoc._id}:`, err);
 		const now = new Date();
 		const errorMessage = err instanceof Error ? err.message : String(err);
+		const current = agentDoc.kind === "computer"
+			? await (await agents()).findOne({ _id: agentDoc._id, kind: "computer" }).lean()
+			: null;
+		const intervals = [...(current?.compute?.activeIntervals ?? [])];
+		const activeInterval = intervals.at(-1);
+		if (activeInterval && !activeInterval.endedAt) activeInterval.endedAt = now;
+		const activeStartedAt = current?.compute?.currentActiveStartedAt;
+		const elapsed = activeStartedAt
+			? Math.max(0, now.getTime() - new Date(activeStartedAt).getTime())
+			: 0;
 		await (await agents()).updateOne(
 			{ _id: agentDoc._id },
 			{
 				$set: {
 					status: "failed",
+					...(agentDoc.kind === "computer"
+						? {
+								desiredState: "stopped",
+								"compute.suspendedAt": now,
+								"compute.currentActiveStartedAt": null,
+								"compute.accumulatedActiveMs":
+									(current?.compute?.accumulatedActiveMs ?? 0) + elapsed,
+								"compute.activeIntervals": intervals,
+							}
+						: {}),
 					"pod.lastError": errorMessage,
 					updatedAt: now,
 				},
