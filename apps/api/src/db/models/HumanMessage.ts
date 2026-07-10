@@ -1,5 +1,5 @@
-import mongoose, { Schema } from 'mongoose'
-import type { HumanMessageDoc } from '../../types.js'
+import mongoose, { Schema } from "mongoose";
+import type { HumanMessageDoc } from "../../types.js";
 
 const HumanMessageSchema = new Schema<HumanMessageDoc>(
   {
@@ -9,14 +9,15 @@ const HumanMessageSchema = new Schema<HumanMessageDoc>(
     tenantId: { type: String, required: true },
     sessionId: { type: String, default: null },
     content: { type: String, required: true },
-    status: { type: String, default: 'pending' },
+    status: { type: String, default: "pending" },
     response: String,
+    usage: { type: Schema.Types.Mixed, default: null },
     error: { type: String, default: null },
     respondedAt: Date,
     failedAt: { type: Date, default: null },
     processingStartedAt: { type: Date, default: null },
     updatedAt: { type: Date, default: null },
-    source: { type: String, default: 'human' },
+    source: { type: String, default: "human" },
     axlDirection: { type: String, default: null },
     axlTargetAgentId: { type: String, default: null },
     axlTargetPeerId: { type: String, default: null },
@@ -26,13 +27,14 @@ const HumanMessageSchema = new Schema<HumanMessageDoc>(
     axlMessageId: { type: String, default: null },
     createdAt: { type: Date, required: true },
   },
-  { versionKey: false },
-)
+  { versionKey: false }
+);
 
-HumanMessageSchema.index({ agentId: 1, status: 1, createdAt: 1 })
-HumanMessageSchema.index({ agentId: 1, status: 1, processingStartedAt: 1 })
-HumanMessageSchema.index({ fleetId: 1, createdAt: -1 })
-HumanMessageSchema.index({ sessionId: 1, createdAt: -1 })
-HumanMessageSchema.index({ agentId: 1, axlMessageId: 1 })
+HumanMessageSchema.index({ agentId: 1, status: 1, createdAt: 1 });
+HumanMessageSchema.index({ agentId: 1, status: 1, processingStartedAt: 1 });
+HumanMessageSchema.index({ fleetId: 1, createdAt: -1 });
+HumanMessageSchema.index({ sessionId: 1, createdAt: -1 });
+HumanMessageSchema.index({ agentId: 1, axlMessageId: 1 });
 
-export default mongoose.models.HumanMessage || mongoose.model<HumanMessageDoc>('HumanMessage', HumanMessageSchema)
+export default mongoose.models.HumanMessage ||
+  mongoose.model<HumanMessageDoc>("HumanMessage", HumanMessageSchema);

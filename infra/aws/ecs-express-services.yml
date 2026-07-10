@@ -73,6 +73,12 @@ Resources:
             Value: "84532"
           - Name: AGENT_WALLET_RPC_URL
             Value: https://sepolia.base.org
+          - Name: HERMES_IMAGE_URL
+            Value: nousresearch/hermes-agent:v2026.7.7.2@sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a
+          - Name: HERMES_MODEL_PROVIDER
+            Value: openai
+          - Name: HERMES_MODEL_ID
+            Value: openai/gpt-5.4-mini
         Secrets:
           - Name: MONGODB_URI
             ValueFrom: !Sub "${RuntimeSecretArn}:MONGODB_URI::"
@@ -90,6 +96,10 @@ Resources:
             ValueFrom: !Sub "${RuntimeSecretArn}:OPENCLAW_MODEL_ID::"
           - Name: OPENCLAW_MODEL_API_KEY
             ValueFrom: !Sub "${RuntimeSecretArn}:OPENCLAW_MODEL_API_KEY::"
+          - Name: HERMES_MODEL_API_KEY
+            ValueFrom: !Sub "${RuntimeSecretArn}:OPENCLAW_MODEL_API_KEY::"
+          - Name: HERMES_GATEWAY_API_KEY
+            ValueFrom: !Sub "${RuntimeSecretArn}:COMMONS_GATEWAY_INTERNAL_SECRET::"
           - Name: COMMONS_IDENTITY_ISSUER
             ValueFrom: !Sub "${RuntimeSecretArn}:COMMONS_IDENTITY_ISSUER::"
           - Name: COMMONS_IDENTITY_JWKS_URL

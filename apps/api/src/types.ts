@@ -1,379 +1,394 @@
 import type {
   ComputerResourceProfile,
   ComputerResourceSpec,
-} from './services/computer-resources.js'
+} from "./services/computer-resources.js";
 
 // Hono context variables set by auth middleware
 export interface HonoVariables {
-  tenantId: string
-  agentId: string | undefined
-  userId: string | undefined
-  workspaceId: string | undefined
-  projectId: string | undefined
-  scopes: string[]
-  authType: 'tenant' | 'agent' | 'privy' | 'identity' | 'service' | 'gateway'
+  tenantId: string;
+  agentId: string | undefined;
+  userId: string | undefined;
+  workspaceId: string | undefined;
+  projectId: string | undefined;
+  scopes: string[];
+  authType: "tenant" | "agent" | "privy" | "identity" | "service" | "gateway";
 }
 
-export type Env = { Variables: HonoVariables }
+export type Env = { Variables: HonoVariables };
 
 export type AgentStatus =
-  | 'provisioning'
-  | 'starting'
-  | 'running'
-  | 'idle'
-  | 'stopping'
-  | 'stopped'
-  | 'terminated'
-  | 'failed'
-  | 'error'
+  | "provisioning"
+  | "starting"
+  | "running"
+  | "idle"
+  | "stopping"
+  | "stopped"
+  | "terminated"
+  | "failed"
+  | "error";
 
 export interface TenantDoc {
-  _id: string
-  identityUserId?: string
-  workspaceId?: string
-  mergedIntoTenantId?: string
-  name?: string
-  email?: string
-  privyUserId?: string
-  walletAddress?: string
-  apiKeyHash: string
-  plan: 'free' | 'pro'
-  createdAt: Date
-  updatedAt: Date
+  _id: string;
+  identityUserId?: string;
+  workspaceId?: string;
+  mergedIntoTenantId?: string;
+  name?: string;
+  email?: string;
+  privyUserId?: string;
+  walletAddress?: string;
+  apiKeyHash: string;
+  plan: "free" | "pro";
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface FleetDoc {
-  _id: string
-  tenantId: string
-  name: string
-  purpose?: 'orchestration' | 'agent-computers'
-  hidden?: boolean
-  ownerUserId?: string | null
-  workspaceId?: string | null
-  worldType: string
+  _id: string;
+  tenantId: string;
+  name: string;
+  purpose?: "orchestration" | "agent-computers";
+  hidden?: boolean;
+  ownerUserId?: string | null;
+  workspaceId?: string | null;
+  worldType: string;
   worldConfig: {
-    tilemap: string
+    tilemap: string;
     rooms: Array<{
-      id: string
-      label: string
-      bounds: { x: number; y: number; w: number; h: number }
-    }>
-  }
-  orchestration: FleetOrchestration
-  status: 'active' | 'stopped'
-  agentCount: number
-  createdAt: Date
-  updatedAt: Date
+      id: string;
+      label: string;
+      bounds: { x: number; y: number; w: number; h: number };
+    }>;
+  };
+  orchestration: FleetOrchestration;
+  status: "active" | "stopped";
+  agentCount: number;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface FleetOrchestration {
-  topology: 'manager-led' | 'peer-to-peer' | 'hub-and-spoke' | 'custom'
-  managerRole: string | null
-  communicationCadence: 'as-needed' | 'task-boundary' | 'hourly' | 'daily'
-  defaultChannel: 'control-plane' | 'openclaw' | 'axl'
-  axlPolicy: 'explicit-only' | 'allowed-by-policy' | 'disabled'
+  topology: "manager-led" | "peer-to-peer" | "hub-and-spoke" | "custom";
+  managerRole: string | null;
+  communicationCadence: "as-needed" | "task-boundary" | "hourly" | "daily";
+  defaultChannel: "control-plane" | "openclaw" | "axl";
+  axlPolicy: "explicit-only" | "allowed-by-policy" | "disabled";
   taskSharing: {
-    assignment: 'manager-assigns' | 'self-serve' | 'round-robin' | 'manual'
-    handoffProtocol: string
-    dependencies: 'explicit' | 'loose' | 'none'
-  }
+    assignment: "manager-assigns" | "self-serve" | "round-robin" | "manual";
+    handoffProtocol: string;
+    dependencies: "explicit" | "loose" | "none";
+  };
   reporting: {
-    statusFormat: 'brief' | 'structured' | 'narrative'
-    reportToRole: string | null
-    onTaskStart: boolean
-    onTaskComplete: boolean
-    onBlocked: boolean
-  }
+    statusFormat: "brief" | "structured" | "narrative";
+    reportToRole: string | null;
+    onTaskStart: boolean;
+    onTaskComplete: boolean;
+    onBlocked: boolean;
+  };
   checkIns: {
-    enabled: boolean
-    cadenceMinutes: number
-    checkOnBlockedTasks: boolean
-    checkOnStaleTasksMinutes: number
-  }
+    enabled: boolean;
+    cadenceMinutes: number;
+    checkOnBlockedTasks: boolean;
+    checkOnStaleTasksMinutes: number;
+  };
   escalation: {
-    blockedAfterMinutes: number
-    escalateToRole: string | null
-    requireHumanOnConflict: boolean
-  }
-  customInstructions: string
+    blockedAfterMinutes: number;
+    escalateToRole: string | null;
+    requireHumanOnConflict: boolean;
+  };
+  customInstructions: string;
 }
 
 export interface AgentDoc {
-  _id: string
-  kind: 'agent' | 'computer'
+  _id: string;
+  kind: "agent" | "computer";
   /** Stable identity supplied by Agent Commons for one-computer-per-agent. */
-  externalAgentId?: string | null
-  fleetId: string
-  tenantId: string
+  externalAgentId?: string | null;
+  fleetId: string;
+  tenantId: string;
   commons: {
-    agentId: string | null
-    ownerUserId?: string | null
-    workspaceId?: string | null
-    apiKey: string | null
-    walletAddress: string | null
-    registryAgentId?: string | null
-  }
+    agentId: string | null;
+    ownerUserId?: string | null;
+    workspaceId?: string | null;
+    apiKey: string | null;
+    walletAddress: string | null;
+    registryAgentId?: string | null;
+  };
   wallet?: {
-    address: string | null
-    provider: 'privy' | 'dev' | null
-    signerRef: string | null
-    chainIds: number[]
+    address: string | null;
+    provider: "privy" | "dev" | null;
+    signerRef: string | null;
+    chainIds: number[];
     policy: {
-      dailyLimitWei: string
-      requireApprovalAboveWei: string
-      allowedContracts: string[]
-    }
-    createdAt: Date | null
-    updatedAt: Date | null
-  } | null
+      dailyLimitWei: string;
+      requireApprovalAboveWei: string;
+      allowedContracts: string[];
+    };
+    createdAt: Date | null;
+    updatedAt: Date | null;
+  } | null;
   pod: {
-    namespaceId: string | null
-    provider: 'gcp' | 'aws'
-    region: string
-    lastError?: string | null
-  }
-  agentTokenHash: string
-  status: AgentStatus
-  desiredState: 'running' | 'stopped' | 'terminated'
-  resourceProfile?: ComputerResourceProfile | null
-  resourceMode?: 'fixed' | 'elastic' | null
-  resourceSpec?: ComputerResourceSpec | null
-  resourceGeneration?: number
+    namespaceId: string | null;
+    provider: "gcp" | "aws";
+    region: string;
+    lastError?: string | null;
+  };
+  agentTokenHash: string;
+  status: AgentStatus;
+  desiredState: "running" | "stopped" | "terminated";
+  resourceProfile?: ComputerResourceProfile | null;
+  resourceMode?: "fixed" | "elastic" | null;
+  resourceSpec?: ComputerResourceSpec | null;
+  resourceGeneration?: number;
   compute?: {
-    ownerUserId: string | null
-    workspaceId: string | null
-    namespace: string | null
-    podName: string | null
-    pvcName: string | null
-    volumeRetained: boolean
-    provisionRequestedAt?: Date | null
-    readyAt?: Date | null
-    activatedAt: Date | null
-    suspendedAt: Date | null
-    restartedAt: Date | null
-    currentActiveStartedAt: Date | null
-    lastActivityAt?: Date | null
-    idleTtlMinutes?: number | null
+    ownerUserId: string | null;
+    workspaceId: string | null;
+    namespace: string | null;
+    podName: string | null;
+    pvcName: string | null;
+    volumeRetained: boolean;
+    provisionRequestedAt?: Date | null;
+    readyAt?: Date | null;
+    activatedAt: Date | null;
+    suspendedAt: Date | null;
+    restartedAt: Date | null;
+    currentActiveStartedAt: Date | null;
+    lastActivityAt?: Date | null;
+    idleTtlMinutes?: number | null;
     policy?: {
-      allowBrowser: boolean
-      allowTerminal: boolean
-      allowFilesystem: boolean
-      networkAccess: 'standard' | 'restricted' | 'disabled'
-    } | null
-    accumulatedActiveMs: number
+      allowBrowser: boolean;
+      allowTerminal: boolean;
+      allowFilesystem: boolean;
+      networkAccess: "standard" | "restricted" | "disabled";
+    } | null;
+    accumulatedActiveMs: number;
     activeIntervals: Array<{
-      startedAt: Date
-      endedAt: Date | null
-    }>
-  } | null
-  permissionTier: 'manager' | 'worker'
+      startedAt: Date;
+      endedAt: Date | null;
+    }>;
+  } | null;
+  permissionTier: "manager" | "worker";
   config: {
-    role: string
-    systemPrompt: string
-    integrationPath: 'native' | 'openclaw' | 'hermes' | 'guest'
-    dockerImage: string | null
+    role: string;
+    systemPrompt: string;
+    integrationPath: "native" | "openclaw" | "hermes" | "guest";
+    dockerImage: string | null;
     nativeConfig: {
-      modelProvider: string | null
-      modelId: string | null
-      modelApiKey: string | null
-    } | null
+      modelProvider: string | null;
+      modelId: string | null;
+      modelApiKey: string | null;
+    } | null;
     openclawConfig: {
-      modelProvider: string | null        // 'anthropic' | 'openai' | 'google' | 'openrouter' | etc.
-      modelId: string | null
-      modelApiKey: string | null
-      channels: Record<string, Record<string, unknown>> | null  // channel id → channel config tokens/settings
-      plugins: string[] | null            // e.g. ['@openclaw/browser', '@openclaw/voice-call']
-      dmPolicy: 'pairing' | 'allowlist' | 'open' | 'disabled' | null
-    } | null
+      modelProvider: string | null; // 'anthropic' | 'openai' | 'google' | 'openrouter' | etc.
+      modelId: string | null;
+      modelApiKey: string | null;
+      channels: Record<string, Record<string, unknown>> | null; // channel id → channel config tokens/settings
+      plugins: string[] | null; // e.g. ['@openclaw/browser', '@openclaw/voice-call']
+      dmPolicy: "pairing" | "allowlist" | "open" | "disabled" | null;
+    } | null;
     hermesConfig: {
-      modelProvider: string | null
-      modelId: string | null
-      modelApiKey: string | null
-      gatewayApiKey: string | null
-    } | null
-    tools: string[]
-  }
+      modelProvider: string | null;
+      modelId: string | null;
+      modelApiKey: string | null;
+      gatewayApiKey: string | null;
+    } | null;
+    tools: string[];
+  };
   world: {
-    room: string
-    x: number
-    y: number
-    facing: 'north' | 'south' | 'east' | 'west'
-  }
+    room: string;
+    x: number;
+    y: number;
+    facing: "north" | "south" | "east" | "west";
+  };
   axl: {
-    peerId: string | null
-    multiaddr: string | null
-  }
+    peerId: string | null;
+    multiaddr: string | null;
+  };
   workspace?: {
-    snapshot: string
-    rootDir: string
-    updatedAt: Date
-  } | null
+    snapshot: string;
+    rootDir: string;
+    updatedAt: Date;
+  } | null;
   browser?: {
-    status: 'off' | 'starting' | 'on' | 'error'
-    url: string | null
-    title: string | null
-    screenshot: string | null
-    lastAction: string | null
-    error: string | null
-    updatedAt: Date | null
-  } | null
-  lastHeartbeatAt: Date | null
+    status: "off" | "starting" | "on" | "error";
+    url: string | null;
+    title: string | null;
+    screenshot: string | null;
+    lastAction: string | null;
+    error: string | null;
+    updatedAt: Date | null;
+  } | null;
+  lastHeartbeatAt: Date | null;
   runtime: {
-    name: string | null
-    commitSha: string | null
-    agentImage: string | null
-    updatedAt: Date | null
-  } | null
-  startedAt: Date | null
-  createdAt: Date
-  updatedAt: Date
+    name: string | null;
+    commitSha: string | null;
+    agentImage: string | null;
+    updatedAt: Date | null;
+  } | null;
+  startedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface TaskDoc {
-  _id: string
-  agentId: string
-  fleetId: string
-  tenantId: string
-  assignedBy: 'human' | 'manager-agent'
-  assignedByAgentId: string | null
-  description: string
-  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
-  output: string | null
-  error: string | null
-  startedAt: Date | null
-  completedAt: Date | null
-  createdAt: Date
+  _id: string;
+  agentId: string;
+  fleetId: string;
+  tenantId: string;
+  assignedBy: "human" | "manager-agent";
+  assignedByAgentId: string | null;
+  description: string;
+  status: "queued" | "running" | "completed" | "failed" | "cancelled";
+  output: string | null;
+  error: string | null;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  createdAt: Date;
 }
 
 export interface EventDoc {
-  _id?: string
-  agentId: string
-  fleetId: string
-  tenantId: string
-  type: string
-  payload: Record<string, unknown>
-  createdAt: Date
+  _id?: string;
+  agentId: string;
+  fleetId: string;
+  tenantId: string;
+  type: string;
+  payload: Record<string, unknown>;
+  createdAt: Date;
 }
 
 export interface TelemetryUsageDoc {
-  _id: string
-  tenantId: string
-  fleetId: string
-  agentId: string
-  bucket: 'day'
-  bucketStart: Date
-  provider: string
-  model: string
-  source: string | null
-  inputTokens: number
-  cachedInputTokens: number
-  outputTokens: number
-  requestCount: number
-  firstSeenAt: Date
-  lastSeenAt: Date
-  updatedAt: Date
+  _id: string;
+  tenantId: string;
+  fleetId: string;
+  agentId: string;
+  bucket: "day";
+  bucketStart: Date;
+  provider: string;
+  model: string;
+  source: string | null;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  requestCount: number;
+  firstSeenAt: Date;
+  lastSeenAt: Date;
+  updatedAt: Date;
 }
 
 export interface WorldObject {
-  objectId: string
-  objectType: string
-  room: string
-  x: number
-  y: number
-  label?: string
-  createdByAgentId?: string
-  properties?: Record<string, unknown>
+  objectId: string;
+  objectType: string;
+  room: string;
+  x: number;
+  y: number;
+  label?: string;
+  createdByAgentId?: string;
+  properties?: Record<string, unknown>;
 }
 
 export interface WorldStateDoc {
-  _id: string
-  fleetId: string
-  tenantId: string
+  _id: string;
+  fleetId: string;
+  tenantId: string;
   agents: Array<{
-    agentId: string
-    role: string
-    permissionTier: 'manager' | 'worker'
-    status: string
+    agentId: string;
+    role: string;
+    permissionTier: "manager" | "worker";
+    status: string;
     commons?: {
-      agentId: string | null
-      walletAddress: string | null
-      registryAgentId?: string | null
-    }
-    world: { room: string; x: number; y: number; facing: string }
-  }>
-  objects: WorldObject[]
-  updatedAt: Date
+      agentId: string | null;
+      walletAddress: string | null;
+      registryAgentId?: string | null;
+    };
+    world: { room: string; x: number; y: number; facing: string };
+  }>;
+  objects: WorldObject[];
+  updatedAt: Date;
 }
 
 export interface MessageDoc {
-  _id: string
-  fromAgentId: string
-  toAgentId: string
-  fleetId: string
-  tenantId: string
-  content: string
-  axlMessageId: string | null
-  deliveredAt: Date | null
-  createdAt: Date
+  _id: string;
+  fromAgentId: string;
+  toAgentId: string;
+  fleetId: string;
+  tenantId: string;
+  content: string;
+  axlMessageId: string | null;
+  deliveredAt: Date | null;
+  createdAt: Date;
 }
 
 export interface WalletTransactionDoc {
-  _id: string
-  agentId: string
-  fleetId: string
-  tenantId: string
-  walletAddress: string
-  direction: 'inbound' | 'outbound'
-  status: 'requested' | 'signed' | 'submitted' | 'confirmed' | 'failed' | 'simulated'
-  chainId: number
-  txHash: string | null
-  toAddress: string
-  toAgentId: string | null
-  valueWei: string
-  data: string | null
-  error: string | null
-  requestedBy: 'agent' | 'tenant'
-  createdAt: Date
-  updatedAt: Date
+  _id: string;
+  agentId: string;
+  fleetId: string;
+  tenantId: string;
+  walletAddress: string;
+  direction: "inbound" | "outbound";
+  status:
+    | "requested"
+    | "signed"
+    | "submitted"
+    | "confirmed"
+    | "failed"
+    | "simulated";
+  chainId: number;
+  txHash: string | null;
+  toAddress: string;
+  toAgentId: string | null;
+  valueWei: string;
+  data: string | null;
+  error: string | null;
+  requestedBy: "agent" | "tenant";
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface AgentSessionDoc {
-  _id: string
-  agentId: string
-  fleetId: string
-  tenantId: string
-  agcSessionId: string | null
-  title: string
-  source?: 'human' | 'axl'
-  participantAgentId?: string | null
-  participantPeerId?: string | null
-  isDefault: boolean
-  messageCount: number
-  lastMessageAt: Date | null
-  createdAt: Date
+  _id: string;
+  agentId: string;
+  fleetId: string;
+  tenantId: string;
+  agcSessionId: string | null;
+  title: string;
+  source?: "human" | "axl";
+  participantAgentId?: string | null;
+  participantPeerId?: string | null;
+  isDefault: boolean;
+  messageCount: number;
+  lastMessageAt: Date | null;
+  createdAt: Date;
 }
 
 export interface HumanMessageDoc {
-  _id: string
-  agentId: string
-  fleetId: string
-  tenantId: string
-  sessionId: string | null
-  content: string
-  status: 'pending' | 'processing' | 'responded' | 'failed'
-  response: string | null
-  error?: string | null
-  respondedAt: Date | null
-  failedAt?: Date | null
-  processingStartedAt?: Date | null
-  updatedAt?: Date | null
-  source?: 'human' | 'axl'
-  axlDirection?: 'inbound' | 'outbound' | null
-  axlTargetAgentId?: string | null
-  axlTargetPeerId?: string | null
-  fromAgentId?: string | null
-  toAgentId?: string | null
-  axlPeerId?: string | null
-  axlMessageId?: string | null
-  createdAt: Date
+  _id: string;
+  agentId: string;
+  fleetId: string;
+  tenantId: string;
+  sessionId: string | null;
+  content: string;
+  status: "pending" | "processing" | "responded" | "failed";
+  response: string | null;
+  usage?: {
+    provider?: string;
+    model?: string;
+    source?: string;
+    inputTokens: number;
+    cachedInputTokens: number;
+    outputTokens: number;
+    requestCount: number;
+  } | null;
+  error?: string | null;
+  respondedAt: Date | null;
+  failedAt?: Date | null;
+  processingStartedAt?: Date | null;
+  updatedAt?: Date | null;
+  source?: "human" | "axl";
+  axlDirection?: "inbound" | "outbound" | null;
+  axlTargetAgentId?: string | null;
+  axlTargetPeerId?: string | null;
+  fromAgentId?: string | null;
+  toAgentId?: string | null;
+  axlPeerId?: string | null;
+  axlMessageId?: string | null;
+  createdAt: Date;
 }

@@ -12,14 +12,14 @@ export interface DaemonConfig {
   walletAddress: string;
   walletChainId: number;
   // native path — runner service
-  runnerUrl: string;           // URL of the shared runner service
+  runnerUrl: string; // URL of the shared runner service
   // gateway-backed paths
-  openclawGatewayUrl: string;  // defaults to http://localhost:18789
-  hermesGatewayUrl: string;    // defaults to http://localhost:17890
+  openclawGatewayUrl: string; // defaults to http://localhost:18789
+  hermesGatewayUrl: string; // defaults to http://localhost:8642
   // guest path
   dockerImage: string | null;
   integrationPath: "native" | "openclaw" | "hermes" | "guest";
-  workspaceDir: string;        // where this runtime writes files — watched by file watcher
+  workspaceDir: string; // where this runtime writes files — watched by file watcher
   role: string;
   systemPrompt: string;
   worldRoom: string;
@@ -27,28 +27,39 @@ export interface DaemonConfig {
   worldY: number;
   // AXL peer routing — populated at runtime via discoverFleetPeers()
   managerAgentId?: string;
-  managerPeerId?: string;  // ed25519 public key (hex) used as X-Destination-Peer-Id
+  managerPeerId?: string; // ed25519 public key (hex) used as X-Destination-Peer-Id
 }
 
-export function loadConfig(path = process.env.COMMONOS_CONFIG_PATH ?? "/etc/common-os/config.json"): DaemonConfig {
+export function loadConfig(
+  path = process.env.COMMONOS_CONFIG_PATH ?? "/etc/common-os/config.json"
+): DaemonConfig {
   let raw: string;
   try {
     raw = readFileSync(path, "utf-8");
   } catch (err) {
-    throw new Error(`daemon: could not read config file at ${path}: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(
+      `daemon: could not read config file at ${path}: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
   }
   let cfg: DaemonConfig;
   try {
     cfg = JSON.parse(raw) as DaemonConfig;
   } catch (err) {
-    throw new Error(`daemon: config file at ${path} contains invalid JSON: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(
+      `daemon: config file at ${path} contains invalid JSON: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
   }
   cfg.openclawGatewayUrl ??= "http://localhost:18789";
-  cfg.hermesGatewayUrl ??= "http://localhost:17890";
+  cfg.hermesGatewayUrl ??= "http://localhost:8642";
   cfg.workspaceDir ??= "/mnt/shared";
   cfg.walletAddress ??= "";
   cfg.walletChainId ??= 84532;
-  const encodedPrompt = (cfg as DaemonConfig & { systemPromptBase64?: string }).systemPromptBase64;
+  const encodedPrompt = (cfg as DaemonConfig & { systemPromptBase64?: string })
+    .systemPromptBase64;
   cfg.systemPrompt ??= encodedPrompt
     ? Buffer.from(encodedPrompt, "base64").toString("utf-8")
     : `You are a ${cfg.role || "worker"} agent.`;
