@@ -83,11 +83,20 @@ router.post("/", async (c) => {
 				error: "error",
 				offline: "stopped",
 			};
-			const agentStatus = (statusMap[event.payload.status] ??
-				event.payload.status) as import("../types.js").AgentStatus;
+			const agentStatus = (agentDoc.kind === "computer" && agentDoc.desiredState === "stopped"
+				? "stopped"
+				: statusMap[event.payload.status] ?? event.payload.status) as import("../types.js").AgentStatus;
 			await agentCol.updateOne(
 				{ _id: agentId },
-				{ $set: { status: agentStatus, updatedAt: now } },
+				{
+					$set: {
+						status: agentStatus,
+						...(agentDoc.kind === "computer" && event.payload.status === "working"
+							? { "compute.lastActivityAt": now }
+							: {}),
+						updatedAt: now,
+					},
+				},
 			);
 			await (await worldStates()).updateOne(
 				{ fleetId: agentDoc.fleetId, "agents.agentId": agentId },
@@ -143,7 +152,9 @@ router.post("/", async (c) => {
 				},
 			);
 		} else if (event.type === "heartbeat") {
-			const heartbeatProvesRunning = ["provisioning", "starting", "stopped"].includes(agentDoc.status);
+			const heartbeatProvesRunning =
+				agentDoc.desiredState !== "stopped" &&
+				["provisioning", "starting", "stopped"].includes(agentDoc.status);
 			const runtimePayload = event.payload
 				? {
 					runtime: {
@@ -156,7 +167,22 @@ router.post("/", async (c) => {
 				: {};
 			await agentCol.updateOne(
 				{ _id: agentId },
-				{ $set: { lastHeartbeatAt: now, updatedAt: now, ...runtimePayload, ...(heartbeatProvesRunning ? { status: "running" } : {}) } },
+				{
+					$set: {
+						lastHeartbeatAt: now,
+						updatedAt: now,
+						...runtimePayload,
+						...(heartbeatProvesRunning
+							? {
+									status: "running",
+									startedAt: now,
+									...(agentDoc.kind === "computer"
+										? { "compute.readyAt": now }
+										: {}),
+								}
+							: {}),
+					},
+				},
 			);
 			if (heartbeatProvesRunning) {
 				await (await worldStates()).updateOne(

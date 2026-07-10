@@ -1,0 +1,47 @@
+---
+title: Persistent Agent Computers
+description: One durable, optional computer per Agent Commons agent, with replaceable runtime pods and elastic resource profiles.
+---
+
+An Agent Commons agent can have zero or one CommonOS computer. Computers are
+disabled until their owner enables them. Once enabled, every chat turn that
+selects **Computer** continues in the same logical workspace instead of
+creating a session-scoped machine.
+
+## Identity and persistence
+
+The computer record and workspace volume are durable. Its Kubernetes pod is a
+replaceable runtime generation:
+
+- **Wake** creates a pod against the existing workspace.
+- **Sleep** removes the pod and retains the workspace.
+- **Restart** replaces the pod and retains the workspace.
+- **Resize** applies a new CPU, memory, storage, or GPU ceiling by replacing the
+  pod when necessary. Persistent storage can grow but cannot shrink.
+- **Destroy** is the explicit destructive operation and removes the runtime and
+  its workspace claim.
+
+Instructions may be queued while a new pod is starting. The API records the
+time from the provisioning request to the first healthy runtime heartbeat as
+`compute.startupLatencyMs`.
+
+## Resource profiles
+
+Most callers should choose `starter`, `standard`, `performance`, or `gpu`.
+`elastic` mode reserves a smaller scheduling floor and permits the computer to
+burst to the profile ceiling; `fixed` mode reserves the full selection. Custom
+resource values are bounded by platform limits.
+
+Storage is metered while retained. CPU, memory, and GPU runtime are metered from
+active wake/sleep intervals. This keeps internal usage exact while allowing a
+product plan to present simple tier allowances and overages.
+
+## Tenant placement
+
+Computers owned by the same human share an opaque, quota-controlled Kubernetes
+namespace. Different owners never share a namespace or resource quota, even if
+they collaborate in the same Agent Commons workspace. Every computer still has
+its own pod, token, and persistent volume claim.
+
+Hidden placement fleets are control-plane implementation details and are not
+returned by the normal fleet APIs.

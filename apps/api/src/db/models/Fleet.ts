@@ -6,6 +6,14 @@ const FleetSchema = new Schema<FleetDoc>(
     _id: { type: String },
     tenantId: { type: String, required: true },
     name: { type: String, required: true },
+    purpose: {
+      type: String,
+      enum: ['orchestration', 'agent-computers'],
+      default: 'orchestration',
+    },
+    hidden: { type: Boolean, default: false },
+    ownerUserId: { type: String, default: null },
+    workspaceId: { type: String, default: null },
     worldType: { type: String, default: 'office' },
     worldConfig: {
       tilemap: String,
@@ -56,5 +64,12 @@ const FleetSchema = new Schema<FleetDoc>(
 )
 
 FleetSchema.index({ tenantId: 1, createdAt: -1 })
+FleetSchema.index(
+  { tenantId: 1, purpose: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { purpose: 'agent-computers' },
+  },
+)
 
 export default mongoose.models.Fleet || mongoose.model<FleetDoc>('Fleet', FleetSchema)

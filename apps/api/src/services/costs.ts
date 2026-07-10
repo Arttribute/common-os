@@ -21,12 +21,14 @@ interface ResourceProfile {
 	cpuLimitCores: number;
 	memoryLimitGiB: number;
 	storageGiB: number;
+	gpuCount: number;
 }
 
 interface InfraRates {
 	cpuCoreHour: number;
 	memoryGiBHour: number;
 	storageGiBMonth: number;
+	gpuHour: number;
 	source: string;
 }
 
@@ -50,12 +52,14 @@ const DEFAULT_INFRA_RATES: Record<"gcp" | "aws", InfraRates> = {
 		cpuCoreHour: Number(process.env.GCP_CPU_CORE_HOUR_USD ?? "0.0316"),
 		memoryGiBHour: Number(process.env.GCP_MEMORY_GIB_HOUR_USD ?? "0.0042"),
 		storageGiBMonth: Number(process.env.GCP_STORAGE_GIB_MONTH_USD ?? "0.026"),
+		gpuHour: Number(process.env.GCP_GPU_HOUR_USD ?? "0.7"),
 		source: "env:gcp-rates",
 	},
 	aws: {
 		cpuCoreHour: Number(process.env.AWS_CPU_CORE_HOUR_USD ?? "0.0316"),
 		memoryGiBHour: Number(process.env.AWS_MEMORY_GIB_HOUR_USD ?? "0.0035"),
 		storageGiBMonth: Number(process.env.AWS_STORAGE_GIB_MONTH_USD ?? "0.08"),
+		gpuHour: Number(process.env.AWS_GPU_HOUR_USD ?? "0.8"),
 		source: "env:aws-rates",
 	},
 };
@@ -93,6 +97,19 @@ function rateFor(provider: ProviderId, model: string): ModelRate | null {
 }
 
 function resourceProfile(agent: AgentDoc): ResourceProfile {
+	if (agent.kind === "computer" && agent.resourceSpec) {
+		return {
+			cpuRequestCores: Number.parseFloat(agent.resourceSpec.cpuRequest) /
+				(agent.resourceSpec.cpuRequest.endsWith("m") ? 1000 : 1),
+			memoryRequestGiB: agent.resourceSpec.memoryRequest.endsWith("Mi")
+				? Number.parseFloat(agent.resourceSpec.memoryRequest) / 1024
+				: Number.parseFloat(agent.resourceSpec.memoryRequest),
+			cpuLimitCores: agent.resourceSpec.vcpu,
+			memoryLimitGiB: agent.resourceSpec.memoryGiB,
+			storageGiB: agent.resourceSpec.storageGiB,
+			gpuCount: agent.resourceSpec.gpu.count,
+		};
+	}
 	const integration = agent.config.integrationPath;
 	const hasOpenClawRuntime = integration === "openclaw" && !process.env.OPENCLAW_GATEWAY_URL;
 	const hasHermesRuntime = integration === "hermes" && !process.env.HERMES_GATEWAY_URL;
@@ -109,15 +126,38 @@ function resourceProfile(agent: AgentDoc): ResourceProfile {
 		cpuLimitCores: 1 + sidecarCpuLimit,
 		memoryLimitGiB: (bridgeRuntime ? 1 : 0.5) + sidecarMemLimit,
 		storageGiB: agent.pod.provider === "aws" && process.env.EFS_FILE_SYSTEM_ID ? 5 : Number(process.env.AGENT_STORAGE_GIB ?? "1"),
+		gpuCount: 0,
 	};
 }
 
 function activeHours(agent: AgentDoc, since: Date, until: Date): number {
+	if (agent.kind === "computer" && agent.compute?.activeIntervals?.length) {
+		const milliseconds = agent.compute.activeIntervals.reduce((sum, interval) => {
+			const start = Math.max(new Date(interval.startedAt).getTime(), since.getTime());
+			const end = Math.min(
+				interval.endedAt ? new Date(interval.endedAt).getTime() : until.getTime(),
+				until.getTime(),
+			);
+			return sum + Math.max(0, end - start);
+		}, 0);
+		return milliseconds / 3_600_000;
+	}
 	if (agent.status === "terminated" || agent.status === "failed") {
 		const end = agent.updatedAt && agent.updatedAt < until ? agent.updatedAt : until;
 		return Math.max(0, (end.getTime() - Math.max(agent.createdAt.getTime(), since.getTime())) / 3_600_000);
 	}
 	return Math.max(0, (until.getTime() - Math.max(agent.createdAt.getTime(), since.getTime())) / 3_600_000);
+}
+
+function storageHours(agent: AgentDoc, since: Date, until: Date): number {
+	const end = agent.status === "terminated" && agent.updatedAt < until
+		? agent.updatedAt
+		: until;
+	return Math.max(
+		0,
+		(end.getTime() - Math.max(agent.createdAt.getTime(), since.getTime())) /
+			3_600_000,
+	);
 }
 
 function usageCost(tokens: { inputTokens: number; cachedInputTokens: number; outputTokens: number }, rate: ModelRate | null) {
@@ -241,13 +281,15 @@ export async function fleetCostReport(opts: { fleetId: string; tenantId: string;
 		addTokens(estimatedTokenTotals, estimatedTokens);
 		const tokens = usage ?? elapsedEstimatedTokens;
 		const profile = resourceProfile(agent);
+		const persistedHours = storageHours(agent, since, until);
 		const cloudProvider = agent.pod.provider === "aws" ? "aws" : "gcp";
 		const infraRates = DEFAULT_INFRA_RATES[cloudProvider];
 		const computeCost = hours * (
 			profile.cpuRequestCores * infraRates.cpuCoreHour
 			+ profile.memoryRequestGiB * infraRates.memoryGiBHour
+			+ profile.gpuCount * infraRates.gpuHour
 		);
-		const storageCost = (profile.storageGiB * infraRates.storageGiBMonth) * (hours / HOURS_PER_MONTH);
+		const storageCost = (profile.storageGiB * infraRates.storageGiBMonth) * (persistedHours / HOURS_PER_MONTH);
 		const tokenCost = usageCost(tokens, rate);
 		const rawCost = tokenCost + computeCost + storageCost;
 		const billedCost = rawCost * (1 + DEFAULT_MARKUP_RATE);
@@ -262,6 +304,7 @@ export async function fleetCostReport(opts: { fleetId: string; tenantId: string;
 			rateSource: rate?.source ?? "unknown-model-rate",
 			confidence: usage ? "actual" : "estimated",
 			activeHours: Number(hours.toFixed(2)),
+			storageHours: Number(persistedHours.toFixed(2)),
 			tokens,
 			actualTokens: roundTokenSummary(actualTokens),
 			estimatedTokens: roundTokenSummary(estimatedTokens),

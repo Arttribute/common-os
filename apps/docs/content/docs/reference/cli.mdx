@@ -61,6 +61,22 @@ commonos task send agt_xxx "Analyze the market" --fleet flt_xxx
 commonos task ls agt_xxx --fleet flt_xxx
 ```
 
+## Persistent computers
+
+```bash
+commonos computer create --agent-commons-id agent_xxx --profile standard --mode elastic
+commonos computer ls --agent-commons-id agent_xxx
+commonos computer wake computer_xxx
+commonos computer sleep computer_xxx
+commonos computer restart computer_xxx
+commonos computer resize computer_xxx --profile performance
+commonos computer resize computer_xxx --vcpu 4 --memory 8 --storage 50
+```
+
+`computer terminate` is an explicit destructive compatibility command: it
+removes the computer and workspace. Use `computer sleep` when the workspace
+must persist.
+
 ## World
 
 ```bash

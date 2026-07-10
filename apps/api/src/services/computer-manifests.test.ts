@@ -1,0 +1,32 @@
+import {
+  computerNamespaceManifests,
+  computerRuntimeIdentity,
+} from "./computer-kubernetes";
+
+describe("computer Kubernetes isolation", () => {
+  it("groups a user's computers in one opaque tenant namespace with unique pod claims", () => {
+    const first = computerRuntimeIdentity("tenant-a", "agent-one");
+    const second = computerRuntimeIdentity("tenant-a", "agent-two");
+    expect(first.namespace).toBe(second.namespace);
+    expect(first.podName).not.toBe(second.podName);
+    expect(first.pvcName).not.toBe(second.pvcName);
+  });
+
+  it("installs quota, limits, pod-security labels, and default-deny networking", () => {
+    const manifests = computerNamespaceManifests("tenant-test", {
+      "managed-by": "common-os",
+      "tenant-id": "tenant-test",
+    });
+    expect(manifests.namespaceLabels["pod-security.kubernetes.io/audit"]).toBe(
+      "restricted"
+    );
+    expect(manifests.quota.spec?.hard?.pods).toBeDefined();
+    expect(manifests.limits.spec?.limits?.[0]?.max?.cpu).toBe("32");
+    expect(manifests.policies[0]?.spec?.policyTypes).toEqual([
+      "Ingress",
+      "Egress",
+    ]);
+    expect(manifests.policies[0]?.spec?.ingress).toEqual([]);
+    expect(manifests.policies[0]?.spec?.egress).toEqual([]);
+  });
+});

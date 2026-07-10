@@ -1,6 +1,10 @@
 import { createHash, randomBytes } from "crypto";
 import { agents, fleets, worldStates } from "../db/mongo.js";
 import type { AgentDoc, FleetDoc } from "../types.js";
+import type {
+	ComputerResourceProfile,
+	ComputerResourceSpec,
+} from "./computer-resources.js";
 import { launchAgentPod, launchAgentPodEks } from "./cloud-init.js";
 import { ensureAgentWallet } from "./agentWallet.js";
 
@@ -51,7 +55,9 @@ export async function agentCommonsServiceToken(): Promise<string | null> {
 	);
 }
 
-interface ProvisionAgentOptions {
+export interface ProvisionAgentOptions {
+	kind?: "agent" | "computer";
+	externalAgentId?: string | null;
 	fleetId: string;
 	tenantId: string;
 	userId?: string;
@@ -67,6 +73,16 @@ interface ProvisionAgentOptions {
 	nativeConfig: AgentDoc["config"]["nativeConfig"];
 	openclawConfig: AgentDoc["config"]["openclawConfig"];
 	hermesConfig: AgentDoc["config"]["hermesConfig"];
+	resourceProfile?: ComputerResourceProfile | null;
+	resourceMode?: "fixed" | "elastic" | null;
+	resourceSpec?: ComputerResourceSpec | null;
+	idleTtlMinutes?: number | null;
+	computerPolicy?: {
+		allowBrowser: boolean;
+		allowTerminal: boolean;
+		allowFilesystem: boolean;
+		networkAccess: "standard" | "restricted" | "disabled";
+	};
 }
 
 export async function provisionAgent(
@@ -129,6 +145,8 @@ export async function provisionAgent(
 
 	const agentDoc: AgentDoc = {
 		_id: agentId,
+		kind: opts.kind ?? "agent",
+		externalAgentId: opts.externalAgentId ?? null,
 		fleetId: opts.fleetId,
 		tenantId: opts.tenantId,
 		commons,
@@ -139,6 +157,39 @@ export async function provisionAgent(
 		},
 		agentTokenHash,
 		status: "provisioning",
+		desiredState: "running",
+		resourceProfile: opts.resourceProfile ?? null,
+		resourceMode: opts.resourceMode ?? null,
+		resourceSpec: opts.resourceSpec ?? null,
+		resourceGeneration: 1,
+		compute:
+			opts.kind === "computer"
+				? {
+						ownerUserId: opts.userId ?? null,
+						workspaceId: opts.workspaceId ?? null,
+						namespace: null,
+						podName: null,
+						pvcName: null,
+						volumeRetained: true,
+						provisionRequestedAt: now,
+						readyAt: null,
+						activatedAt: now,
+						suspendedAt: null,
+						restartedAt: null,
+						currentActiveStartedAt: now,
+						lastActivityAt: now,
+						idleTtlMinutes: opts.idleTtlMinutes ?? 60,
+						policy:
+							opts.computerPolicy ?? {
+								allowBrowser: true,
+								allowTerminal: true,
+								allowFilesystem: true,
+								networkAccess: "standard",
+							},
+						accumulatedActiveMs: 0,
+						activeIntervals: [{ startedAt: now, endedAt: null }],
+					}
+				: null,
 		permissionTier: opts.permissionTier,
 		config: {
 			role: opts.role,
@@ -160,21 +211,23 @@ export async function provisionAgent(
 	};
 
 	await (await agents()).create(agentDoc as never);
-	const wallet = await ensureAgentWallet(agentDoc);
-	agentDoc.commons.walletAddress = wallet.address;
-	agentDoc.wallet = {
-		address: wallet.address,
-		provider: wallet.provider,
-		signerRef: wallet.signerRef,
-		chainIds: wallet.chainIds,
-		policy: {
-			dailyLimitWei: process.env.AGENT_WALLET_DAILY_LIMIT_WEI ?? "100000000000000000",
-			requireApprovalAboveWei: process.env.AGENT_WALLET_APPROVAL_ABOVE_WEI ?? "10000000000000000",
-			allowedContracts: [],
-		},
-		createdAt: now,
-		updatedAt: now,
-	};
+	if (opts.kind !== "computer") {
+		const wallet = await ensureAgentWallet(agentDoc);
+		agentDoc.commons.walletAddress = wallet.address;
+		agentDoc.wallet = {
+			address: wallet.address,
+			provider: wallet.provider,
+			signerRef: wallet.signerRef,
+			chainIds: wallet.chainIds,
+			policy: {
+				dailyLimitWei: process.env.AGENT_WALLET_DAILY_LIMIT_WEI ?? "100000000000000000",
+				requireApprovalAboveWei: process.env.AGENT_WALLET_APPROVAL_ABOVE_WEI ?? "10000000000000000",
+				allowedContracts: [],
+			},
+			createdAt: now,
+			updatedAt: now,
+		};
+	}
 
 	await (await fleets()).updateOne(
 		{ _id: opts.fleetId },
@@ -271,7 +324,7 @@ export async function registerWithAgentCommons(
 	}
 }
 
-async function launchCloudInstance(
+export async function launchCloudInstance(
 	agentDoc: AgentDoc,
 	opts: ProvisionAgentOptions,
 	agentToken: string,
@@ -282,6 +335,7 @@ async function launchCloudInstance(
 
 	const podOpts = {
 		agentId: agentDoc._id,
+		kind: agentDoc.kind,
 		agentToken,
 		fleetId: agentDoc.fleetId,
 		tenantId: agentDoc.tenantId,
@@ -302,6 +356,8 @@ async function launchCloudInstance(
 		worldRoom: agentDoc.world.room,
 		worldX: agentDoc.world.x,
 		worldY: agentDoc.world.y,
+		resourceSpec: agentDoc.resourceSpec ?? null,
+		resourceGeneration: agentDoc.resourceGeneration ?? 1,
 	};
 
 	const deadline = new Promise<never>((_, reject) =>
@@ -321,6 +377,13 @@ async function launchCloudInstance(
 				$set: {
 					"pod.namespaceId": result.serviceId,
 					"pod.lastError": null,
+					...(agentDoc.kind === "computer"
+						? {
+								"compute.namespace": result.serviceId,
+								"compute.podName": result.podName ?? null,
+								"compute.pvcName": result.pvcName ?? null,
+							}
+						: {}),
 					status: "starting",
 					updatedAt: new Date(),
 				},
@@ -350,6 +413,80 @@ async function launchCloudInstance(
 			},
 		);
 	}
+}
+
+/**
+ * Rotate the pod credential and launch a new runtime generation for an
+ * existing logical computer. The stable Mongo identity and workspace claim are
+ * reused; only the replaceable pod changes.
+ */
+export async function wakeProvisionedComputer(agent: AgentDoc): Promise<AgentDoc> {
+	if (agent.kind !== "computer") throw new Error("computer runtime required");
+	const fleet = await (await fleets())
+		.findOne({ _id: agent.fleetId, tenantId: agent.tenantId })
+		.lean();
+	if (!fleet) throw new Error("computer placement fleet not found");
+
+	const agentToken = `cos_agent_${randomBytes(24).toString("hex")}`;
+	const agentTokenHash = createHash("sha256").update(agentToken).digest("hex");
+	const now = new Date();
+	const nextGeneration = (agent.resourceGeneration ?? 1) + 1;
+	await (await agents()).updateOne(
+		{ _id: agent._id, tenantId: agent.tenantId, kind: "computer" },
+		{
+			$set: {
+				agentTokenHash,
+				desiredState: "running",
+				status: "provisioning",
+				resourceGeneration: nextGeneration,
+				"pod.lastError": null,
+				"compute.activatedAt": agent.compute?.activatedAt ?? now,
+				"compute.provisionRequestedAt": now,
+				"compute.readyAt": null,
+				"compute.suspendedAt": null,
+				"compute.currentActiveStartedAt": now,
+				updatedAt: now,
+			},
+			$push: {
+				"compute.activeIntervals": { startedAt: now, endedAt: null },
+			},
+		},
+	);
+
+	const refreshed: AgentDoc = {
+		...agent,
+		agentTokenHash,
+		desiredState: "running",
+		status: "provisioning",
+		resourceGeneration: nextGeneration,
+		updatedAt: now,
+	};
+	const opts: ProvisionAgentOptions = {
+		kind: "computer",
+		externalAgentId: agent.externalAgentId,
+		fleetId: agent.fleetId,
+		tenantId: agent.tenantId,
+		userId: agent.compute?.ownerUserId ?? undefined,
+		workspaceId: agent.compute?.workspaceId ?? undefined,
+		existingCommonsAgentId: agent.commons.agentId ?? undefined,
+		fleet,
+		role: agent.config.role,
+		systemPrompt: agent.config.systemPrompt,
+		permissionTier: agent.permissionTier,
+		room: agent.world.room,
+		integrationPath: agent.config.integrationPath,
+		dockerImage: agent.config.dockerImage,
+		nativeConfig: agent.config.nativeConfig,
+		openclawConfig: agent.config.openclawConfig,
+		hermesConfig: agent.config.hermesConfig,
+		resourceProfile: agent.resourceProfile,
+		resourceMode: agent.resourceMode,
+		resourceSpec: agent.resourceSpec,
+		idleTtlMinutes: agent.compute?.idleTtlMinutes,
+		computerPolicy: agent.compute?.policy ?? undefined,
+	};
+	void launchCloudInstance(refreshed, opts, agentToken, null);
+	return refreshed;
 }
 
 async function fleetAxlPeers(fleetId: string, agentId: string, tenantId: string): Promise<string> {

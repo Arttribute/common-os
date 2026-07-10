@@ -163,6 +163,18 @@ Resources:
       UpdateConfig:
         MaxUnavailable: 1
 
+  # NetworkPolicy objects are otherwise accepted by Kubernetes but ignored by
+  # the default EKS VPC CNI configuration. Keep enforcement in the cluster
+  # bootstrap so tenant default-deny policies are a real isolation boundary.
+  VpcCniAddon:
+    Type: AWS::EKS::Addon
+    DependsOn: EksNodeGroup
+    Properties:
+      AddonName: vpc-cni
+      ClusterName: !Ref EksCluster
+      ResolveConflicts: OVERWRITE
+      ConfigurationValues: '{"enableNetworkPolicy":"true"}'
+
   EfsSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:

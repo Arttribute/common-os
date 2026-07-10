@@ -711,7 +711,13 @@ router.post('/:agentId/messages/:msgId/event', async (c) => {
     delta?: string
     tool?: string
     label?: string
-  }>().catch(() => ({}))
+  }>().catch(() => ({} as {
+    type?: 'message_status' | 'message_delta' | 'tool_call' | 'tool_result'
+    status?: string
+    delta?: string
+    tool?: string
+    label?: string
+  }))
   const eventType = body.type ?? 'message_status'
   if (!['message_status', 'message_delta', 'tool_call', 'tool_result'].includes(eventType)) {
     return c.json({ error: 'unsupported message event type' }, 400)

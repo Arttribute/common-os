@@ -14,7 +14,6 @@ type AgentWithConfig = {
 		hermesConfig?: HermesSecretConfig | null;
 		[key: string]: unknown;
 	};
-	[key: string]: unknown;
 };
 
 /**

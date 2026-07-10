@@ -1,3 +1,8 @@
+import type {
+  ComputerResourceProfile,
+  ComputerResourceSpec,
+} from './services/computer-resources.js'
+
 // Hono context variables set by auth middleware
 export interface HonoVariables {
   tenantId: string
@@ -41,6 +46,10 @@ export interface FleetDoc {
   _id: string
   tenantId: string
   name: string
+  purpose?: 'orchestration' | 'agent-computers'
+  hidden?: boolean
+  ownerUserId?: string | null
+  workspaceId?: string | null
   worldType: string
   worldConfig: {
     tilemap: string
@@ -91,6 +100,9 @@ export interface FleetOrchestration {
 
 export interface AgentDoc {
   _id: string
+  kind: 'agent' | 'computer'
+  /** Stable identity supplied by Agent Commons for one-computer-per-agent. */
+  externalAgentId?: string | null
   fleetId: string
   tenantId: string
   commons: {
@@ -122,6 +134,38 @@ export interface AgentDoc {
   }
   agentTokenHash: string
   status: AgentStatus
+  desiredState: 'running' | 'stopped' | 'terminated'
+  resourceProfile?: ComputerResourceProfile | null
+  resourceMode?: 'fixed' | 'elastic' | null
+  resourceSpec?: ComputerResourceSpec | null
+  resourceGeneration?: number
+  compute?: {
+    ownerUserId: string | null
+    workspaceId: string | null
+    namespace: string | null
+    podName: string | null
+    pvcName: string | null
+    volumeRetained: boolean
+    provisionRequestedAt?: Date | null
+    readyAt?: Date | null
+    activatedAt: Date | null
+    suspendedAt: Date | null
+    restartedAt: Date | null
+    currentActiveStartedAt: Date | null
+    lastActivityAt?: Date | null
+    idleTtlMinutes?: number | null
+    policy?: {
+      allowBrowser: boolean
+      allowTerminal: boolean
+      allowFilesystem: boolean
+      networkAccess: 'standard' | 'restricted' | 'disabled'
+    } | null
+    accumulatedActiveMs: number
+    activeIntervals: Array<{
+      startedAt: Date
+      endedAt: Date | null
+    }>
+  } | null
   permissionTier: 'manager' | 'worker'
   config: {
     role: string

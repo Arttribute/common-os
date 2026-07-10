@@ -8,11 +8,19 @@ import { defaultProvider } from "@aws-sdk/credential-provider-node";
 import { SignatureV4 } from "@smithy/signature-v4";
 import { createHash, createHmac } from "crypto";
 import { Writable } from "stream";
+import type { ComputerResourceSpec } from "./computer-resources.js";
+import {
+	computerNamespaceManifests,
+	computerRuntimeIdentity,
+} from "./computer-kubernetes.js";
+
+export { computerNamespaceManifests, computerRuntimeIdentity };
 
 // ─── Options ───────────────────────────────────────────────────────────────
 
 export interface LaunchOptions {
 	agentId: string;
+	kind?: "agent" | "computer";
 	agentToken: string;
 	fleetId: string;
 	tenantId: string;
@@ -46,12 +54,16 @@ export interface LaunchOptions {
 	worldRoom?: string;
 	worldX?: number;
 	worldY?: number;
+	resourceSpec?: ComputerResourceSpec | null;
+	resourceGeneration?: number;
 }
 
 export interface LaunchedService {
 	/** Kubernetes namespace name — stored as namespaceId in agent.pod */
 	serviceId: string;
 	sessionId: string;
+	podName?: string;
+	pvcName?: string | null;
 }
 
 function k8sLabelValue(value: string): string {
@@ -70,13 +82,58 @@ function k8sLabelValue(value: string): string {
 	return prefix ? `${prefix}-${hash}` : `value-${hash}`;
 }
 
-function commonK8sLabels(opts: Pick<LaunchOptions, "agentId" | "fleetId" | "tenantId">): Record<string, string> {
+function k8sName(prefix: string, value: string): string {
+	const suffix = createHash("sha256").update(value).digest("hex").slice(0, 10);
+	const safe = k8sLabelValue(value).toLowerCase();
+	const available = 63 - prefix.length - suffix.length - 2;
+	const trimmed = safe.slice(0, Math.max(1, available)).replace(/[^a-z0-9]+$/, "");
+	return `${prefix}-${trimmed || "runtime"}-${suffix}`;
+}
+
+function commonK8sLabels(opts: Pick<LaunchOptions, "agentId" | "fleetId" | "tenantId" | "kind">): Record<string, string> {
 	return {
 		"managed-by": "common-os",
 		"agent-id": k8sLabelValue(opts.agentId),
 		"fleet-id": k8sLabelValue(opts.fleetId),
 		"tenant-id": k8sLabelValue(opts.tenantId),
+		"workload-kind": opts.kind === "computer" ? "computer" : "agent",
 	};
+}
+
+async function createOrIgnoreConflict(action: () => Promise<unknown>) {
+	try {
+		await action();
+	} catch (error) {
+		const code =
+			(error as { statusCode?: number; code?: number }).statusCode ??
+			(error as { code?: number }).code;
+		if (code !== 409) throw error;
+	}
+}
+
+async function ensureComputerNamespaceHardening(
+	kc: k8s.KubeConfig,
+	namespace: string,
+	labels: Record<string, string>,
+) {
+	const core = kc.makeApiClient(k8s.CoreV1Api);
+	const network = kc.makeApiClient(k8s.NetworkingV1Api);
+	const manifests = computerNamespaceManifests(namespace, labels);
+	await core.patchNamespace({
+		name: namespace,
+		body: { metadata: { labels: manifests.namespaceLabels } },
+	});
+	await createOrIgnoreConflict(() =>
+		core.createNamespacedResourceQuota({ namespace, body: manifests.quota }),
+	);
+	await createOrIgnoreConflict(() =>
+		core.createNamespacedLimitRange({ namespace, body: manifests.limits }),
+	);
+	for (const policy of manifests.policies) {
+		await createOrIgnoreConflict(() =>
+			network.createNamespacedNetworkPolicy({ namespace, body: policy }),
+		);
+	}
 }
 
 function commonRuntimeEnv(opts: LaunchOptions, imageUrl: string): k8s.V1EnvVar[] {
@@ -127,7 +184,7 @@ function commonRuntimeEnv(opts: LaunchOptions, imageUrl: string): k8s.V1EnvVar[]
 		{ name: "DOCKER_IMAGE",          value: opts.dockerImage ?? "" },
 		{ name: "RUNNER_URL",            value: opts.runnerUrl ?? process.env.RUNNER_URL ?? "" },
 		{ name: "AXL_PEERS",             value: opts.axlPeers ?? process.env.AXL_PEERS ?? "" },
-		{ name: "AXL_MODE",              value: process.env.AXL_MODE ?? "explicit" },
+		{ name: "AXL_MODE",              value: opts.kind === "computer" ? "off" : process.env.AXL_MODE ?? "explicit" },
 		{ name: "POD_IP",                valueFrom: { fieldRef: { fieldPath: "status.podIP" } } },
 		{ name: "WORLD_ROOM",            value: opts.worldRoom ?? "dev-room" },
 		{ name: "WORLD_X",               value: String(opts.worldX ?? 2) },
@@ -258,9 +315,9 @@ function openClawRuntimeContainer(opts: LaunchOptions, envVars: k8s.V1EnvVar[]):
 	}
 
 	return {
-		name: "openclaw-runtime",
-		image,
-		imagePullPolicy: "Always",
+			name: "openclaw-runtime",
+			image,
+			imagePullPolicy: opts.kind === "computer" ? "IfNotPresent" : "Always",
 		command: ["/bin/sh", "-lc"],
 		args: [`
 set -eu
@@ -306,9 +363,9 @@ function hermesRuntimeContainer(opts: LaunchOptions, envVars: k8s.V1EnvVar[]): k
 	}
 
 	return {
-		name: "hermes-runtime",
-		image,
-		imagePullPolicy: "Always",
+			name: "hermes-runtime",
+			image,
+			imagePullPolicy: opts.kind === "computer" ? "IfNotPresent" : "Always",
 		command: ["/bin/sh", "-lc"],
 		args: [`
 set -eu
@@ -347,15 +404,38 @@ function agentContainer(opts: LaunchOptions, imageUrl: string, envVars: k8s.V1En
 	// this container (browser tool calls are handled here regardless of
 	// integrationPath), so it always needs enough memory for Chromium on top
 	// of the daemon/AXL process — not just the openclaw/hermes bridge paths.
+	const computerResources = opts.kind === "computer" ? opts.resourceSpec : null;
+	const requests: Record<string, string> = computerResources
+		? {
+				cpu: computerResources.cpuRequest,
+				memory: computerResources.memoryRequest,
+			}
+		: { cpu: "10m", memory: "512Mi" };
+	const limits: Record<string, string> = computerResources
+		? {
+				cpu: computerResources.cpuLimit,
+				memory: computerResources.memoryLimit,
+				...(computerResources.gpu.count > 0
+					? { "nvidia.com/gpu": String(computerResources.gpu.count) }
+					: {}),
+			}
+		: { cpu: "2", memory: "4Gi" };
 	return {
-		name:            "agent",
-		image:           imageUrl,
-		imagePullPolicy: "Always",
-		env:             envVars,
-		resources: {
-			requests: { cpu: "10m", memory: "512Mi" },
-			limits:   { cpu: "2",    memory: "4Gi"   },
-		},
+			name:            "agent",
+			image:           imageUrl,
+			imagePullPolicy: opts.kind === "computer" ? "IfNotPresent" : "Always",
+			env:             envVars,
+			resources: {
+				requests,
+				limits,
+			},
+			securityContext:
+				opts.kind === "computer"
+					? {
+							allowPrivilegeEscalation: false,
+							capabilities: { drop: ["ALL"] },
+						}
+					: undefined,
 		ports: [{ name: "agent-tools", containerPort: Number(process.env.AGENT_TOOLS_PORT ?? "4100") }],
 		volumeMounts: [{ name: "agent-storage", mountPath: "/mnt/shared" }],
 	};
@@ -368,9 +448,9 @@ function guestRuntimeContainer(opts: LaunchOptions, envVars: k8s.V1EnvVar[]): k8
 	}
 
 	return {
-		name:            "guest-runtime",
-		image:           opts.dockerImage,
-		imagePullPolicy: "Always",
+			name:            "guest-runtime",
+			image:           opts.dockerImage,
+			imagePullPolicy: opts.kind === "computer" ? "IfNotPresent" : "Always",
 		env: [
 			...envVars,
 			{ name: "COMMONOS_RUNTIME_ROLE", value: "guest" },
@@ -806,7 +886,8 @@ function defaultGcpAgentImageUrl(_projectId: string, _region: string): string {
  *   - agent container: common-os-agent image (entrypoint.sh → bunx common-os-daemon)
  * AXL runs as a background process inside the agent container (started in entrypoint.sh).
  * Storage: GCS FUSE CSI volume when GCP_AGENT_STORAGE_MODE=gcsfuse,
- * otherwise emptyDir. Both mount at /mnt/shared.
+ * otherwise emptyDir for legacy fleet agents. Persistent computers require
+ * durable GCS Fuse storage and fail closed when it is unavailable.
  */
 export async function launchAgentPod(
 	opts: LaunchOptions,
@@ -821,20 +902,42 @@ export async function launchAgentPod(
 	const useGcsFuse =
 		process.env.GCP_AGENT_STORAGE_MODE === "gcsfuse" ||
 		process.env.GCS_FUSE_ENABLED === "true";
+	if (opts.kind === "computer" && !useGcsFuse) {
+		throw new Error(
+			"Persistent GCS Fuse storage is required for agent computers on GKE",
+		);
+	}
 
 	const sessionId = uuidv4();
 	// Kubernetes names must be RFC 1123: lowercase alphanumeric + '-' only
 	const k8sId = opts.agentId.replace(/_/g, "-");
-	const namespace = `agent-${k8sId}`;
-	const podName = `agent-${k8sId}`;
+	const computerIdentity = computerRuntimeIdentity(opts.tenantId, opts.agentId);
+	const namespace =
+		opts.kind === "computer" ? computerIdentity.namespace : `agent-${k8sId}`;
+	const podName =
+		opts.kind === "computer" ? computerIdentity.podName : `agent-${k8sId}`;
 
 	console.log(`[cloud-init] getting kubeconfig for ${opts.agentId}...`);
-	await getKubeConfig(projectId, region, clusterName);
+	const kc = await getKubeConfig(projectId, region, clusterName);
 	console.log(`[cloud-init] kubeconfig obtained`);
 
 	// Namespace per agent — provides isolation boundary
 	console.log(`[cloud-init] creating namespace ${namespace}...`);
-	await ensureNamespaceWithRetry(projectId, region, clusterName, namespace, commonK8sLabels(opts));
+	const namespaceLabels =
+		opts.kind === "computer"
+			? computerNamespaceManifests(namespace, commonK8sLabels(opts))
+					.namespaceLabels
+			: commonK8sLabels(opts);
+	await ensureNamespaceWithRetry(
+		projectId,
+		region,
+		clusterName,
+		namespace,
+		namespaceLabels,
+	);
+	if (opts.kind === "computer") {
+		await ensureComputerNamespaceHardening(kc, namespace, commonK8sLabels(opts));
+	}
 	console.log(`[cloud-init] namespace ready, creating pod ${podName} with image ${imageUrl}...`);
 
 	const envVars = commonRuntimeEnv(opts, imageUrl);
@@ -847,14 +950,19 @@ export async function launchAgentPod(
 				readOnly: false,
 				volumeAttributes: {
 					bucketName,
-					mountOptions: `implicit-dirs,only-dir=agents/${opts.agentId}/sessions/${sessionId}`,
+					mountOptions: `implicit-dirs,only-dir=agents/${opts.agentId}/sessions/${opts.kind === "computer" ? "persistent" : sessionId}`,
 				},
 			},
 		}
 		: { name: "agent-storage", emptyDir: {} };
 
 	if (useGcsFuse) {
-		await ensureAgentStorage(projectId, bucketName, opts.agentId, sessionId);
+		await ensureAgentStorage(
+			projectId,
+			bucketName,
+			opts.agentId,
+			opts.kind === "computer" ? "persistent" : sessionId,
+		);
 	}
 
 	const openClawContainer = openClawRuntimeContainer(opts, envVars);
@@ -864,16 +972,28 @@ export async function launchAgentPod(
 		metadata: {
 			name: podName,
 			namespace,
-			labels: {
-				"managed-by": "common-os",
-				"agent-id": k8sLabelValue(opts.agentId),
-			},
+			labels: commonK8sLabels(opts),
 			annotations: {
 				"common-os/agent-image": imageUrl,
+				"common-os/resource-generation": String(
+					opts.resourceGeneration ?? 1,
+				),
 			},
 		},
 		spec: {
 			restartPolicy: "Always",
+			automountServiceAccountToken:
+				opts.kind === "computer" ? false : undefined,
+			securityContext:
+				opts.kind === "computer"
+					? { seccompProfile: { type: "RuntimeDefault" } }
+					: undefined,
+			runtimeClassName:
+				opts.kind === "computer"
+					? opts.resourceSpec?.runtimeClassName ??
+						process.env.COMPUTER_RUNTIME_CLASS ??
+						undefined
+					: undefined,
 			containers: [
 				agentContainer(opts, imageUrl, envVars),
 				...(openClawContainer ? [openClawContainer] : []),
@@ -887,7 +1007,12 @@ export async function launchAgentPod(
 	await ensurePodWithRetry(projectId, region, clusterName, namespace, podBody);
 
 	console.log(`[cloud-init] pod ${podName} created in namespace ${namespace} using image ${imageUrl}${openClawContainer ? ` openclaw=${openClawContainer.image}` : ""}${hermesContainer ? ` hermes=${hermesContainer.image}` : ""}${guestContainer ? ` guest=${opts.dockerImage}` : ""}`);
-	return { serviceId: namespace, sessionId };
+	return {
+		serviceId: namespace,
+		sessionId,
+		podName,
+		pvcName: useGcsFuse ? `gcs://${bucketName}/agents/${opts.agentId}/sessions/persistent` : null,
+	};
 }
 
 /**
@@ -1031,8 +1156,12 @@ async function ensureEksEfsStorageClass(
 					basePath: "/agents",
 					ensureUniqueDirectory: "true",
 				},
-				reclaimPolicy: "Retain",
-				mountOptions: ["tls"],
+					// Sleeping deletes only the pod; the claim remains. Explicit
+					// computer destruction deletes the claim and must release its EFS
+					// access point instead of orphaning billable storage.
+					reclaimPolicy: "Delete",
+					allowVolumeExpansion: true,
+					mountOptions: ["tls"],
 				volumeBindingMode: "Immediate",
 			},
 		});
@@ -1048,39 +1177,56 @@ async function ensureEksEfsStorageClass(
 
 /**
  * Provisions one Kubernetes namespace + pod per agent on the shared EKS cluster.
- * Storage: EFS CSI volume if EFS_FILE_SYSTEM_ID is set, otherwise emptyDir.
+ * Storage: EFS CSI when configured, otherwise emptyDir for legacy fleet
+ * agents. Persistent computers fail closed unless EFS is configured.
  */
-export async function launchAgentPodEks(opts: LaunchOptions): Promise<LaunchedService> {
-	const region      = process.env.AWS_REGION ?? "us-east-1";
+export async function launchAgentPodEks(
+	opts: LaunchOptions,
+): Promise<LaunchedService> {
+	const region = process.env.AWS_REGION ?? "us-east-1";
 	const clusterName = process.env.EKS_CLUSTER ?? "common-os-agents";
-	const imageUrl    = process.env.AGENT_IMAGE_URL ?? "ghcr.io/arttribute/common-os/agent:latest";
-	const efsId       = process.env.EFS_FILE_SYSTEM_ID ?? "";
+	const imageUrl =
+		process.env.AGENT_IMAGE_URL ?? "ghcr.io/arttribute/common-os/agent:latest";
+	const efsId = process.env.EFS_FILE_SYSTEM_ID ?? "";
+	if (opts.kind === "computer" && !efsId) {
+		throw new Error(
+			"Persistent EFS storage is required for agent computers on EKS",
+		);
+	}
 	const efsStorageClass = process.env.EFS_STORAGE_CLASS ?? "common-os-efs";
 
 	const sessionId = uuidv4();
 	const k8sId = opts.agentId.replace(/_/g, "-");
-	const namespace = `agent-${k8sId}`;
-	const podName   = `agent-${k8sId}`;
+	const identity = computerRuntimeIdentity(opts.tenantId, opts.agentId);
+	const namespace =
+		opts.kind === "computer" ? identity.namespace : `agent-${k8sId}`;
+	const podName = opts.kind === "computer" ? identity.podName : `agent-${k8sId}`;
+	const pvcName = opts.kind === "computer" ? identity.pvcName : "agent-storage";
 
 	const kc = await getEksKubeConfig(region, clusterName);
 	const coreApi = kc.makeApiClient(k8s.CoreV1Api);
 	const storageClassName = efsId
-		? await ensureEksEfsStorageClass(kc, efsStorageClass, efsId)
+		? await ensureEksEfsStorageClass(
+				kc,
+				opts.kind === "computer"
+					? `${efsStorageClass}-computers-v2`
+					: efsStorageClass,
+				efsId,
+			)
 		: "";
+	const labels = commonK8sLabels(opts);
+	const namespaceLabels =
+		opts.kind === "computer"
+			? computerNamespaceManifests(namespace, labels).namespaceLabels
+			: labels;
 
-	try {
-		await coreApi.createNamespace({
-			body: {
-				metadata: {
-					name: namespace,
-					labels: commonK8sLabels(opts),
-				},
-			},
-		});
-	} catch (err: unknown) {
-		const code = (err as { statusCode?: number; code?: number })?.statusCode ?? (err as { code?: number })?.code;
-		if (code !== 409) throw err;
-		// Already exists — reuse
+	await createOrIgnoreConflict(() =>
+		coreApi.createNamespace({
+			body: { metadata: { name: namespace, labels: namespaceLabels } },
+		}),
+	);
+	if (opts.kind === "computer") {
+		await ensureComputerNamespaceHardening(kc, namespace, labels);
 	}
 
 	const envVars = commonRuntimeEnv(opts, imageUrl);
@@ -1093,52 +1239,100 @@ export async function launchAgentPodEks(opts: LaunchOptions): Promise<LaunchedSe
 			await coreApi.createNamespacedPersistentVolumeClaim({
 				namespace,
 				body: {
-					metadata: { name: "agent-storage", namespace },
+					metadata: { name: pvcName, namespace, labels },
 					spec: {
 						accessModes: ["ReadWriteMany"],
-						resources: { requests: { storage: "5Gi" } },
+						resources: {
+							requests: {
+								storage: `${
+									opts.kind === "computer"
+										? opts.resourceSpec?.storageGiB ?? 10
+										: 5
+								}Gi`,
+							},
+						},
 						storageClassName,
 					},
 				},
 			});
-		} catch (err: unknown) {
-			const code = (err as { statusCode?: number })?.statusCode;
-			if (code !== 409) throw err;
+		} catch (error) {
+			const code = (error as { statusCode?: number }).statusCode;
+			if (code !== 409) throw error;
+			if (opts.kind === "computer") {
+				await coreApi.patchNamespacedPersistentVolumeClaim({
+					name: pvcName,
+					namespace,
+					body: {
+						spec: {
+							resources: {
+								requests: {
+									storage: `${opts.resourceSpec?.storageGiB ?? 10}Gi`,
+								},
+							},
+						},
+					},
+				});
+			}
 		}
 	}
 
-	// The dynamically provisioned PVC keeps the workspace across pod restarts.
 	const volume: k8s.V1Volume = efsId
 		? {
-			name: "agent-storage",
-			persistentVolumeClaim: { claimName: "agent-storage" },
-		}
+				name: "agent-storage",
+				persistentVolumeClaim: { claimName: pvcName },
+			}
 		: { name: "agent-storage", emptyDir: {} };
 
-	await coreApi.createNamespacedPod({
-		namespace,
-		body: {
-			metadata: {
-				name: podName,
-				namespace,
-				labels: { "managed-by": "common-os", "agent-id": k8sLabelValue(opts.agentId) },
-				annotations: { "common-os/agent-image": imageUrl },
+	await createOrIgnoreConflict(() =>
+		coreApi.createNamespacedPod({
+			namespace,
+			body: {
+				metadata: {
+					name: podName,
+					namespace,
+					labels,
+					annotations: {
+						"common-os/agent-image": imageUrl,
+						"common-os/resource-generation": String(
+							opts.resourceGeneration ?? 1,
+						),
+					},
+				},
+				spec: {
+					restartPolicy: "Always",
+					automountServiceAccountToken:
+						opts.kind === "computer" ? false : undefined,
+					securityContext:
+						opts.kind === "computer"
+							? { seccompProfile: { type: "RuntimeDefault" } }
+							: undefined,
+					runtimeClassName:
+						opts.kind === "computer"
+							? opts.resourceSpec?.runtimeClassName ??
+								process.env.COMPUTER_RUNTIME_CLASS ??
+								undefined
+							: undefined,
+					containers: [
+						agentContainer(opts, imageUrl, envVars),
+						...(openClawContainer ? [openClawContainer] : []),
+						...(hermesContainer ? [hermesContainer] : []),
+						...(guestContainer ? [guestContainer] : []),
+					],
+					volumes: [volume],
+				},
 			},
-			spec: {
-				restartPolicy: "Always",
-				containers: [
-					agentContainer(opts, imageUrl, envVars),
-					...(openClawContainer ? [openClawContainer] : []),
-					...(hermesContainer ? [hermesContainer] : []),
-					...(guestContainer ? [guestContainer] : []),
-				],
-				volumes: [volume],
-			},
-		},
-	});
+		}),
+	);
 
-	console.log(`[cloud-init] EKS pod ${podName} created in namespace ${namespace} using image ${imageUrl}${openClawContainer ? ` openclaw=${openClawContainer.image}` : ""}${hermesContainer ? ` hermes=${hermesContainer.image}` : ""}${guestContainer ? ` guest=${opts.dockerImage}` : ""}`);
-	return { serviceId: namespace, sessionId };
+	console.log(
+		`[cloud-init] EKS pod ${podName} created in namespace ${namespace} using image ${imageUrl}`,
+	);
+	return {
+		serviceId: namespace,
+		sessionId,
+		podName,
+		pvcName: efsId ? pvcName : null,
+	};
 }
 
 export async function terminateAgentPodEks(namespace: string): Promise<void> {
@@ -1156,9 +1350,68 @@ export async function terminateAgentPodEks(namespace: string): Promise<void> {
 	}
 }
 
+export async function suspendComputerPod(opts: {
+	provider: "gcp" | "aws";
+	region?: string | null;
+	namespace: string;
+	podName: string;
+}): Promise<void> {
+	const kc = await kubeConfigForProvider(opts.provider, opts.region);
+	const coreApi = kc.makeApiClient(k8s.CoreV1Api);
+	try {
+		await coreApi.deleteNamespacedPod({
+			name: opts.podName,
+			namespace: opts.namespace,
+			gracePeriodSeconds: 20,
+		});
+	} catch (error) {
+		const code =
+			(error as { statusCode?: number; code?: number }).statusCode ??
+			(error as { code?: number }).code;
+		if (code !== 404) throw error;
+	}
+}
+
+export async function destroyComputerRuntime(opts: {
+	provider: "gcp" | "aws";
+	region?: string | null;
+	namespace: string;
+	podName: string;
+	pvcName?: string | null;
+	workspaceUri?: string | null;
+}): Promise<void> {
+	await suspendComputerPod(opts);
+	if (opts.provider === "gcp" && opts.workspaceUri?.startsWith("gcs://")) {
+		const location = opts.workspaceUri.slice("gcs://".length);
+		const slash = location.indexOf("/");
+		const bucketName = slash < 0 ? location : location.slice(0, slash);
+		const prefix = slash < 0 ? "" : location.slice(slash + 1).replace(/\/?$/, "/");
+		if (!bucketName || !prefix) {
+			throw new Error("invalid persistent GCS workspace URI");
+		}
+		await new Storage().bucket(bucketName).deleteFiles({ prefix });
+	}
+	if (!opts.pvcName) return;
+	const kc = await kubeConfigForProvider(opts.provider, opts.region);
+	const coreApi = kc.makeApiClient(k8s.CoreV1Api);
+	try {
+		await coreApi.deleteNamespacedPersistentVolumeClaim({
+			name: opts.pvcName,
+			namespace: opts.namespace,
+		});
+	} catch (error) {
+		const code =
+			(error as { statusCode?: number; code?: number }).statusCode ??
+			(error as { code?: number }).code;
+		if (code !== 404) throw error;
+	}
+}
+
 export async function inspectAgentPodEks(
 	namespace: string,
 	agentId: string,
+	explicitPodName?: string,
+	explicitPvcName?: string | null,
 ): Promise<{
 	phase: string | null;
 	nodeName: string | null;
@@ -1178,7 +1431,7 @@ export async function inspectAgentPodEks(
 	const clusterName = process.env.EKS_CLUSTER ?? "common-os-agents";
 	const kc = await getEksKubeConfig(region, clusterName);
 	const coreApi = kc.makeApiClient(k8s.CoreV1Api);
-	const podName = `agent-${agentId.replace(/_/g, "-")}`;
+	const podName = explicitPodName ?? `agent-${agentId.replace(/_/g, "-")}`;
 
 	const pod = await coreApi.readNamespacedPod({ namespace, name: podName });
 	const containers = (pod.status?.containerStatuses ?? []).map((container) => {
@@ -1199,7 +1452,7 @@ export async function inspectAgentPodEks(
 	try {
 		const claim = await coreApi.readNamespacedPersistentVolumeClaim({
 			namespace,
-			name: "agent-storage",
+			name: explicitPvcName ?? "agent-storage",
 		});
 		pvc = {
 			phase: claim.status?.phase ?? null,

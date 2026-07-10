@@ -21,6 +21,7 @@ import { activityRouter } from './routes/activity.js'
 import { worldStates, ensureIndexes } from './db/mongo.js'
 import { subscribeToFleet, unsubscribeFromFleet } from './db/memory.js'
 import type { Env } from './types.js'
+import { startComputerReconciler } from './services/computer-reconciler.js'
 
 const app = new Hono<Env>()
 
@@ -60,6 +61,7 @@ const server = serve({ fetch: app.fetch, port }, () => {
 })
 
 void ensureIndexes()
+startComputerReconciler()
 
 // WebSocket server attached to the same HTTP server
 // GET /fleets/:id/stream?token=<api-key-or-agent-token>

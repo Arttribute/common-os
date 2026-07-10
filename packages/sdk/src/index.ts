@@ -49,21 +49,23 @@ export class CommonOSClient {
 
 	readonly computers = {
 		create: (body: {
-			fleetId?: string;
 			name?: string;
-			role?: string;
 			systemPrompt?: string;
-			permissionTier?: "manager" | "worker";
-			room?: string;
-			integrationPath?: "native" | "openclaw" | "hermes" | "guest";
 			dockerImage?: string | null;
-			image?: string | null;
-			agentCommonsId?: string;
-			[key: string]: unknown;
+			agentCommonsId: string;
+			resourceProfile?: "starter" | "standard" | "performance" | "gpu";
+			resourceMode?: "fixed" | "elastic";
+			resources?: {
+				vcpu?: number;
+				memoryGiB?: number;
+				storageGiB?: number;
+				gpu?: { count?: number; type?: string | null } | null;
+			};
+			idleTtlMinutes?: number;
 		}) => this.post("/computers", body),
-		list: (query: { fleetId?: string; includeTerminated?: boolean } = {}) => {
+		list: (query: { agentCommonsId?: string; includeTerminated?: boolean } = {}) => {
 			const params = new URLSearchParams();
-			if (query.fleetId) params.set("fleetId", query.fleetId);
+			if (query.agentCommonsId) params.set("agentCommonsId", query.agentCommonsId);
 			if (query.includeTerminated) params.set("includeTerminated", "true");
 			const qs = params.toString();
 			return this.get(`/computers${qs ? `?${qs}` : ""}`);
@@ -77,6 +79,27 @@ export class CommonOSClient {
 			this.post(`/computers/${computerId}/instructions`, body),
 		instructions: (computerId: string) =>
 			this.get(`/computers/${computerId}/instructions`),
+		wake: (computerId: string) =>
+			this.patch(`/computers/${computerId}`, { desiredState: "running" }),
+		sleep: (computerId: string) =>
+			this.patch(`/computers/${computerId}`, { desiredState: "stopped" }),
+		restart: (computerId: string) =>
+			this.post(`/computers/${computerId}/restart`, {}),
+		resize: (
+			computerId: string,
+			body: {
+				resourceProfile?: "starter" | "standard" | "performance" | "gpu";
+				resourceMode?: "fixed" | "elastic";
+				resources?: {
+					vcpu?: number;
+					memoryGiB?: number;
+					storageGiB?: number;
+					gpu?: { count?: number; type?: string | null } | null;
+				};
+			},
+		) => this.patch(`/computers/${computerId}`, body),
+		destroy: (computerId: string) => this.delete(`/computers/${computerId}`),
+		/** @deprecated Use destroy; sleeping preserves the workspace. */
 		terminate: (computerId: string) => this.delete(`/computers/${computerId}`),
 	};
 

@@ -274,45 +274,34 @@ program.addCommand(agentCmd);
 
 // ─── computer ────────────────────────────────────────────────────────────────
 
-const computerCmd = new Command("computer").description("General computer pod commands");
+const computerCmd = new Command("computer").description("Persistent agent computer commands");
 
 computerCmd.addCommand(
   new Command("create")
-    .description("Provision a CommonOS computer pod")
-    .option("--fleet <fleet-id>", "Placement fleet ID")
+    .description("Provision or wake an agent's one persistent computer")
     .option("--name <name>", "Computer name", "computer")
     .option("--prompt <prompt>", "Runtime system prompt")
     .option("--image <image>", "Docker image URI")
-    .option("--runtime <runtime>", "Runtime: native, openclaw, hermes, or guest")
-    .option("--agent-commons-id <agent-id>", "Agent Commons agent ID to bind ownership")
-    .option("--tier <tier>", "Permission tier: manager or worker", "worker")
-    .option("--room <room>", "Room to place computer in", "dev-room")
+    .requiredOption("--agent-commons-id <agent-id>", "Agent Commons agent ID to bind ownership")
+    .option("--profile <profile>", "starter, standard, performance, or gpu", "standard")
+    .option("--mode <mode>", "elastic or fixed", "elastic")
     .action(async (opts: {
-      fleet?: string;
       name: string;
       prompt?: string;
       image?: string;
-      runtime?: "native" | "openclaw" | "hermes" | "guest";
-      agentCommonsId?: string;
-      tier: string;
-      room: string;
+      agentCommonsId: string;
+      profile: "starter" | "standard" | "performance" | "gpu";
+      mode: "elastic" | "fixed";
     }) => {
       const spinner = ora(`Provisioning ${opts.name}…`).start();
       try {
-        const integrationPath = opts.runtime ?? (opts.image ? "guest" : "native");
-        if (!["native", "openclaw", "hermes", "guest"].includes(integrationPath)) {
-          throw new Error(`Unsupported runtime "${integrationPath}"`);
-        }
         const result = await getClient().computers.create({
-          fleetId: opts.fleet,
           name: opts.name,
-          role: opts.name,
           systemPrompt: opts.prompt,
           dockerImage: opts.image ?? null,
-          integrationPath,
-          permissionTier: opts.tier as "manager" | "worker",
-          room: opts.room,
           agentCommonsId: opts.agentCommonsId,
+          resourceProfile: opts.profile,
+          resourceMode: opts.mode,
         });
         const id = (result as { _id?: string })?._id ?? "";
         spinner.succeed(chalk.green(`Computer provisioned${id ? `  ${id}` : ""}`));
@@ -327,12 +316,12 @@ computerCmd.addCommand(
 
 computerCmd.addCommand(
   new Command("ls")
-    .description("List computer pods")
-    .option("--fleet <fleet-id>", "Filter by placement fleet")
+    .description("List persistent agent computers")
+    .option("--agent-commons-id <agent-id>", "Filter by Agent Commons agent")
     .option("--all", "Include terminated computers")
-    .action(async (opts: { fleet?: string; all?: boolean }) => {
+    .action(async (opts: { agentCommonsId?: string; all?: boolean }) => {
       print(await getClient().computers.list({
-        fleetId: opts.fleet,
+        agentCommonsId: opts.agentCommonsId,
         includeTerminated: Boolean(opts.all),
       }));
     }),
@@ -344,6 +333,55 @@ computerCmd.addCommand(
     .argument("<computer-id>", "Computer ID")
     .action(async (computerId: string) => {
       print(await getClient().computers.get(computerId));
+    }),
+);
+
+for (const action of ["wake", "sleep", "restart"] as const) {
+  computerCmd.addCommand(
+    new Command(action)
+      .description(
+        action === "sleep"
+          ? "Sleep compute while retaining the persistent workspace"
+          : action === "restart"
+            ? "Replace the runtime while retaining the persistent workspace"
+            : "Wake the persistent computer",
+      )
+      .argument("<computer-id>", "Computer ID")
+      .action(async (computerId: string) => {
+        const spinner = ora(`${action[0]!.toUpperCase()}${action.slice(1)}ing computer…`).start();
+        try {
+          const result = await getClient().computers[action](computerId);
+          spinner.succeed(chalk.green(`Computer ${action} requested`));
+          print(result);
+        } catch (error) {
+          spinner.fail(chalk.red(`Computer ${action} failed`));
+          console.error(error);
+          process.exit(1);
+        }
+      }),
+  );
+}
+
+computerCmd.addCommand(
+  new Command("resize")
+    .description("Change the computer's elastic resource ceiling")
+    .argument("<computer-id>", "Computer ID")
+    .option("--profile <profile>", "starter, standard, performance, or gpu")
+    .option("--mode <mode>", "elastic or fixed")
+    .option("--vcpu <count>", "vCPU ceiling")
+    .option("--memory <gib>", "Memory ceiling in GiB")
+    .option("--storage <gib>", "Persistent storage in GiB (grow only)")
+    .action(async (computerId: string, opts: { profile?: any; mode?: any; vcpu?: string; memory?: string; storage?: string }) => {
+      const resources = {
+        ...(opts.vcpu ? { vcpu: Number(opts.vcpu) } : {}),
+        ...(opts.memory ? { memoryGiB: Number(opts.memory) } : {}),
+        ...(opts.storage ? { storageGiB: Number(opts.storage) } : {}),
+      };
+      print(await getClient().computers.resize(computerId, {
+        ...(opts.profile ? { resourceProfile: opts.profile } : {}),
+        ...(opts.mode ? { resourceMode: opts.mode } : {}),
+        ...(Object.keys(resources).length ? { resources } : {}),
+      }));
     }),
 );
 
@@ -400,13 +438,13 @@ computerCmd.addCommand(
 
 computerCmd.addCommand(
   new Command("terminate")
-    .description("Terminate a computer pod")
+    .description("Permanently destroy a computer and its workspace")
     .argument("<computer-id>", "Computer ID")
     .action(async (computerId: string) => {
       const spinner = ora("Terminating computer…").start();
       try {
-        const result = await getClient().computers.terminate(computerId);
-        spinner.succeed(chalk.yellow("Computer terminated"));
+        const result = await getClient().computers.destroy(computerId);
+        spinner.succeed(chalk.yellow("Computer and workspace destroyed"));
         print(result);
       } catch (err) {
         spinner.fail(chalk.red("Termination failed"));

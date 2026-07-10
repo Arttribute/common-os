@@ -51,6 +51,26 @@ await client.tasks.send("flt_xxx", "agt_xxx", {
 await client.tasks.list("flt_xxx", "agt_xxx");
 ```
 
+### Persistent computers
+
+```ts
+const computer = await client.computers.create({
+  agentCommonsId: "agent_xxx",
+  resourceProfile: "standard",
+  resourceMode: "elastic",
+});
+
+await client.computers.sleep(computer._id);
+await client.computers.wake(computer._id);
+await client.computers.resize(computer._id, {
+  resourceProfile: "performance",
+});
+await client.computers.restart(computer._id);
+```
+
+`sleep` retains the workspace. `destroy` is intentionally separate and
+destructive.
+
 ### World
 
 ```ts

@@ -4,6 +4,8 @@ import type { AgentDoc } from '../../types.js'
 const AgentSchema = new Schema<AgentDoc>(
   {
     _id: { type: String },
+    kind: { type: String, enum: ['agent', 'computer'], default: 'agent', required: true },
+    externalAgentId: { type: String, default: null },
     fleetId: { type: String, required: true },
     tenantId: { type: String, required: true },
     commons: {
@@ -35,6 +37,73 @@ const AgentSchema = new Schema<AgentDoc>(
     },
     agentTokenHash: { type: String, required: true },
     status: String,
+    desiredState: {
+      type: String,
+      enum: ['running', 'stopped', 'terminated'],
+      default: 'running',
+      required: true,
+    },
+    resourceProfile: {
+      type: String,
+      enum: ['starter', 'standard', 'performance', 'gpu', null],
+      default: null,
+    },
+    resourceMode: {
+      type: String,
+      enum: ['fixed', 'elastic', null],
+      default: null,
+    },
+    resourceSpec: {
+      vcpu: Number,
+      cpuRequest: String,
+      cpuLimit: String,
+      memoryGiB: Number,
+      memoryRequest: String,
+      memoryLimit: String,
+      storageGiB: Number,
+      gpu: {
+        count: { type: Number, default: 0 },
+        type: { type: String, default: null },
+      },
+      runtimeClassName: { type: String, default: null },
+    },
+    resourceGeneration: { type: Number, default: 1 },
+    compute: {
+      ownerUserId: { type: String, default: null },
+      workspaceId: { type: String, default: null },
+      namespace: { type: String, default: null },
+      podName: { type: String, default: null },
+      pvcName: { type: String, default: null },
+      volumeRetained: { type: Boolean, default: true },
+      provisionRequestedAt: { type: Date, default: null },
+      readyAt: { type: Date, default: null },
+      activatedAt: { type: Date, default: null },
+      suspendedAt: { type: Date, default: null },
+      restartedAt: { type: Date, default: null },
+      currentActiveStartedAt: { type: Date, default: null },
+      lastActivityAt: { type: Date, default: null },
+      idleTtlMinutes: { type: Number, default: 60 },
+      policy: {
+        allowBrowser: { type: Boolean, default: true },
+        allowTerminal: { type: Boolean, default: true },
+        allowFilesystem: { type: Boolean, default: true },
+        networkAccess: {
+          type: String,
+          enum: ['standard', 'restricted', 'disabled'],
+          default: 'standard',
+        },
+      },
+      accumulatedActiveMs: { type: Number, default: 0 },
+      activeIntervals: [
+        new Schema(
+          {
+            startedAt: { type: Date, required: true },
+            endedAt: { type: Date, default: null },
+          },
+          { _id: false },
+        ),
+      ],
+    },
     permissionTier: { type: String, enum: ['manager', 'worker'] },
     config: {
       role: String,
@@ -78,6 +147,17 @@ const AgentSchema = new Schema<AgentDoc>(
 
 AgentSchema.index({ tenantId: 1, status: 1 })
 AgentSchema.index({ fleetId: 1 })
+AgentSchema.index({ tenantId: 1, kind: 1, status: 1 })
+AgentSchema.index(
+  { kind: 1, externalAgentId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      kind: 'computer',
+      externalAgentId: { $type: 'string' },
+    },
+  },
+)
 AgentSchema.index({ agentTokenHash: 1 }, { unique: true })
 AgentSchema.index({ 'pod.namespaceId': 1 }, { sparse: true })
 AgentSchema.index({ 'axl.peerId': 1 }, { sparse: true })

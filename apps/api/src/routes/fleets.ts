@@ -125,7 +125,7 @@ router.patch('/:id/orchestration', async (c) => {
 router.get('/', async (c) => {
   try {
     const list = await (await fleets())
-      .find({ tenantId: c.get('tenantId') })
+      .find({ tenantId: c.get('tenantId'), hidden: { $ne: true } })
       .sort({ createdAt: -1 })
       .lean()
     return c.json(list.map((fleet) => ({
@@ -164,7 +164,11 @@ router.get('/:id/costs', async (c) => {
 router.get('/:id', async (c) => {
   try {
     const fleet = await (await fleets())
-      .findOne({ _id: c.req.param('id'), tenantId: c.get('tenantId') })
+      .findOne({
+        _id: c.req.param('id'),
+        tenantId: c.get('tenantId'),
+        hidden: { $ne: true },
+      })
       .lean()
     if (!fleet) return c.json({ error: 'fleet not found' }, 404)
     return c.json({ ...fleet, orchestration: mergeOrchestration(fleet.orchestration) })

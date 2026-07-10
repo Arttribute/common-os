@@ -23,21 +23,27 @@ Enforcement is partly route-based and partly convention in the current implement
 
 ## Runtime Isolation
 
-On GCP, each agent gets:
+Ordinary fleet agents retain their existing per-agent placement model. Agent
+computers use a stricter owner-tenant boundary:
 
-- a Kubernetes namespace
-- a dedicated pod
-- GCS FUSE workspace mount
-- gVisor-oriented cluster design
-- a scoped token
-- AXL local node/API
+- one opaque Kubernetes namespace and quota per canonical human owner
+- one dedicated pod, scoped runtime token, and persistent claim per computer
+- Pod Security admission labels, runtime-default seccomp, dropped Linux
+  capabilities, no privilege escalation, and no service-account token mount
+- default-deny ingress and egress NetworkPolicies; public HTTP(S) egress cannot
+  reach private, link-local, or metadata ranges
+- encrypted GCS FUSE or EFS-backed persistence; computers never fall back to
+  `emptyDir`
 
-On AWS, the EKS path follows the same namespace and pod model, with EFS/emptyDir storage behavior depending on environment setup.
+The EKS bootstrap enables VPC CNI NetworkPolicy enforcement. A sandboxed
+`RuntimeClass` can be required with `COMPUTER_RUNTIME_CLASS` on clusters that
+provide gVisor or Kata Containers.
 
 ## Practical Safety
 
 - Do not commit `.env.local`, service account keys, or API keys.
 - Avoid putting `NEXT_PUBLIC_API_KEY` in deployed public frontends.
-- Use separate projects or clusters for untrusted workloads.
+- Require a sandboxed runtime class before accepting arbitrary third-party
+  container images in a hostile multi-tenant environment.
 - Treat guest Docker images as untrusted code and constrain their runtime.
 - Rotate tenant API keys if exposed.
