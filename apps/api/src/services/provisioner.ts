@@ -358,6 +358,16 @@ export async function launchCloudInstance(
 		worldY: agentDoc.world.y,
 		resourceSpec: agentDoc.resourceSpec ?? null,
 		resourceGeneration: agentDoc.resourceGeneration ?? 1,
+		existingNamespace:
+			agentDoc.kind === "computer"
+				? agentDoc.compute?.namespace ?? agentDoc.pod.namespaceId
+				: null,
+		existingPodName:
+			agentDoc.kind === "computer" ? agentDoc.compute?.podName : null,
+		existingPvcName:
+			agentDoc.kind === "computer" && agentDoc.pod.provider === "aws"
+				? agentDoc.compute?.pvcName
+				: null,
 	};
 
 	const deadline = new Promise<never>((_, reject) =>

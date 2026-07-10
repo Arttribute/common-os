@@ -56,6 +56,10 @@ export interface LaunchOptions {
 	worldY?: number;
 	resourceSpec?: ComputerResourceSpec | null;
 	resourceGeneration?: number;
+	/** Preserve runtime identity for computers migrated from the legacy API. */
+	existingNamespace?: string | null;
+	existingPodName?: string | null;
+	existingPvcName?: string | null;
 }
 
 export interface LaunchedService {
@@ -913,9 +917,13 @@ export async function launchAgentPod(
 	const k8sId = opts.agentId.replace(/_/g, "-");
 	const computerIdentity = computerRuntimeIdentity(opts.tenantId, opts.agentId);
 	const namespace =
-		opts.kind === "computer" ? computerIdentity.namespace : `agent-${k8sId}`;
+		opts.kind === "computer"
+			? opts.existingNamespace ?? computerIdentity.namespace
+			: `agent-${k8sId}`;
 	const podName =
-		opts.kind === "computer" ? computerIdentity.podName : `agent-${k8sId}`;
+		opts.kind === "computer"
+			? opts.existingPodName ?? computerIdentity.podName
+			: `agent-${k8sId}`;
 
 	console.log(`[cloud-init] getting kubeconfig for ${opts.agentId}...`);
 	const kc = await getKubeConfig(projectId, region, clusterName);
@@ -1199,9 +1207,17 @@ export async function launchAgentPodEks(
 	const k8sId = opts.agentId.replace(/_/g, "-");
 	const identity = computerRuntimeIdentity(opts.tenantId, opts.agentId);
 	const namespace =
-		opts.kind === "computer" ? identity.namespace : `agent-${k8sId}`;
-	const podName = opts.kind === "computer" ? identity.podName : `agent-${k8sId}`;
-	const pvcName = opts.kind === "computer" ? identity.pvcName : "agent-storage";
+		opts.kind === "computer"
+			? opts.existingNamespace ?? identity.namespace
+			: `agent-${k8sId}`;
+	const podName =
+		opts.kind === "computer"
+			? opts.existingPodName ?? identity.podName
+			: `agent-${k8sId}`;
+	const pvcName =
+		opts.kind === "computer"
+			? opts.existingPvcName ?? identity.pvcName
+			: "agent-storage";
 
 	const kc = await getEksKubeConfig(region, clusterName);
 	const coreApi = kc.makeApiClient(k8s.CoreV1Api);

@@ -12,7 +12,7 @@ describe("computer Kubernetes isolation", () => {
     expect(first.pvcName).not.toBe(second.pvcName);
   });
 
-  it("installs quota, limits, pod-security labels, and default-deny networking", () => {
+	it("installs quota, limits, pod-security labels, and default-deny networking", () => {
     const manifests = computerNamespaceManifests("tenant-test", {
       "managed-by": "common-os",
       "tenant-id": "tenant-test",
@@ -27,6 +27,11 @@ describe("computer Kubernetes isolation", () => {
       "Egress",
     ]);
     expect(manifests.policies[0]?.spec?.ingress).toEqual([]);
-    expect(manifests.policies[0]?.spec?.egress).toEqual([]);
-  });
+		expect(manifests.policies[0]?.spec?.egress).toEqual([]);
+	});
+
+	it("keeps deterministic identities available for legacy workspace reuse", () => {
+		const identity = computerRuntimeIdentity("tenant-a", "legacy-computer");
+		expect(identity).toEqual(computerRuntimeIdentity("tenant-a", "legacy-computer"));
+	});
 });
