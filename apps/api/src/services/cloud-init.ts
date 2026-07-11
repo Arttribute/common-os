@@ -125,9 +125,22 @@ async function ensureComputerNamespaceHardening(
   const core = kc.makeApiClient(k8s.CoreV1Api);
   const network = kc.makeApiClient(k8s.NetworkingV1Api);
   const manifests = computerNamespaceManifests(namespace, labels);
+  const currentNamespace = await core.readNamespace({ name: namespace });
   await core.patchNamespace({
     name: namespace,
-    body: { metadata: { labels: manifests.namespaceLabels } },
+    // @kubernetes/client-node 1.x selects JSON Patch as the preferred media
+    // type. Supplying a merge-patch object is therefore rejected by the API
+    // server. Preserve any platform labels and send an explicit JSON Patch.
+    body: [
+      {
+        op: "add",
+        path: "/metadata/labels",
+        value: {
+          ...(currentNamespace.metadata?.labels ?? {}),
+          ...manifests.namespaceLabels,
+        },
+      },
+    ],
   });
   await createOrIgnoreConflict(() =>
     core.createNamespacedResourceQuota({ namespace, body: manifests.quota })
@@ -1527,15 +1540,13 @@ export async function launchAgentPodEks(
         await coreApi.patchNamespacedPersistentVolumeClaim({
           name: pvcName,
           namespace,
-          body: {
-            spec: {
-              resources: {
-                requests: {
-                  storage: `${opts.resourceSpec?.storageGiB ?? 10}Gi`,
-                },
-              },
+          body: [
+            {
+              op: "replace",
+              path: "/spec/resources/requests/storage",
+              value: `${opts.resourceSpec?.storageGiB ?? 10}Gi`,
             },
-          },
+          ],
         });
       }
     }
