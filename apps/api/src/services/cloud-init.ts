@@ -17,6 +17,7 @@ import {
   qualifiedHermesModelId,
   qualifiedOpenClawModelId,
 } from "./runtime-models.js";
+import { kubernetesStatusCode } from "./kubernetes-errors.js";
 
 export { computerNamespaceManifests, computerRuntimeIdentity };
 
@@ -115,9 +116,7 @@ async function createOrIgnoreConflict(action: () => Promise<unknown>) {
   try {
     await action();
   } catch (error) {
-    const code =
-      (error as { statusCode?: number; code?: number }).statusCode ??
-      (error as { code?: number }).code;
+    const code = kubernetesStatusCode(error);
     if (code !== 409) throw error;
   }
 }
@@ -1238,7 +1237,7 @@ async function ensureNamespaceWithRetry(
       });
       return;
     } catch (err: unknown) {
-      const code = (err as { statusCode?: number })?.statusCode;
+      const code = kubernetesStatusCode(err);
       if (code === 409) return; // Already exists — success
       if (attempt === maxAttempts) throw err;
       console.log(
@@ -1267,7 +1266,7 @@ async function ensurePodWithRetry(
       await coreApi.createNamespacedPod({ namespace, body: podBody });
       return;
     } catch (err: unknown) {
-      const code = (err as { statusCode?: number })?.statusCode;
+      const code = kubernetesStatusCode(err);
       if (code === 409) return; // Already exists — success
       if (attempt === maxAttempts) throw err;
       console.log(
@@ -1593,9 +1592,7 @@ async function ensureEksEfsStorageClass(
       .slice(-8)
       .toLowerCase()}`;
   } catch (err: unknown) {
-    const code =
-      (err as { statusCode?: number; code?: number })?.statusCode ??
-      (err as { code?: number })?.code;
+    const code = kubernetesStatusCode(err);
     if (code !== 404) throw err;
   }
 
@@ -1626,9 +1623,7 @@ async function ensureEksEfsStorageClass(
       `[cloud-init] EFS storage class "${storageClassName}" configured`
     );
   } catch (err: unknown) {
-    const code =
-      (err as { statusCode?: number; code?: number })?.statusCode ??
-      (err as { code?: number })?.code;
+    const code = kubernetesStatusCode(err);
     if (code !== 409) throw err;
   }
 
@@ -1730,7 +1725,7 @@ export async function launchAgentPodEks(
         },
       });
     } catch (error) {
-      const code = (error as { statusCode?: number }).statusCode;
+      const code = kubernetesStatusCode(error);
       if (code !== 409) throw error;
       if (opts.kind === "computer") {
         await coreApi.patchNamespacedPersistentVolumeClaim({
@@ -1850,9 +1845,7 @@ export async function suspendComputerPod(opts: {
       gracePeriodSeconds: 20,
     });
   } catch (error) {
-    const code =
-      (error as { statusCode?: number; code?: number }).statusCode ??
-      (error as { code?: number }).code;
+    const code = kubernetesStatusCode(error);
     if (code !== 404) throw error;
   }
 }
@@ -1886,9 +1879,7 @@ export async function destroyComputerRuntime(opts: {
       namespace: opts.namespace,
     });
   } catch (error) {
-    const code =
-      (error as { statusCode?: number; code?: number }).statusCode ??
-      (error as { code?: number }).code;
+    const code = kubernetesStatusCode(error);
     if (code !== 404) throw error;
   }
 }
@@ -1956,9 +1947,7 @@ export async function inspectAgentPodEks(
       volumeName: claim.spec?.volumeName ?? null,
     };
   } catch (err: unknown) {
-    const code =
-      (err as { statusCode?: number; code?: number })?.statusCode ??
-      (err as { code?: number })?.code;
+    const code = kubernetesStatusCode(err);
     if (code !== 404) throw err;
   }
 
