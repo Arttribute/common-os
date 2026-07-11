@@ -1,5 +1,13 @@
 # @common-os/cli
 
+## 0.3.4
+
+### Patch Changes
+
+- Auto patch release
+- Updated dependencies
+  - @common-os/sdk@0.3.4
+
 ## 0.3.3
 
 ### Patch Changes
