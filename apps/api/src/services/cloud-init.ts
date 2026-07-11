@@ -697,8 +697,8 @@ export function runtimeStorageInitContainer(
       // runtime directories through the mounted access point gives every
       // container in this pod the same persistent identity.
       opts.integrationPath === "openclaw"
-        ? "mkdir -p /mnt/shared/openclaw/workspace && (chmod -R g+rwX /mnt/shared/openclaw || true)"
-        : "mkdir -p /mnt/shared/hermes && (chmod -R g+rwX /mnt/shared/hermes || true)",
+        ? "mkdir -p /mnt/shared/openclaw/workspace && (chmod g+rwx /mnt/shared/openclaw /mnt/shared/openclaw/workspace || true)"
+        : "mkdir -p /mnt/shared/hermes && (chmod g+rwx /mnt/shared/hermes || true)",
     ],
     securityContext: {
       runAsUser: 0,
