@@ -676,7 +676,7 @@ function hermesHealthProbe(): string[] {
   ];
 }
 
-function runtimeStorageInitContainer(
+export function runtimeStorageInitContainer(
   opts: LaunchOptions
 ): k8s.V1Container | null {
   if (opts.integrationPath !== "openclaw" && opts.integrationPath !== "hermes")
@@ -690,7 +690,9 @@ function runtimeStorageInitContainer(
       // so chown/chgrp is both unnecessary and rejected. Creating dedicated
       // runtime directories through the mounted access point gives every
       // container in this pod the same persistent identity.
-      "mkdir -p /mnt/shared/openclaw/workspace /mnt/shared/hermes && (chmod -R g+rwX /mnt/shared/openclaw /mnt/shared/hermes || true)",
+      opts.integrationPath === "openclaw"
+        ? "mkdir -p /mnt/shared/openclaw/workspace && (chmod -R g+rwX /mnt/shared/openclaw || true)"
+        : "mkdir -p /mnt/shared/hermes && (chmod -R g+rwX /mnt/shared/hermes || true)",
     ],
     securityContext: {
       runAsUser: 0,

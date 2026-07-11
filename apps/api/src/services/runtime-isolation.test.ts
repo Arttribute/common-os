@@ -3,6 +3,7 @@ jest.mock("uuid", () => ({ v4: () => "test-session-id" }));
 
 import {
   commonRuntimeEnv,
+  runtimeStorageInitContainer,
   type LaunchOptions,
 } from "./cloud-init";
 
@@ -52,5 +53,16 @@ describe("managed runtime environment isolation", () => {
     const environment = names("hermes");
     expect(environment).toEqual(expect.arrayContaining(["HERMES_CONFIG_JSON"]));
     expect(environment.some((name) => name.startsWith("OPENCLAW_"))).toBe(false);
+  });
+
+  it("initializes only the selected managed runtime's storage", () => {
+    const openclaw = runtimeStorageInitContainer(options("openclaw"));
+    const hermes = runtimeStorageInitContainer(options("hermes"));
+
+    expect(openclaw?.args?.join(" ")).toContain("/mnt/shared/openclaw");
+    expect(openclaw?.args?.join(" ")).not.toContain("/mnt/shared/hermes");
+    expect(hermes?.args?.join(" ")).toContain("/mnt/shared/hermes");
+    expect(hermes?.args?.join(" ")).not.toContain("/mnt/shared/openclaw");
+    expect(runtimeStorageInitContainer(options("native"))).toBeNull();
   });
 });
