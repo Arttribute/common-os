@@ -17,7 +17,10 @@ import {
   qualifiedOpenClawModelId,
 } from "./runtime-models.js";
 import { kubernetesStatusCode } from "./kubernetes-errors.js";
-import { buildHermesGatewayConfig } from "./hermes-config.js";
+import {
+  buildHermesGatewayConfig,
+  hermesModelId,
+} from "./hermes-config.js";
 import { createKubernetesPodIdempotently } from "./kubernetes-pods.js";
 
 export { computerNamespaceManifests, computerRuntimeIdentity };
@@ -160,30 +163,16 @@ async function ensureComputerNamespaceHardening(
   }
 }
 
-function commonRuntimeEnv(
+export function commonRuntimeEnv(
   opts: LaunchOptions,
   imageUrl: string
 ): k8s.V1EnvVar[] {
-  const openclawConfigJson = JSON.stringify(buildOpenClawGatewayConfig(opts));
-  const openclawModel = openClawModelId(opts);
-  const openclawModelApiKey =
-    opts.openclawConfig?.modelApiKey ??
-    process.env.OPENCLAW_MODEL_API_KEY ??
-    "";
-  const providerEnvKey = openClawProviderEnvKey(
-    opts.openclawConfig?.modelProvider ??
-      process.env.OPENCLAW_MODEL_PROVIDER ??
-      "openai"
-  );
-  const hermesConfigJson = JSON.stringify(buildHermesGatewayConfig(opts));
-  const hermesModel = hermesModelId(opts);
-  const hermesModelApiKey =
-    opts.hermesConfig?.modelApiKey ?? process.env.HERMES_MODEL_API_KEY ?? "";
-  const hermesProviderEnvKey = providerEnvKeyFor(
-    opts.hermesConfig?.modelProvider ??
-      process.env.HERMES_MODEL_PROVIDER ??
-      "openai"
-  );
+  const runtimeSpecificEnv =
+    opts.integrationPath === "openclaw"
+      ? openClawRuntimeEnv(opts)
+      : opts.integrationPath === "hermes"
+        ? hermesRuntimeEnv(opts)
+        : [];
   return [
     { name: "AGENT_ID", value: opts.agentId },
     { name: "AGENT_TOKEN", value: opts.agentToken },
@@ -208,65 +197,7 @@ function commonRuntimeEnv(
       value:
         process.env.AGC_INITIATOR ?? process.env.AGENTCOMMONS_INITIATOR ?? "",
     },
-    {
-      name: "OPENCLAW_GATEWAY_URL",
-      value:
-        opts.openclawGatewayUrl ??
-        process.env.OPENCLAW_GATEWAY_URL ??
-        "http://localhost:18789",
-    },
-    {
-      name: "OPENCLAW_MODEL_PROVIDER",
-      value:
-        opts.openclawConfig?.modelProvider ??
-        process.env.OPENCLAW_MODEL_PROVIDER ??
-        "openai",
-    },
-    { name: "OPENCLAW_MODEL_ID", value: openclawModel },
-    { name: "OPENCLAW_MODEL_API_KEY", value: openclawModelApiKey },
-    ...(opts.integrationPath === "openclaw"
-      ? [{ name: providerEnvKey, value: openclawModelApiKey }]
-      : []),
-    {
-      name: "OPENCLAW_CHANNELS_JSON",
-      value: JSON.stringify(opts.openclawConfig?.channels ?? {}),
-    },
-    { name: "OPENCLAW_CONFIG_JSON", value: openclawConfigJson },
-    {
-      name: "OPENCLAW_PLUGINS",
-      value: (opts.openclawConfig?.plugins ?? []).join(","),
-    },
-    {
-      name: "OPENCLAW_DM_POLICY",
-      value: opts.openclawConfig?.dmPolicy ?? "pairing",
-    },
-    {
-      name: "HERMES_GATEWAY_URL",
-      value:
-        opts.hermesGatewayUrl ??
-        process.env.HERMES_GATEWAY_URL ??
-        "http://localhost:8642",
-    },
-    {
-      name: "HERMES_MODEL_PROVIDER",
-      value:
-        opts.hermesConfig?.modelProvider ??
-        process.env.HERMES_MODEL_PROVIDER ??
-        "openai",
-    },
-    { name: "HERMES_MODEL_ID", value: hermesModel },
-    { name: "HERMES_MODEL_API_KEY", value: hermesModelApiKey },
-    {
-      name: "HERMES_GATEWAY_API_KEY",
-      value:
-        opts.hermesConfig?.gatewayApiKey ??
-        process.env.HERMES_GATEWAY_API_KEY ??
-        "",
-    },
-    ...(opts.integrationPath === "hermes"
-      ? [{ name: hermesProviderEnvKey, value: hermesModelApiKey }]
-      : []),
-    { name: "HERMES_CONFIG_JSON", value: hermesConfigJson },
+    ...runtimeSpecificEnv,
     { name: "WORKSPACE_DIR", value: opts.workspaceDir ?? "/mnt/shared" },
     { name: "COMMONOS_WORKSPACE", value: opts.workspaceDir ?? "/mnt/shared" },
     { name: "COMMONOS_AGENT_IMAGE", value: imageUrl },
@@ -296,6 +227,91 @@ function commonRuntimeEnv(
     { name: "WORLD_ROOM", value: opts.worldRoom ?? "dev-room" },
     { name: "WORLD_X", value: String(opts.worldX ?? 2) },
     { name: "WORLD_Y", value: String(opts.worldY ?? 2) },
+  ];
+}
+
+function openClawRuntimeEnv(opts: LaunchOptions): k8s.V1EnvVar[] {
+  const configJson = JSON.stringify(buildOpenClawGatewayConfig(opts));
+  const openclawModel = openClawModelId(opts);
+  const openclawModelApiKey =
+    opts.openclawConfig?.modelApiKey ??
+    process.env.OPENCLAW_MODEL_API_KEY ??
+    "";
+  const providerEnvKey = openClawProviderEnvKey(
+    opts.openclawConfig?.modelProvider ??
+      process.env.OPENCLAW_MODEL_PROVIDER ??
+      "openai"
+  );
+  return [
+    {
+      name: "OPENCLAW_GATEWAY_URL",
+      value:
+        opts.openclawGatewayUrl ??
+        process.env.OPENCLAW_GATEWAY_URL ??
+        "http://localhost:18789",
+    },
+    {
+      name: "OPENCLAW_MODEL_PROVIDER",
+      value:
+        opts.openclawConfig?.modelProvider ??
+        process.env.OPENCLAW_MODEL_PROVIDER ??
+        "openai",
+    },
+    { name: "OPENCLAW_MODEL_ID", value: openclawModel },
+    { name: "OPENCLAW_MODEL_API_KEY", value: openclawModelApiKey },
+    { name: providerEnvKey, value: openclawModelApiKey },
+    {
+      name: "OPENCLAW_CHANNELS_JSON",
+      value: JSON.stringify(opts.openclawConfig?.channels ?? {}),
+    },
+    { name: "OPENCLAW_CONFIG_JSON", value: configJson },
+    {
+      name: "OPENCLAW_PLUGINS",
+      value: (opts.openclawConfig?.plugins ?? []).join(","),
+    },
+    {
+      name: "OPENCLAW_DM_POLICY",
+      value: opts.openclawConfig?.dmPolicy ?? "pairing",
+    },
+  ];
+}
+
+function hermesRuntimeEnv(opts: LaunchOptions): k8s.V1EnvVar[] {
+  const configJson = JSON.stringify(buildHermesGatewayConfig(opts));
+  const hermesModel = hermesModelId(opts);
+  const hermesModelApiKey =
+    opts.hermesConfig?.modelApiKey ?? process.env.HERMES_MODEL_API_KEY ?? "";
+  const hermesProviderEnvKey = providerEnvKeyFor(
+    opts.hermesConfig?.modelProvider ??
+      process.env.HERMES_MODEL_PROVIDER ??
+      "openai"
+  );
+  return [
+    {
+      name: "HERMES_GATEWAY_URL",
+      value:
+        opts.hermesGatewayUrl ??
+        process.env.HERMES_GATEWAY_URL ??
+        "http://localhost:8642",
+    },
+    {
+      name: "HERMES_MODEL_PROVIDER",
+      value:
+        opts.hermesConfig?.modelProvider ??
+        process.env.HERMES_MODEL_PROVIDER ??
+        "openai",
+    },
+    { name: "HERMES_MODEL_ID", value: hermesModel },
+    { name: "HERMES_MODEL_API_KEY", value: hermesModelApiKey },
+    { name: hermesProviderEnvKey, value: hermesModelApiKey },
+    {
+      name: "HERMES_GATEWAY_API_KEY",
+      value:
+        opts.hermesConfig?.gatewayApiKey ??
+        process.env.HERMES_GATEWAY_API_KEY ??
+        "",
+    },
+    { name: "HERMES_CONFIG_JSON", value: configJson },
   ];
 }
 

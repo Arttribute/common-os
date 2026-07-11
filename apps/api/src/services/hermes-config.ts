@@ -27,7 +27,7 @@ export function buildHermesGatewayConfig(
   };
 }
 
-function hermesModelId(opts: HermesGatewayConfigOptions): string {
+export function hermesModelId(opts: HermesGatewayConfigOptions): string {
   const provider =
     opts.hermesConfig?.modelProvider ??
     process.env.HERMES_MODEL_PROVIDER ??

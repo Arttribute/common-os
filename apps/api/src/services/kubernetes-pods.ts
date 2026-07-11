@@ -39,10 +39,10 @@ function wait(ms: number): Promise<void> {
  * Kubernetes deletion grace period. A non-terminating conflict is a genuine
  * idempotent success; a terminating conflict must disappear before creation.
  */
-export async function createKubernetesPodIdempotently(
+export async function createKubernetesPodIdempotently<TPod extends PodLike>(
   coreApi: PodApi,
   namespace: string,
-  body: PodLike,
+  body: TPod,
   options: PodCreationOptions = {},
 ): Promise<"created" | "existing"> {
   const name = body.metadata?.name;
