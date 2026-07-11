@@ -1,5 +1,11 @@
 # @common-os/sdk
 
+## 0.3.4
+
+### Patch Changes
+
+- Auto patch release
+
 ## 0.3.3
 
 ### Patch Changes
