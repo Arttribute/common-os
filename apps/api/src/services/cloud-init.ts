@@ -698,7 +698,11 @@ function runtimeStorageInitContainer(
     image: "public.ecr.aws/docker/library/busybox:1.36.1",
     command: ["/bin/sh", "-lc"],
     args: [
-      "mkdir -p /mnt/shared/openclaw/workspace /mnt/shared/hermes && chgrp -R 1000 /mnt/shared/openclaw /mnt/shared/hermes && chmod -R g+rwX,o-rwx /mnt/shared/openclaw /mnt/shared/hermes && find /mnt/shared/openclaw /mnt/shared/hermes -type d -exec chmod g+s {} +",
+      // EFS access points enforce their configured POSIX identity server-side,
+      // so chown/chgrp is both unnecessary and rejected. Creating dedicated
+      // runtime directories through the mounted access point gives every
+      // container in this pod the same persistent identity.
+      "mkdir -p /mnt/shared/openclaw/workspace /mnt/shared/hermes && (chmod -R g+rwX /mnt/shared/openclaw /mnt/shared/hermes || true)",
     ],
     securityContext: {
       runAsUser: 0,

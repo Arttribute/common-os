@@ -158,10 +158,67 @@ Resources:
       DiskSize: 40
       ScalingConfig:
         MinSize: 2
-        DesiredSize: 2
+        # Keep one warm node beyond the two-AZ baseline so common interactive
+        # runtime starts normally avoid an EC2 launch. Cluster Autoscaler may
+        # grow this group to MaxSize and return it to this floor as demand falls.
+        DesiredSize: 3
         MaxSize: 10
       UpdateConfig:
         MaxUnavailable: 1
+      Tags:
+        k8s.io/cluster-autoscaler/enabled: "true"
+        k8s.io/cluster-autoscaler/common-os-agents: owned
+
+  ClusterAutoscalerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: pods.eks.amazonaws.com
+            Action:
+              - sts:AssumeRole
+              - sts:TagSession
+      Policies:
+        - PolicyName: common-os-cluster-autoscaler
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - autoscaling:DescribeAutoScalingInstances
+                  - autoscaling:DescribeAutoScalingGroups
+                  - autoscaling:DescribeLaunchConfigurations
+                  - autoscaling:DescribeScalingActivities
+                  - autoscaling:DescribeTags
+                  - ec2:DescribeImages
+                  - ec2:DescribeInstanceTypes
+                  - ec2:DescribeLaunchTemplateVersions
+                  - ec2:GetInstanceTypesFromInstanceRequirements
+                  - eks:DescribeNodegroup
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - autoscaling:SetDesiredCapacity
+                  - autoscaling:TerminateInstanceInAutoScalingGroup
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:ResourceTag/k8s.io/cluster-autoscaler/enabled: "true"
+                    aws:ResourceTag/k8s.io/cluster-autoscaler/common-os-agents: owned
+
+  ClusterAutoscalerPodIdentity:
+    Type: AWS::EKS::PodIdentityAssociation
+    DependsOn:
+      - EksNodeGroup
+      - ClusterAutoscalerRole
+    Properties:
+      ClusterName: !Ref EksCluster
+      Namespace: kube-system
+      ServiceAccount: cluster-autoscaler
+      RoleArn: !GetAtt ClusterAutoscalerRole.Arn
 
   # NetworkPolicy objects are otherwise accepted by Kubernetes but ignored by
   # the default EKS VPC CNI configuration. Keep enforcement in the cluster
