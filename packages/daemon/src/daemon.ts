@@ -36,14 +36,18 @@ const AGC_STREAM_TIMEOUT_MS = Number(
 const OPENCLAW_RESPONSE_TIMEOUT_MS = Number(
   process.env.OPENCLAW_RESPONSE_TIMEOUT_MS ?? 600_000
 );
+// Gateway sidecars cold-start with the pod: image pull plus plugin/provider
+// pre-warm regularly exceeds a minute, and the first user turn usually
+// arrives while that is still in flight. Waiting here (with status pushed to
+// the caller) beats failing the turn.
 const OPENCLAW_READY_TIMEOUT_MS = Number(
-  process.env.OPENCLAW_READY_TIMEOUT_MS ?? 30_000
+  process.env.OPENCLAW_READY_TIMEOUT_MS ?? 240_000
 );
 const HERMES_RESPONSE_TIMEOUT_MS = Number(
   process.env.HERMES_RESPONSE_TIMEOUT_MS ?? 600_000
 );
 const HERMES_READY_TIMEOUT_MS = Number(
-  process.env.HERMES_READY_TIMEOUT_MS ?? 30_000
+  process.env.HERMES_READY_TIMEOUT_MS ?? 240_000
 );
 const AGENT_TOOLS_PORT = Number(process.env.AGENT_TOOLS_PORT ?? 4100);
 const BROWSER_STATUS_MS = Number(process.env.BROWSER_STATUS_MS ?? 7_500);
@@ -1421,15 +1425,33 @@ function startHealthMonitor() {
     return;
   }
 
-  const probeUrl =
+  const probeUrls =
     config.integrationPath === "hermes"
-      ? `${config.hermesGatewayUrl}/health`
-      : `${config.openclawGatewayUrl}/health`;
+      ? [
+          `${config.hermesGatewayUrl}/healthz`,
+          `${config.hermesGatewayUrl}/health`,
+        ]
+      : [`${config.openclawGatewayUrl}/health`];
 
   setInterval(async () => {
     try {
-      const res = await fetch(probeUrl, { signal: AbortSignal.timeout(5_000) });
-      if (!res.ok) throw new Error(`status ${res.status}`);
+      let lastError: Error = new Error("not ready");
+      let ok = false;
+      for (const probeUrl of probeUrls) {
+        try {
+          const res = await fetch(probeUrl, {
+            signal: AbortSignal.timeout(5_000),
+          });
+          if (res.ok) {
+            ok = true;
+            break;
+          }
+          lastError = new Error(`status ${res.status}`);
+        } catch (err) {
+          lastError = err instanceof Error ? err : new Error(String(err));
+        }
+      }
+      if (!ok) throw lastError;
       if (!runtimeHealthy) {
         runtimeHealthy = true;
         console.log("[daemon] runtime healthy again");
@@ -1450,7 +1472,7 @@ function startHealthMonitor() {
     }
   }, HEALTH_MS);
 
-  console.log(`[daemon] health monitor → ${probeUrl}`);
+  console.log(`[daemon] health monitor → ${probeUrls.join(", ")}`);
 }
 
 // ─── AXL peer registration ────────────────────────────────────────────────
@@ -4459,14 +4481,18 @@ async function waitForHermesGateway(): Promise<void> {
   const deadline = Date.now() + HERMES_READY_TIMEOUT_MS;
   let lastError = "not ready";
   while (Date.now() < deadline) {
-    try {
-      const res = await fetch(`${config.hermesGatewayUrl}/health`, {
-        signal: AbortSignal.timeout(3_000),
-      });
-      if (res.ok) return;
-      lastError = `status ${res.status}`;
-    } catch (err) {
-      lastError = err instanceof Error ? err.message : String(err);
+    // hermes-agent serves /healthz (documented, unauthenticated) with
+    // /health kept for older releases — accept either.
+    for (const path of ["/healthz", "/health"]) {
+      try {
+        const res = await fetch(`${config.hermesGatewayUrl}${path}`, {
+          signal: AbortSignal.timeout(3_000),
+        });
+        if (res.ok) return;
+        lastError = `status ${res.status}`;
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : String(err);
+      }
     }
     await sleep(1_000);
   }
@@ -4621,6 +4647,7 @@ async function runResponsesConversation(opts: {
   gatewayLabel: string;
 }): Promise<string> {
   const MAX_TOOL_ROUNDS = Number(process.env.RESPONSES_TOOL_ROUNDS ?? 12);
+  let includeTools = true;
   let body: Record<string, unknown> = {
     ...opts.body,
     tools: responsesToolDefs(),
@@ -4629,12 +4656,30 @@ async function runResponsesConversation(opts: {
   let finalOutput = "";
 
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
-    const res = await fetch(opts.gatewayUrl, {
+    let res = await fetch(opts.gatewayUrl, {
       method: "POST",
       headers: opts.headers,
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(opts.timeoutMs),
     });
+
+    // Some gateways (agents with their own server-side toolsets) reject a
+    // client `tools` catalog. Retry once without it — the run then relies on
+    // the runtime's built-in tools instead of the shared pod catalog.
+    if (res.status === 400 && includeTools) {
+      includeTools = false;
+      const { tools: _dropped, ...rest } = body;
+      body = rest;
+      console.warn(
+        `[daemon] ${opts.gatewayLabel} rejected the client tool catalog (400); retrying without tools`
+      );
+      res = await fetch(opts.gatewayUrl, {
+        method: "POST",
+        headers: opts.headers,
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(opts.timeoutMs),
+      });
+    }
 
     if (!res.ok) {
       const detail = await res.text().catch(() => "");
@@ -4722,7 +4767,7 @@ async function runResponsesConversation(opts: {
       previous_response_id: result.responseId,
       input: toolOutputs,
       user: body.user,
-      tools: responsesToolDefs(),
+      ...(includeTools ? { tools: responsesToolDefs() } : {}),
       stream: true,
     };
   }

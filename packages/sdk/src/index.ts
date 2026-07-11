@@ -201,6 +201,7 @@ export class CommonOSAgentClient {
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({ agentId: this.agentId, ...event }),
+			signal: AbortSignal.timeout(10_000),
 		});
 		if (!res.ok) {
 			throw new Error(`POST /events failed: ${res.status} ${res.statusText}`);

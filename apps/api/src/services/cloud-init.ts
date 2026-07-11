@@ -13,7 +13,10 @@ import {
   computerNamespaceManifests,
   computerRuntimeIdentity,
 } from "./computer-kubernetes.js";
-import { qualifiedOpenClawModelId } from "./runtime-models.js";
+import {
+  qualifiedHermesModelId,
+  qualifiedOpenClawModelId,
+} from "./runtime-models.js";
 
 export { computerNamespaceManifests, computerRuntimeIdentity };
 
@@ -298,17 +301,17 @@ function commonRuntimeEnv(
 function buildHermesGatewayConfig(
   opts: LaunchOptions
 ): Record<string, unknown> {
-  const config = opts.hermesConfig;
-  const provider =
-    config?.modelProvider ?? process.env.HERMES_MODEL_PROVIDER ?? "openai";
   const model = hermesModelId(opts);
-  const agentRuntimeId = opts.agentId.replace(/[^a-zA-Z0-9_-]/g, "-");
 
+  // JSON is valid YAML — Hermes reads this as /opt/data/config.yaml.
+  // Credentials remain environment-only (/opt/data/.env plus container env);
+  // this persistent file holds non-secret model and identity configuration.
+  // Schema reference: hermes-agent cli-config.yaml.example — `model.default`
+  // is a provider-qualified id and `provider: auto` resolves by prefix using
+  // whichever provider key is present in the environment.
   return {
-    // JSON is valid YAML. Credentials remain environment-only; this
-    // persistent file holds non-secret model and identity configuration.
-    model: { provider, default: model },
-    agent: { id: agentRuntimeId, name: opts.role },
+    model: { default: model, provider: "auto" },
+    display: { branding: { agent_name: opts.role } },
   };
 }
 
@@ -317,7 +320,7 @@ function hermesModelId(opts: LaunchOptions): string {
     opts.hermesConfig?.modelProvider ??
     process.env.HERMES_MODEL_PROVIDER ??
     "openai";
-  return (
+  const model =
     opts.hermesConfig?.modelId ??
     process.env.HERMES_MODEL_ID ??
     (provider === "anthropic"
@@ -328,8 +331,8 @@ function hermesModelId(opts: LaunchOptions): string {
       ? "google/gemini-3-flash"
       : provider === "groq"
       ? "groq/openai/gpt-oss-120b"
-      : "openai/gpt-5.4-mini")
-  );
+      : "openai/gpt-5.4-mini");
+  return qualifiedHermesModelId(provider, model);
 }
 
 function buildOpenClawGatewayConfig(
@@ -366,7 +369,11 @@ function buildOpenClawGatewayConfig(
         {
           id: agentRuntimeId,
           default: true,
-          workspace: "/mnt/shared",
+          // OpenClaw bootstraps AGENTS.md and other runtime-owned state in
+          // its workspace. Keep that inside its writable subdirectory; pod
+          // tools still operate on the canonical /mnt/shared workspace via
+          // the daemon's client-tool bridge.
+          workspace: "/mnt/shared/openclaw/workspace",
         },
       ],
     },
@@ -475,6 +482,28 @@ exit 127
       { name: "HOME", value: "/mnt/shared/openclaw" },
     ],
     ports: [{ name: "openclaw", containerPort: 18789 }],
+    // The gateway binds loopback only, so kubelet httpGet probes (which
+    // target the pod IP) cannot reach it — probe with an in-container exec.
+    // Boot pre-warms plugins and provider auth; the startup probe allows
+    // five minutes before liveness/readiness take over.
+    startupProbe: {
+      exec: { command: openclawHealthProbe() },
+      periodSeconds: 5,
+      timeoutSeconds: 5,
+      failureThreshold: 60,
+    },
+    readinessProbe: {
+      exec: { command: openclawHealthProbe() },
+      periodSeconds: 10,
+      timeoutSeconds: 5,
+      failureThreshold: 3,
+    },
+    livenessProbe: {
+      exec: { command: openclawHealthProbe() },
+      periodSeconds: 20,
+      timeoutSeconds: 5,
+      failureThreshold: 6,
+    },
     resources: {
       requests: { cpu: "10m", memory: "256Mi" },
       limits: { cpu: "2", memory: "2Gi" },
@@ -509,25 +538,17 @@ function hermesRuntimeContainer(
     );
   }
 
+  // The official hermes-agent image boots through s6-overlay (`/init` →
+  // main-wrapper.sh) which routes container args as the hermes CLI command.
+  // Overriding `command` bypasses that supervisor and there is no `hermes`
+  // binary on PATH, so only set `args` and let the image entrypoint run.
+  // Persistent state, config.yaml, and .env live in /opt/data — seeded by
+  // the hermes-config-init init container before this container starts.
   return {
     name: "hermes-runtime",
     image,
     imagePullPolicy: opts.kind === "computer" ? "IfNotPresent" : "Always",
-    command: ["/bin/sh", "-lc"],
-    args: [
-      `
-set -eu
-mkdir -p /opt/data/logs
-if [ -n "\${HERMES_CONFIG_JSON:-}" ]; then
-  printf '%s' "$HERMES_CONFIG_JSON" > /opt/data/config.yaml
-fi
-if command -v hermes >/dev/null 2>&1; then
-  exec hermes gateway run
-fi
-echo "hermes binary not found in image" >&2
-exit 127
-`,
-    ],
+    args: ["gateway", "run"],
     env: [
       ...envVars,
       { name: "COMMONOS_RUNTIME_ROLE", value: "hermes" },
@@ -543,8 +564,36 @@ exit 127
           "",
       },
       { name: "HERMES_HOME", value: "/opt/data" },
+      // Align the runtime user with the pod's shared fsGroup so hermes can
+      // read/write its subPath of the shared persistent volume.
+      { name: "HERMES_UID", value: "1000" },
+      { name: "HERMES_GID", value: "1000" },
+      { name: "PUID", value: "1000" },
+      { name: "PGID", value: "1000" },
     ],
     ports: [{ name: "hermes", containerPort: 8642 }],
+    // Gateway boot (venv init, config migration, provider warmup) takes tens
+    // of seconds on first start; the startup probe gives it five minutes
+    // before liveness/readiness take over. Exec probes with a /healthz →
+    // /health fallback keep this working across hermes-agent releases.
+    startupProbe: {
+      exec: { command: hermesHealthProbe() },
+      periodSeconds: 5,
+      timeoutSeconds: 5,
+      failureThreshold: 60,
+    },
+    readinessProbe: {
+      exec: { command: hermesHealthProbe() },
+      periodSeconds: 10,
+      timeoutSeconds: 5,
+      failureThreshold: 3,
+    },
+    livenessProbe: {
+      exec: { command: hermesHealthProbe() },
+      periodSeconds: 20,
+      timeoutSeconds: 5,
+      failureThreshold: 6,
+    },
     resources: {
       requests: { cpu: "10m", memory: "256Mi" },
       limits: { cpu: "2", memory: "2Gi" },
@@ -553,6 +602,90 @@ exit 127
       { name: "agent-storage", mountPath: "/opt/data", subPath: "hermes" },
     ],
   };
+}
+
+/**
+ * Seeds the hermes data directory before the gateway starts:
+ * - `.env` marks onboarding as complete and carries the model provider key
+ *   (the gateway re-reads it on boot, so model/key changes land on restart);
+ * - `config.yaml` holds the non-secret model + branding configuration.
+ */
+function hermesConfigInitContainer(
+  opts: LaunchOptions,
+  envVars: k8s.V1EnvVar[]
+): k8s.V1Container | null {
+  if (opts.integrationPath !== "hermes") return null;
+  const providerEnvKey = providerEnvKeyFor(
+    opts.hermesConfig?.modelProvider ??
+      process.env.HERMES_MODEL_PROVIDER ??
+      "openai"
+  );
+  return {
+    name: "hermes-config-init",
+    image: "public.ecr.aws/docker/library/busybox:1.36.1",
+    command: ["/bin/sh", "-c"],
+    args: [
+      // Values are quoted so keys containing '#' or spaces survive dotenv
+      // parsing. An existing .env also tells hermes to skip its interactive
+      // onboarding wizard, which a headless pod can never answer.
+      `
+set -eu
+mkdir -p /opt/data/logs
+printf '%s\\n' "$HERMES_CONFIG_JSON" > /opt/data/config.yaml
+: > /opt/data/.env.next
+if [ -n "\${HERMES_MODEL_API_KEY:-}" ]; then
+  printf '%s="%s"\\n' "${providerEnvKey}" "$HERMES_MODEL_API_KEY" >> /opt/data/.env.next
+fi
+printf 'API_SERVER_ENABLED="true"\\nAPI_SERVER_HOST="0.0.0.0"\\nAPI_SERVER_PORT="8642"\\n' >> /opt/data/.env.next
+if [ -n "\${HERMES_GATEWAY_API_KEY:-}" ]; then
+  printf 'API_SERVER_KEY="%s"\\n' "$HERMES_GATEWAY_API_KEY" >> /opt/data/.env.next
+fi
+mv /opt/data/.env.next /opt/data/.env
+chown -R 1000:1000 /opt/data
+chmod 600 /opt/data/.env
+`,
+    ],
+    env: envVars,
+    securityContext: {
+      runAsUser: 0,
+      runAsGroup: 0,
+      allowPrivilegeEscalation: false,
+    },
+    resources: {
+      requests: { cpu: "5m", memory: "16Mi" },
+      limits: { cpu: "100m", memory: "64Mi" },
+    },
+    volumeMounts: [
+      { name: "agent-storage", mountPath: "/opt/data", subPath: "hermes" },
+    ],
+  };
+}
+
+// The OpenClaw image is node-based (node user, global fetch); the gateway
+// binds loopback so health must be probed from inside the container.
+function openclawHealthProbe(): string[] {
+  return [
+    "node",
+    "-e",
+    "fetch('http://127.0.0.1:18789/health',{signal:AbortSignal.timeout(3000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+  ];
+}
+
+// The hermes image is python-based (s6-overlay); /healthz is the documented
+// unauthenticated health path with /health as the pre-rename fallback.
+function hermesHealthProbe(): string[] {
+  return [
+    "python3",
+    "-c",
+    [
+      "import urllib.request,sys",
+      "for p in ('/healthz','/health'):",
+      "    try:",
+      "        urllib.request.urlopen('http://127.0.0.1:8642'+p,timeout=3);sys.exit(0)",
+      "    except Exception:pass",
+      "sys.exit(1)",
+    ].join("\n"),
+  ];
 }
 
 function runtimeStorageInitContainer(
@@ -565,7 +698,7 @@ function runtimeStorageInitContainer(
     image: "public.ecr.aws/docker/library/busybox:1.36.1",
     command: ["/bin/sh", "-lc"],
     args: [
-      "mkdir -p /mnt/shared/openclaw /mnt/shared/hermes && (chown -R 1000:1000 /mnt/shared/openclaw || true) && (chown -R 10000:10000 /mnt/shared/hermes || true) && chmod 0777 /mnt/shared/openclaw /mnt/shared/hermes",
+      "mkdir -p /mnt/shared/openclaw/workspace /mnt/shared/hermes && chgrp -R 1000 /mnt/shared/openclaw /mnt/shared/hermes && chmod -R g+rwX,o-rwx /mnt/shared/openclaw /mnt/shared/hermes && find /mnt/shared/openclaw /mnt/shared/hermes -type d -exec chmod g+s {} +",
     ],
     securityContext: {
       runAsUser: 0,
@@ -627,6 +760,27 @@ function agentContainer(
         containerPort: Number(process.env.AGENT_TOOLS_PORT ?? "4100"),
       },
     ],
+    // The Bun daemon has wedged its event loop in production (main thread
+    // parked on a futex) while the container stayed "Running" — heartbeats,
+    // message polling, and the tools API all silently stop. Probing the
+    // daemon's own HTTP server from inside the container detects that state
+    // and lets kubelet restart the runtime; queued messages are reclaimed
+    // by the control plane after MESSAGE_RECLAIM_MS.
+    livenessProbe: {
+      exec: {
+        command: [
+          "curl",
+          "-sf",
+          "-m",
+          "3",
+          `http://127.0.0.1:${process.env.AGENT_TOOLS_PORT ?? "4100"}/healthz`,
+        ],
+      },
+      initialDelaySeconds: 60,
+      periodSeconds: 20,
+      timeoutSeconds: 5,
+      failureThreshold: 3,
+    },
     volumeMounts: [{ name: "agent-storage", mountPath: "/mnt/shared" }],
   };
 }
@@ -1216,6 +1370,11 @@ export async function launchAgentPod(
   const hermesContainer = hermesRuntimeContainer(opts, envVars);
   const guestContainer = guestRuntimeContainer(opts, envVars);
   const storageInit = runtimeStorageInitContainer(opts);
+  const hermesConfigInit = hermesConfigInitContainer(opts, envVars);
+  const initContainers = [
+    ...(storageInit ? [storageInit] : []),
+    ...(hermesConfigInit ? [hermesConfigInit] : []),
+  ];
   const podBody: k8s.V1Pod = {
     metadata: {
       name: podName,
@@ -1232,7 +1391,16 @@ export async function launchAgentPod(
         opts.kind === "computer" ? false : undefined,
       securityContext:
         opts.kind === "computer"
-          ? { seccompProfile: { type: "RuntimeDefault" } }
+          ? {
+              // All containers in one agent computer are one trust boundary
+              // but use different non-root UIDs. A shared group lets the
+              // daemon and runtime sidecars safely persist the same
+              // workspace without broad world-writable permissions.
+              fsGroup: 1000,
+              fsGroupChangePolicy: "OnRootMismatch",
+              supplementalGroups: [1000],
+              seccompProfile: { type: "RuntimeDefault" },
+            }
           : undefined,
       runtimeClassName:
         opts.kind === "computer"
@@ -1240,7 +1408,7 @@ export async function launchAgentPod(
             process.env.COMPUTER_RUNTIME_CLASS ??
             undefined
           : undefined,
-      initContainers: storageInit ? [storageInit] : undefined,
+      initContainers: initContainers.length ? initContainers : undefined,
       containers: [
         agentContainer(opts, imageUrl, envVars),
         ...(openClawContainer ? [openClawContainer] : []),
@@ -1517,6 +1685,11 @@ export async function launchAgentPodEks(
   const hermesContainer = hermesRuntimeContainer(opts, envVars);
   const guestContainer = guestRuntimeContainer(opts, envVars);
   const storageInit = runtimeStorageInitContainer(opts);
+  const hermesConfigInit = hermesConfigInitContainer(opts, envVars);
+  const initContainers = [
+    ...(storageInit ? [storageInit] : []),
+    ...(hermesConfigInit ? [hermesConfigInit] : []),
+  ];
 
   if (efsId) {
     try {
@@ -1586,7 +1759,16 @@ export async function launchAgentPodEks(
             opts.kind === "computer" ? false : undefined,
           securityContext:
             opts.kind === "computer"
-              ? { seccompProfile: { type: "RuntimeDefault" } }
+              ? {
+                  // All containers in one agent computer are one trust
+                  // boundary but use different non-root UIDs. A shared group
+                  // lets the daemon and runtime sidecars safely persist the
+                  // same workspace without broad world-writable permissions.
+                  fsGroup: 1000,
+                  fsGroupChangePolicy: "OnRootMismatch",
+                  supplementalGroups: [1000],
+                  seccompProfile: { type: "RuntimeDefault" },
+                }
               : undefined,
           runtimeClassName:
             opts.kind === "computer"
@@ -1594,7 +1776,7 @@ export async function launchAgentPodEks(
                 process.env.COMPUTER_RUNTIME_CLASS ??
                 undefined
               : undefined,
-          initContainers: storageInit ? [storageInit] : undefined,
+          initContainers: initContainers.length ? initContainers : undefined,
           containers: [
             agentContainer(opts, imageUrl, envVars),
             ...(openClawContainer ? [openClawContainer] : []),
