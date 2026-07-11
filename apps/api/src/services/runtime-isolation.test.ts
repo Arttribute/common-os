@@ -65,4 +65,33 @@ describe("managed runtime environment isolation", () => {
     expect(hermes?.args?.join(" ")).not.toContain("/mnt/shared/openclaw");
     expect(runtimeStorageInitContainer(options("native"))).toBeNull();
   });
+
+  it("does not send a platform provider key to a different managed provider", () => {
+    const previousProvider = process.env.HERMES_MODEL_PROVIDER;
+    const previousKey = process.env.HERMES_MODEL_API_KEY;
+    process.env.HERMES_MODEL_PROVIDER = "openai";
+    process.env.HERMES_MODEL_API_KEY = "platform-openai-key";
+    try {
+      const opts = options("hermes");
+      opts.hermesConfig = {
+        modelProvider: "openrouter",
+        modelId: "openai/gpt-5.4-mini",
+        modelApiKey: null,
+        gatewayApiKey: null,
+        toolsets: null,
+      };
+      const environment = commonRuntimeEnv(
+        opts,
+        "example.test/agent:latest",
+      );
+      expect(
+        environment.find((entry) => entry.name === "OPENROUTER_API_KEY")?.value,
+      ).toBe("");
+    } finally {
+      if (previousProvider === undefined) delete process.env.HERMES_MODEL_PROVIDER;
+      else process.env.HERMES_MODEL_PROVIDER = previousProvider;
+      if (previousKey === undefined) delete process.env.HERMES_MODEL_API_KEY;
+      else process.env.HERMES_MODEL_API_KEY = previousKey;
+    }
+  });
 });

@@ -233,15 +233,18 @@ export function commonRuntimeEnv(
 function openClawRuntimeEnv(opts: LaunchOptions): k8s.V1EnvVar[] {
   const configJson = JSON.stringify(buildOpenClawGatewayConfig(opts));
   const openclawModel = openClawModelId(opts);
+  const provider =
+    opts.openclawConfig?.modelProvider ??
+    process.env.OPENCLAW_MODEL_PROVIDER ??
+    "openai";
+  const platformProvider = process.env.OPENCLAW_MODEL_PROVIDER ?? "openai";
   const openclawModelApiKey =
     opts.openclawConfig?.modelApiKey ??
-    process.env.OPENCLAW_MODEL_API_KEY ??
+    (provider === platformProvider
+      ? process.env.OPENCLAW_MODEL_API_KEY
+      : undefined) ??
     "";
-  const providerEnvKey = openClawProviderEnvKey(
-    opts.openclawConfig?.modelProvider ??
-      process.env.OPENCLAW_MODEL_PROVIDER ??
-      "openai"
-  );
+  const providerEnvKey = openClawProviderEnvKey(provider);
   return [
     {
       name: "OPENCLAW_GATEWAY_URL",
@@ -279,13 +282,16 @@ function openClawRuntimeEnv(opts: LaunchOptions): k8s.V1EnvVar[] {
 function hermesRuntimeEnv(opts: LaunchOptions): k8s.V1EnvVar[] {
   const configJson = JSON.stringify(buildHermesGatewayConfig(opts));
   const hermesModel = hermesModelId(opts);
-  const hermesModelApiKey =
-    opts.hermesConfig?.modelApiKey ?? process.env.HERMES_MODEL_API_KEY ?? "";
-  const hermesProviderEnvKey = providerEnvKeyFor(
+  const provider =
     opts.hermesConfig?.modelProvider ??
-      process.env.HERMES_MODEL_PROVIDER ??
-      "openai"
-  );
+    process.env.HERMES_MODEL_PROVIDER ??
+    "openai";
+  const platformProvider = process.env.HERMES_MODEL_PROVIDER ?? "openai";
+  const hermesModelApiKey =
+    opts.hermesConfig?.modelApiKey ??
+    (provider === platformProvider ? process.env.HERMES_MODEL_API_KEY : undefined) ??
+    "";
+  const hermesProviderEnvKey = providerEnvKeyFor(provider);
   return [
     {
       name: "HERMES_GATEWAY_URL",
