@@ -14,10 +14,10 @@ import {
   computerRuntimeIdentity,
 } from "./computer-kubernetes.js";
 import {
-  qualifiedHermesModelId,
   qualifiedOpenClawModelId,
 } from "./runtime-models.js";
 import { kubernetesStatusCode } from "./kubernetes-errors.js";
+import { buildHermesGatewayConfig } from "./hermes-config.js";
 
 export { computerNamespaceManifests, computerRuntimeIdentity };
 
@@ -296,46 +296,6 @@ function commonRuntimeEnv(
     { name: "WORLD_X", value: String(opts.worldX ?? 2) },
     { name: "WORLD_Y", value: String(opts.worldY ?? 2) },
   ];
-}
-
-function buildHermesGatewayConfig(
-  opts: LaunchOptions
-): Record<string, unknown> {
-  const model = hermesModelId(opts);
-
-  // JSON is valid YAML — Hermes reads this as /opt/data/config.yaml.
-  // Credentials remain environment-only (/opt/data/.env plus container env);
-  // this persistent file holds non-secret model and identity configuration.
-  // Schema reference: hermes-agent cli-config.yaml.example — `model.default`
-  // is a provider-qualified id and `provider: auto` resolves by prefix using
-  // whichever provider key is present in the environment.
-  return {
-    model: { default: model, provider: "auto" },
-    display: { branding: { agent_name: opts.role } },
-    toolsets: opts.hermesConfig?.toolsets?.length
-      ? opts.hermesConfig.toolsets
-      : ["hermes-cli"],
-  };
-}
-
-function hermesModelId(opts: LaunchOptions): string {
-  const provider =
-    opts.hermesConfig?.modelProvider ??
-    process.env.HERMES_MODEL_PROVIDER ??
-    "openai";
-  const model =
-    opts.hermesConfig?.modelId ??
-    process.env.HERMES_MODEL_ID ??
-    (provider === "anthropic"
-      ? "anthropic/claude-sonnet-4-6"
-      : provider === "openrouter"
-      ? "openrouter/openai/gpt-5.4-mini"
-      : provider === "google"
-      ? "google/gemini-3-flash"
-      : provider === "groq"
-      ? "groq/openai/gpt-oss-120b"
-      : "openai/gpt-5.4-mini");
-  return qualifiedHermesModelId(provider, model);
 }
 
 function buildOpenClawGatewayConfig(
