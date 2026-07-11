@@ -13,6 +13,7 @@ import {
   computerNamespaceManifests,
   computerRuntimeIdentity,
 } from "./computer-kubernetes.js";
+import { qualifiedOpenClawModelId } from "./runtime-models.js";
 
 export { computerNamespaceManifests, computerRuntimeIdentity };
 
@@ -385,7 +386,7 @@ function openClawModelId(opts: LaunchOptions): string {
     opts.openclawConfig?.modelProvider ??
     process.env.OPENCLAW_MODEL_PROVIDER ??
     "openai";
-  return (
+  const model =
     opts.openclawConfig?.modelId ??
     process.env.OPENCLAW_MODEL_ID ??
     (provider === "anthropic"
@@ -396,8 +397,13 @@ function openClawModelId(opts: LaunchOptions): string {
       ? "google/gemini-3.1-pro"
       : provider === "groq"
       ? "groq/openai/gpt-oss-120b"
-      : "openai/gpt-5.4-mini")
-  );
+      : "openai/gpt-5.4-mini");
+
+  // Agent Commons stores provider and model separately (for example,
+  // `openai` + `gpt-5.4-mini`), while OpenClaw requires a provider-qualified
+  // primary. OpenRouter model ids already contain an upstream provider but
+  // still need the OpenRouter prefix.
+  return qualifiedOpenClawModelId(provider, model);
 }
 
 function openClawProviderEnvKey(provider: string): string {
