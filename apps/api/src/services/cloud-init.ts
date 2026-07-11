@@ -18,6 +18,7 @@ import {
 } from "./runtime-models.js";
 import { kubernetesStatusCode } from "./kubernetes-errors.js";
 import { buildHermesGatewayConfig } from "./hermes-config.js";
+import { createKubernetesPodIdempotently } from "./kubernetes-pods.js";
 
 export { computerNamespaceManifests, computerRuntimeIdentity };
 
@@ -1222,11 +1223,10 @@ async function ensurePodWithRetry(
     try {
       const kc = await getKubeConfig(projectId, region, clusterName);
       const coreApi = kc.makeApiClient(k8s.CoreV1Api);
-      await coreApi.createNamespacedPod({ namespace, body: podBody });
+      await createKubernetesPodIdempotently(coreApi, namespace, podBody);
       return;
     } catch (err: unknown) {
       const code = kubernetesStatusCode(err);
-      if (code === 409) return; // Already exists — success
       if (attempt === maxAttempts) throw err;
       console.log(
         `[cloud-init] pod creation attempt ${attempt} failed (${String(
@@ -1709,55 +1709,54 @@ export async function launchAgentPodEks(
       }
     : { name: "agent-storage", emptyDir: {} };
 
-  await createOrIgnoreConflict(() =>
-    coreApi.createNamespacedPod({
-      namespace,
-      body: {
-        metadata: {
-          name: podName,
-          namespace,
-          labels,
-          annotations: {
-            "common-os/agent-image": imageUrl,
-            "common-os/resource-generation": String(
-              opts.resourceGeneration ?? 1
-            ),
-          },
-        },
-        spec: {
-          restartPolicy: "Always",
-          automountServiceAccountToken:
-            opts.kind === "computer" ? false : undefined,
-          securityContext:
-            opts.kind === "computer"
-              ? {
-                  // All containers in one agent computer are one trust
-                  // boundary but use different non-root UIDs. A shared group
-                  // lets the daemon and runtime sidecars safely persist the
-                  // same workspace without broad world-writable permissions.
-                  fsGroup: 1000,
-                  fsGroupChangePolicy: "OnRootMismatch",
-                  supplementalGroups: [1000],
-                  seccompProfile: { type: "RuntimeDefault" },
-                }
-              : undefined,
-          runtimeClassName:
-            opts.kind === "computer"
-              ? opts.resourceSpec?.runtimeClassName ??
-                process.env.COMPUTER_RUNTIME_CLASS ??
-                undefined
-              : undefined,
-          initContainers: initContainers.length ? initContainers : undefined,
-          containers: [
-            agentContainer(opts, imageUrl, envVars),
-            ...(openClawContainer ? [openClawContainer] : []),
-            ...(hermesContainer ? [hermesContainer] : []),
-            ...(guestContainer ? [guestContainer] : []),
-          ],
-          volumes: [volume],
+  await createKubernetesPodIdempotently(
+    coreApi,
+    namespace,
+    {
+      metadata: {
+        name: podName,
+        namespace,
+        labels,
+        annotations: {
+          "common-os/agent-image": imageUrl,
+          "common-os/resource-generation": String(
+            opts.resourceGeneration ?? 1
+          ),
         },
       },
-    })
+      spec: {
+        restartPolicy: "Always",
+        automountServiceAccountToken:
+          opts.kind === "computer" ? false : undefined,
+        securityContext:
+          opts.kind === "computer"
+            ? {
+                // All containers in one agent computer are one trust
+                // boundary but use different non-root UIDs. A shared group
+                // lets the daemon and runtime sidecars safely persist the
+                // same workspace without broad world-writable permissions.
+                fsGroup: 1000,
+                fsGroupChangePolicy: "OnRootMismatch",
+                supplementalGroups: [1000],
+                seccompProfile: { type: "RuntimeDefault" },
+              }
+            : undefined,
+        runtimeClassName:
+          opts.kind === "computer"
+            ? opts.resourceSpec?.runtimeClassName ??
+              process.env.COMPUTER_RUNTIME_CLASS ??
+              undefined
+            : undefined,
+        initContainers: initContainers.length ? initContainers : undefined,
+        containers: [
+          agentContainer(opts, imageUrl, envVars),
+          ...(openClawContainer ? [openClawContainer] : []),
+          ...(hermesContainer ? [hermesContainer] : []),
+          ...(guestContainer ? [guestContainer] : []),
+        ],
+        volumes: [volume],
+      },
+    },
   );
 
   console.log(
