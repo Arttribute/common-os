@@ -569,6 +569,10 @@ export async function wakeProvisionedComputer(
         "compute.readyAt": null,
         "compute.suspendedAt": null,
         "compute.currentActiveStartedAt": now,
+        // A wake is activity. Without resetting this timestamp, an older
+        // sleeping computer can report `idle` on its first heartbeat and the
+        // reconciler immediately suspends it using the pre-sleep timestamp.
+        "compute.lastActivityAt": now,
         updatedAt: now,
       },
       $push: {
@@ -587,6 +591,14 @@ export async function wakeProvisionedComputer(
       ...agent.pod,
       lastError: null,
     },
+    compute: agent.compute
+      ? {
+          ...agent.compute,
+          lastActivityAt: now,
+          suspendedAt: null,
+          currentActiveStartedAt: now,
+        }
+      : agent.compute,
     updatedAt: now,
   };
   const opts: ProvisionAgentOptions = {
