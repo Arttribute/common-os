@@ -24,7 +24,10 @@ const AGC_BASE_URL = (
 ).replace(/\/$/, "");
 const AGC_INITIATOR =
   process.env.AGC_INITIATOR ?? process.env.AGENTCOMMONS_INITIATOR ?? null;
-const MESSAGE_RECLAIM_MS = Number(process.env.MESSAGE_RECLAIM_MS ?? 3 * 60_000);
+// A replacement daemon must reclaim work promptly after kubelet restarts a
+// wedged runtime. The active daemon processes one message at a time, so this
+// only affects processing claims left behind by a dead container.
+const MESSAGE_RECLAIM_MS = Number(process.env.MESSAGE_RECLAIM_MS ?? 60_000);
 const AGC_SESSION_ID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -422,7 +425,9 @@ router.get("/:agentId/messages/next", async (c) => {
     const now = new Date();
 
     if (msgId) {
-      const msg = await (await humanMessages())
+      const msg = await (
+        await humanMessages()
+      )
         .findOneAndUpdate(
           { _id: msgId, agentId, status: "pending" },
           {
@@ -683,7 +688,9 @@ router.post("/:agentId/messages/axl/response", async (c) => {
     const inReplyTo = body.inReplyTo ?? null;
 
     const existing = inReplyTo
-      ? await (await humanMessages())
+      ? await (
+          await humanMessages()
+        )
           .findOneAndUpdate(
             {
               agentId,
@@ -706,7 +713,9 @@ router.post("/:agentId/messages/axl/response", async (c) => {
       : null;
 
     if (existing) {
-      await (await agentSessions())
+      await (
+        await agentSessions()
+      )
         .updateOne(
           {
             agentId,
@@ -845,7 +854,9 @@ router.post("/:agentId/messages/:msgId/respond", async (c) => {
     // After updating message, update session stats
     const statsSessionId = msg.sessionId ?? body.agcSessionId;
     if (statsSessionId) {
-      await (await agentSessions())
+      await (
+        await agentSessions()
+      )
         .updateOne(
           {
             agentId,
