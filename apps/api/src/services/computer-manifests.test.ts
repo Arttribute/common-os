@@ -12,6 +12,17 @@ describe("computer Kubernetes isolation", () => {
     expect(first.pvcName).not.toBe(second.pvcName);
   });
 
+  it("emits RFC 1123 names when canonical tenant ids contain underscores", () => {
+    const identity = computerRuntimeIdentity(
+      "ten_agc_6a4568598792e611085a",
+      "computer_with.dots_AND_caps",
+    );
+    for (const value of Object.values(identity)) {
+      expect(value).toMatch(/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/);
+      expect(value.length).toBeLessThanOrEqual(63);
+    }
+  });
+
 	it("installs quota, limits, pod-security labels, and default-deny networking", () => {
     const manifests = computerNamespaceManifests("tenant-test", {
       "managed-by": "common-os",

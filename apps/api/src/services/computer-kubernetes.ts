@@ -15,7 +15,12 @@ function k8sLabelValue(value: string): string {
 
 function k8sName(prefix: string, value: string): string {
   const suffix = createHash("sha256").update(value).digest("hex").slice(0, 10);
-  const safe = k8sLabelValue(value).toLowerCase();
+  // Label values may contain `_` and `.`, but namespace/pod/PVC names use
+  // the stricter RFC 1123 DNS-label grammar. Normalize again for names.
+  const safe = k8sLabelValue(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
   const available = 63 - prefix.length - suffix.length - 2;
   const trimmed = safe
     .slice(0, Math.max(1, available))
