@@ -583,6 +583,10 @@ export async function wakeProvisionedComputer(
     desiredState: "running",
     status: "provisioning",
     resourceGeneration: nextGeneration,
+    pod: {
+      ...agent.pod,
+      lastError: null,
+    },
     updatedAt: now,
   };
   const opts: ProvisionAgentOptions = {
