@@ -653,7 +653,6 @@ if [ -n "\${HERMES_GATEWAY_API_KEY:-}" ]; then
   printf 'API_SERVER_KEY="%s"\\n' "$HERMES_GATEWAY_API_KEY" >> /opt/data/.env.next
 fi
 mv /opt/data/.env.next /opt/data/.env
-chown -R 1000:1000 /opt/data
 chmod 600 /opt/data/.env
 `,
     ],
