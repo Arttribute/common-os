@@ -50,6 +50,7 @@ export interface LaunchOptions {
     modelId: string | null;
     modelApiKey: string | null;
     gatewayApiKey: string | null;
+    toolsets: string[] | null;
   } | null;
   hermesGatewayUrl?: string;
   workspaceDir?: string;
@@ -312,6 +313,9 @@ function buildHermesGatewayConfig(
   return {
     model: { default: model, provider: "auto" },
     display: { branding: { agent_name: opts.role } },
+    toolsets: opts.hermesConfig?.toolsets?.length
+      ? opts.hermesConfig.toolsets
+      : ["hermes-cli"],
   };
 }
 
@@ -343,6 +347,15 @@ function buildOpenClawGatewayConfig(
     config?.modelProvider ?? process.env.OPENCLAW_MODEL_PROVIDER ?? "openai";
   const model = openClawModelId(opts);
   const agentRuntimeId = opts.agentId.replace(/[^a-zA-Z0-9_-]/g, "-");
+  const channels = Object.fromEntries(
+    Object.entries(config?.channels ?? {}).map(([name, channel]) => [
+      name,
+      {
+        ...channel,
+        dmPolicy: channel.dmPolicy ?? config?.dmPolicy ?? "pairing",
+      },
+    ])
+  );
 
   return {
     gateway: {
@@ -360,7 +373,7 @@ function buildOpenClawGatewayConfig(
     // OpenClaw reads the provider-specific environment variable injected
     // into the pod; do not copy that secret into persistent config JSON.
     env: { vars: {} },
-    channels: config?.channels ?? {},
+    channels,
     agents: {
       defaults: {
         model: { primary: model },

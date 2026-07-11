@@ -190,6 +190,7 @@ export interface AgentDoc {
       modelId: string | null;
       modelApiKey: string | null;
       gatewayApiKey: string | null;
+      toolsets?: string[] | null;
     } | null;
     tools: string[];
   };
