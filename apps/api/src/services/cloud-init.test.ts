@@ -15,6 +15,46 @@ function launchOptions(toolsets: string[] | null): HermesGatewayConfigOptions {
 }
 
 describe("Hermes managed configuration", () => {
+  it("uses Hermes' direct OpenAI provider instead of auto-routing through OpenRouter", () => {
+    expect(buildHermesGatewayConfig(launchOptions(null))).toMatchObject({
+      model: { default: "gpt-5.4-mini", provider: "openai-api" },
+    });
+  });
+
+  it("keeps OpenRouter model ownership while selecting the OpenRouter provider", () => {
+    const opts = launchOptions(null);
+    opts.hermesConfig = {
+      ...opts.hermesConfig!,
+      modelProvider: "openrouter",
+      modelId: "openai/gpt-5.4-mini",
+    };
+    expect(buildHermesGatewayConfig(opts)).toMatchObject({
+      model: { default: "openai/gpt-5.4-mini", provider: "openrouter" },
+    });
+  });
+
+  it("declares OpenAI-compatible providers through Hermes custom providers", () => {
+    const opts = launchOptions(null);
+    opts.hermesConfig = {
+      ...opts.hermesConfig!,
+      modelProvider: "groq",
+      modelId: "llama-3.3-70b-versatile",
+    };
+    expect(buildHermesGatewayConfig(opts)).toMatchObject({
+      model: {
+        default: "llama-3.3-70b-versatile",
+        provider: "custom:groq",
+      },
+      custom_providers: [
+        {
+          name: "groq",
+          base_url: "https://api.groq.com/openai/v1",
+          key_env: "GROQ_API_KEY",
+        },
+      ],
+    });
+  });
+
   it("writes toolsets to the current CLI platform configuration", () => {
     const config = buildHermesGatewayConfig(
       launchOptions(["terminal", "file", "skills"]),
