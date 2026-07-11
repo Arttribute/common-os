@@ -4108,9 +4108,19 @@ function tokenUsageFromEvent(
   event: Record<string, unknown>,
   defaults: { provider?: string; model?: string; source: string }
 ): TokenUsagePayload | null {
-  const payload = (
+  const envelope = (
     event.payload && typeof event.payload === "object" ? event.payload : event
   ) as Record<string, unknown>;
+  // OpenResponses streams usage on response.completed as
+  // `{ response: { usage: ... } }`, while native/CommonOS events commonly put
+  // it directly on `payload`. Normalize both envelopes before reading aliases.
+  const nestedResponse =
+    envelope.response && typeof envelope.response === "object"
+      ? (envelope.response as Record<string, unknown>)
+      : null;
+  const payload = nestedResponse
+    ? { ...envelope, ...nestedResponse }
+    : envelope;
   const usage = (
     payload.usage && typeof payload.usage === "object" ? payload.usage : payload
   ) as Record<string, unknown>;
