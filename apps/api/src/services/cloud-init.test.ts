@@ -1,5 +1,6 @@
 import {
   buildHermesGatewayConfig,
+  hermesChannelEnvironment,
   type HermesGatewayConfigOptions,
 } from "./hermes-config";
 
@@ -57,7 +58,7 @@ describe("Hermes managed configuration", () => {
 
   it("writes toolsets to the current CLI platform configuration", () => {
     const config = buildHermesGatewayConfig(
-      launchOptions(["terminal", "file", "skills"]),
+      launchOptions(["terminal", "file", "skills"])
     );
 
     expect(config).not.toHaveProperty("toolsets");
@@ -69,6 +70,52 @@ describe("Hermes managed configuration", () => {
   it("uses the Hermes CLI preset when no explicit toolsets are configured", () => {
     expect(buildHermesGatewayConfig(launchOptions(null))).toMatchObject({
       platform_toolsets: { cli: ["hermes-cli"] },
+    });
+  });
+
+  it("enables Hermes messaging toolsets only for configured channels", () => {
+    const opts = launchOptions(["safe"]);
+    opts.hermesConfig = {
+      ...opts.hermesConfig!,
+      channels: {
+        telegram: { enabled: true },
+        whatsapp: { enabled: true, mode: "cloud" },
+      },
+    };
+
+    expect(buildHermesGatewayConfig(opts)).toMatchObject({
+      platform_toolsets: {
+        cli: ["safe"],
+        telegram: ["hermes-telegram"],
+        whatsapp_cloud: ["hermes-whatsapp"],
+      },
+    });
+  });
+
+  it("injects Hermes channel credentials and normalized allowlists", () => {
+    const env = hermesChannelEnvironment({
+      telegram: {
+        enabled: true,
+        botToken: "telegram-secret",
+        allowFrom: ["123", "456"],
+      },
+      whatsapp: {
+        enabled: true,
+        mode: "cloud",
+        phoneNumberId: "phone-id",
+        accessToken: "whatsapp-secret",
+        appSecret: "app-secret",
+        verifyToken: "verify-secret",
+        allowFrom: ["+254700000000"],
+      },
+    });
+
+    expect(env).toMatchObject({
+      TELEGRAM_BOT_TOKEN: "telegram-secret",
+      TELEGRAM_ALLOWED_USERS: "123,456",
+      WHATSAPP_CLOUD_PHONE_NUMBER_ID: "phone-id",
+      WHATSAPP_CLOUD_ACCESS_TOKEN: "whatsapp-secret",
+      WHATSAPP_CLOUD_ALLOWED_USERS: "254700000000",
     });
   });
 });

@@ -13,12 +13,11 @@ import {
   computerNamespaceManifests,
   computerRuntimeIdentity,
 } from "./computer-kubernetes.js";
-import {
-  qualifiedOpenClawModelId,
-} from "./runtime-models.js";
+import { qualifiedOpenClawModelId } from "./runtime-models.js";
 import { kubernetesStatusCode } from "./kubernetes-errors.js";
 import {
   buildHermesGatewayConfig,
+  hermesChannelEnvironment,
   hermesModelId,
 } from "./hermes-config.js";
 import { createKubernetesPodIdempotently } from "./kubernetes-pods.js";
@@ -55,7 +54,8 @@ export interface LaunchOptions {
     modelId: string | null;
     modelApiKey: string | null;
     gatewayApiKey: string | null;
-    toolsets: string[] | null;
+    toolsets?: string[] | null;
+    channels?: Record<string, Record<string, unknown>> | null;
   } | null;
   hermesGatewayUrl?: string;
   workspaceDir?: string;
@@ -171,8 +171,8 @@ export function commonRuntimeEnv(
     opts.integrationPath === "openclaw"
       ? openClawRuntimeEnv(opts)
       : opts.integrationPath === "hermes"
-        ? hermesRuntimeEnv(opts)
-        : [];
+      ? hermesRuntimeEnv(opts)
+      : [];
   return [
     { name: "AGENT_ID", value: opts.agentId },
     { name: "AGENT_TOKEN", value: opts.agentToken },
@@ -289,7 +289,9 @@ function hermesRuntimeEnv(opts: LaunchOptions): k8s.V1EnvVar[] {
   const platformProvider = process.env.HERMES_MODEL_PROVIDER ?? "openai";
   const hermesModelApiKey =
     opts.hermesConfig?.modelApiKey ??
-    (provider === platformProvider ? process.env.HERMES_MODEL_API_KEY : undefined) ??
+    (provider === platformProvider
+      ? process.env.HERMES_MODEL_API_KEY
+      : undefined) ??
     "";
   const hermesProviderEnvKey = providerEnvKeyFor(provider);
   return [
@@ -318,7 +320,20 @@ function hermesRuntimeEnv(opts: LaunchOptions): k8s.V1EnvVar[] {
         "",
     },
     { name: "HERMES_CONFIG_JSON", value: configJson },
+    ...hermesChannelEnv(opts),
   ];
+}
+
+function hermesChannelEnv(opts: LaunchOptions): k8s.V1EnvVar[] {
+  return Object.entries(
+    hermesChannelEnvironment(opts.hermesConfig?.channels)
+  ).map(([name, value]) => ({ name, value }));
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map((item) => String(item).trim()).filter(Boolean)
+    : [];
 }
 
 function buildOpenClawGatewayConfig(
@@ -330,13 +345,30 @@ function buildOpenClawGatewayConfig(
   const model = openClawModelId(opts);
   const agentRuntimeId = opts.agentId.replace(/[^a-zA-Z0-9_-]/g, "-");
   const channels = Object.fromEntries(
-    Object.entries(config?.channels ?? {}).map(([name, channel]) => [
-      name,
-      {
-        ...channel,
+    Object.entries(config?.channels ?? {}).map(([name, channel]) => {
+      const allowFrom = stringList(channel.allowFrom);
+      const common = {
+        enabled: channel.enabled !== false,
         dmPolicy: channel.dmPolicy ?? config?.dmPolicy ?? "pairing",
-      },
-    ])
+        allowFrom,
+        groups: { "*": { requireMention: channel.requireMention !== false } },
+      };
+      if (name === "telegram") {
+        return [name, { ...common, botToken: channel.botToken }];
+      }
+      if (name === "whatsapp") {
+        return [
+          name,
+          {
+            ...common,
+            selfChatMode: channel.mode === "self-chat",
+            groupPolicy: "allowlist",
+            groupAllowFrom: allowFrom,
+          },
+        ];
+      }
+      return [name, common];
+    })
   );
 
   return {
@@ -460,6 +492,12 @@ if [ -n "\${OPENCLAW_CONFIG_JSON:-}" ]; then
   printf '%s' "$OPENCLAW_CONFIG_JSON" > "$HOME/.openclaw/openclaw.json"
 fi
 if command -v openclaw >/dev/null 2>&1; then
+  if printf '%s' "\${OPENCLAW_CHANNELS_JSON:-}" | grep -q '"whatsapp"'; then
+    marker="$HOME/.openclaw/.commonos-whatsapp-plugin"
+    if [ ! -f "$marker" ]; then
+      openclaw plugins install clawhub:@openclaw/whatsapp && touch "$marker"
+    fi
+  fi
   exec openclaw gateway run --auth none --bind loopback --port "\${OPENCLAW_GATEWAY_PORT:-18789}"
 fi
 echo "openclaw binary not found in image" >&2
@@ -1733,55 +1771,49 @@ export async function launchAgentPodEks(
       }
     : { name: "agent-storage", emptyDir: {} };
 
-  await createKubernetesPodIdempotently(
-    coreApi,
-    namespace,
-    {
-      metadata: {
-        name: podName,
-        namespace,
-        labels,
-        annotations: {
-          "common-os/agent-image": imageUrl,
-          "common-os/resource-generation": String(
-            opts.resourceGeneration ?? 1
-          ),
-        },
-      },
-      spec: {
-        restartPolicy: "Always",
-        automountServiceAccountToken:
-          opts.kind === "computer" ? false : undefined,
-        securityContext:
-          opts.kind === "computer"
-            ? {
-                // All containers in one agent computer are one trust
-                // boundary but use different non-root UIDs. A shared group
-                // lets the daemon and runtime sidecars safely persist the
-                // same workspace without broad world-writable permissions.
-                fsGroup: 1000,
-                fsGroupChangePolicy: "OnRootMismatch",
-                supplementalGroups: [1000],
-                seccompProfile: { type: "RuntimeDefault" },
-              }
-            : undefined,
-        runtimeClassName:
-          opts.kind === "computer"
-            ? opts.resourceSpec?.runtimeClassName ??
-              process.env.COMPUTER_RUNTIME_CLASS ??
-              undefined
-            : undefined,
-        initContainers: initContainers.length ? initContainers : undefined,
-        containers: [
-          agentContainer(opts, imageUrl, envVars),
-          ...(openClawContainer ? [openClawContainer] : []),
-          ...(hermesContainer ? [hermesContainer] : []),
-          ...(guestContainer ? [guestContainer] : []),
-        ],
-        volumes: [volume],
+  await createKubernetesPodIdempotently(coreApi, namespace, {
+    metadata: {
+      name: podName,
+      namespace,
+      labels,
+      annotations: {
+        "common-os/agent-image": imageUrl,
+        "common-os/resource-generation": String(opts.resourceGeneration ?? 1),
       },
     },
-  );
+    spec: {
+      restartPolicy: "Always",
+      automountServiceAccountToken:
+        opts.kind === "computer" ? false : undefined,
+      securityContext:
+        opts.kind === "computer"
+          ? {
+              // All containers in one agent computer are one trust
+              // boundary but use different non-root UIDs. A shared group
+              // lets the daemon and runtime sidecars safely persist the
+              // same workspace without broad world-writable permissions.
+              fsGroup: 1000,
+              fsGroupChangePolicy: "OnRootMismatch",
+              supplementalGroups: [1000],
+              seccompProfile: { type: "RuntimeDefault" },
+            }
+          : undefined,
+      runtimeClassName:
+        opts.kind === "computer"
+          ? opts.resourceSpec?.runtimeClassName ??
+            process.env.COMPUTER_RUNTIME_CLASS ??
+            undefined
+          : undefined,
+      initContainers: initContainers.length ? initContainers : undefined,
+      containers: [
+        agentContainer(opts, imageUrl, envVars),
+        ...(openClawContainer ? [openClawContainer] : []),
+        ...(hermesContainer ? [hermesContainer] : []),
+        ...(guestContainer ? [guestContainer] : []),
+      ],
+      volumes: [volume],
+    },
+  });
 
   console.log(
     `[cloud-init] EKS pod ${podName} created in namespace ${namespace} using image ${imageUrl}`
@@ -1946,6 +1978,95 @@ export async function inspectAgentPodEks(
     containers,
     pvc,
   };
+}
+
+export async function runRuntimeChannelCommand(opts: {
+  provider: "gcp" | "aws";
+  region?: string | null;
+  namespace: string;
+  podName: string;
+  runtime: "openclaw" | "hermes";
+  channel: "whatsapp";
+  action: "connect" | "status" | "disconnect";
+}): Promise<{ output: unknown; raw: string }> {
+  if (opts.runtime !== "openclaw") {
+    throw new Error("QR channel setup is not available for this runtime");
+  }
+  const commandByAction = {
+    connect:
+      "openclaw gateway call web.login.start --params '{\"force\":true}' --json --timeout 30000 --no-color",
+    status:
+      "openclaw channels status --channel whatsapp --probe --json --timeout 15000 --no-color",
+    disconnect: "openclaw channels logout --channel whatsapp --json --no-color",
+  } as const;
+  const kc = await kubeConfigForProvider(opts.provider, opts.region);
+  const exec = new k8s.Exec(kc);
+  let stdout = "";
+  let stderr = "";
+  const capture = (append: (chunk: string) => void) =>
+    new Writable({
+      write(chunk, _encoding, callback) {
+        append(String(chunk).slice(0, 1_000_000));
+        callback();
+      },
+    });
+  const command = ["/bin/sh", "-lc", commandByAction[opts.action]];
+  await new Promise<void>(async (resolve, reject) => {
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve();
+    };
+    const timer = setTimeout(
+      () => finish(new Error("runtime channel command timed out")),
+      opts.action === "connect" ? 45_000 : 25_000
+    );
+    try {
+      const socket = await exec.exec(
+        opts.namespace,
+        opts.podName,
+        "openclaw-runtime",
+        command,
+        capture((chunk) => (stdout += chunk)),
+        capture((chunk) => (stderr += chunk)),
+        null,
+        false,
+        (status) => {
+          if (status.status === "Success") finish();
+          else
+            finish(
+              new Error(status.message ?? "runtime channel command failed")
+            );
+        }
+      );
+      socket.on("error", (error: unknown) =>
+        finish(error instanceof Error ? error : new Error(String(error)))
+      );
+      socket.on("close", () => {
+        if (!settled && stderr.trim()) finish(new Error(stderr.trim()));
+      });
+    } catch (error) {
+      finish(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
+  const raw = stdout.trim();
+  let output: unknown = raw;
+  try {
+    output = JSON.parse(raw);
+  } catch {
+    const jsonStart = raw.lastIndexOf("\n{");
+    if (jsonStart >= 0) {
+      try {
+        output = JSON.parse(raw.slice(jsonStart + 1));
+      } catch {
+        // Keep the bounded raw output for diagnostics.
+      }
+    }
+  }
+  return { output, raw };
 }
 
 // ─── AWS EC2 startup script ────────────────────────────────────────────────

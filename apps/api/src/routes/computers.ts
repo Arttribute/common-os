@@ -11,6 +11,7 @@ import {
   destroyComputerRuntime,
   inspectAgentPodEks,
   readAgentWorkspaceFile,
+  runRuntimeChannelCommand,
   suspendComputerPod,
   WorkspaceReadError,
 } from "../services/cloud-init.js";
@@ -295,6 +296,35 @@ function computerResponse(computer: AgentDoc) {
   });
 }
 
+function computerNeedsRecovery(computer: AgentDoc, now = Date.now()) {
+  if (
+    computer.desiredState !== "running" ||
+    !["running", "idle", "starting", "provisioning"].includes(computer.status)
+  ) {
+    return false;
+  }
+  if (computer.pod.lastError && ["running", "idle"].includes(computer.status)) {
+    return true;
+  }
+  const heartbeatAt = computer.lastHeartbeatAt
+    ? new Date(computer.lastHeartbeatAt).getTime()
+    : NaN;
+  if (
+    ["running", "idle"].includes(computer.status) &&
+    Number.isFinite(heartbeatAt)
+  ) {
+    return now - heartbeatAt > 120_000;
+  }
+  const provisionRequestedAt = computer.compute?.provisionRequestedAt
+    ? new Date(computer.compute.provisionRequestedAt).getTime()
+    : NaN;
+  return (
+    ["starting", "provisioning"].includes(computer.status) &&
+    Number.isFinite(provisionRequestedAt) &&
+    now - provisionRequestedAt > 900_000
+  );
+}
+
 function closeActiveInterval(computer: AgentDoc, endedAt: Date) {
   const intervals = [...(computer.compute?.activeIntervals ?? [])];
   const last = intervals.at(-1);
@@ -528,9 +558,12 @@ router.post("/", async (c) => {
           hermesConfig: runtime.hermesConfig,
         },
       };
+      const unhealthy = computerNeedsRecovery(existing);
       if (
-        changed &&
-        ["running", "idle", "starting"].includes(existing.status)
+        (changed || unhealthy) &&
+        ["running", "idle", "starting", "provisioning"].includes(
+          existing.status
+        )
       ) {
         await suspendComputer(updated);
         return c.json(
@@ -661,6 +694,54 @@ router.get("/:computerId/runtime-status", async (c) => {
   );
 });
 
+router.post("/:computerId/runtime-channels/:channel/:action", async (c) => {
+  const computer = await getBoundComputer(c);
+  if (isResponse(computer)) return computer;
+  const channel = c.req.param("channel");
+  const action = c.req.param("action");
+  if (channel !== "whatsapp") {
+    return c.json({ error: "unsupported runtime channel" }, 400);
+  }
+  if (!(["connect", "status", "disconnect"] as const).includes(action as any)) {
+    return c.json({ error: "unsupported runtime channel action" }, 400);
+  }
+  if (computer.config.integrationPath !== "openclaw") {
+    return c.json(
+      { error: "QR channel setup is currently available for OpenClaw" },
+      409
+    );
+  }
+  const namespace = computer.compute?.namespace ?? computer.pod.namespaceId;
+  const podName = computer.compute?.podName;
+  if (
+    !namespace ||
+    !podName ||
+    !["running", "idle"].includes(computer.status)
+  ) {
+    return c.json({ error: "runtime must be ready before channel setup" }, 409);
+  }
+  try {
+    return c.json(
+      await runRuntimeChannelCommand({
+        provider: computer.pod.provider,
+        region: computer.pod.region,
+        namespace,
+        podName,
+        runtime: "openclaw",
+        channel,
+        action: action as "connect" | "status" | "disconnect",
+      })
+    );
+  } catch (error) {
+    return c.json(
+      {
+        error: error instanceof Error ? error.message : "channel setup failed",
+      },
+      503
+    );
+  }
+});
+
 router.get("/:computerId/workspace/read", async (c) => {
   try {
     const computer = await getBoundComputer(c);
@@ -771,6 +852,56 @@ router.get("/:computerId/instructions", async (c) => {
     .limit(50)
     .lean();
   return c.json(list.reverse());
+});
+
+router.get("/:computerId/instructions/:messageId/snapshot", async (c) => {
+  const computer = await getBoundComputer(c);
+  if (isResponse(computer)) return computer;
+  const messageId = c.req.param("messageId");
+  const message = await (
+    await humanMessages()
+  )
+    .findOne({
+      _id: messageId,
+      agentId: computer._id,
+      fleetId: computer.fleetId,
+      tenantId: computer.tenantId,
+    })
+    .lean();
+  if (!message) return c.json({ error: "instruction not found" }, 404);
+  const after = c.req.query("after");
+  const afterId = c.req.query("afterId")?.trim();
+  const afterDate = after ? new Date(after) : null;
+  const eventQuery: Record<string, unknown> = {
+    agentId: computer._id,
+    fleetId: computer.fleetId,
+    tenantId: computer.tenantId,
+    type: {
+      $in: [
+        "runtime.message_status",
+        "runtime.message_delta",
+        "runtime.tool_call",
+        "runtime.tool_result",
+      ],
+    },
+    "payload.msgId": messageId,
+  };
+  if (afterDate && Number.isFinite(afterDate.getTime())) {
+    if (afterId) {
+      eventQuery.$or = [
+        { createdAt: { $gt: afterDate } },
+        { createdAt: afterDate, _id: { $gt: afterId } },
+      ];
+    } else {
+      eventQuery.createdAt = { $gt: afterDate };
+    }
+  }
+  const runtimeEvents = await (await events())
+    .find(eventQuery)
+    .sort({ createdAt: 1, _id: 1 })
+    .limit(500)
+    .lean();
+  return c.json({ message, events: runtimeEvents });
 });
 
 router.get("/:computerId/instructions/:messageId/events", async (c) => {

@@ -15,7 +15,24 @@ The `hermes` integration path runs a Hermes agent through the same CommonOS cont
     "modelProvider": "openai",
     "modelId": "openai/gpt-5.4-mini",
     "modelApiKey": "secret-ref",
-    "gatewayApiKey": "optional-gateway-key"
+    "gatewayApiKey": "optional-gateway-key",
+    "toolsets": ["hermes-cli"],
+    "channels": {
+      "telegram": {
+        "enabled": true,
+        "botToken": "telegram-bot-token",
+        "allowFrom": ["123456789"]
+      },
+      "whatsapp": {
+        "enabled": true,
+        "mode": "cloud",
+        "phoneNumberId": "123456789012345",
+        "accessToken": "cloud-api-token",
+        "appSecret": "meta-app-secret",
+        "verifyToken": "webhook-verify-token",
+        "allowFrom": ["+15551234567"]
+      }
+    }
   }
 }
 ```
@@ -23,3 +40,5 @@ The `hermes` integration path runs a Hermes agent through the same CommonOS cont
 ## Runtime Setup
 
 Set `HERMES_IMAGE_URL` to launch a Hermes Gateway sidecar per agent, or set `HERMES_GATEWAY_URL` to route Hermes agents to an existing Gateway. The daemon calls the gateway through the Responses-compatible API and emits token usage events so the cost dashboard can show Hermes model and infrastructure spend.
+
+Managed channel configuration enables Hermes' platform-specific toolset and injects the documented Telegram or WhatsApp Cloud environment variables into the runtime. Secrets are launch-only and are recursively redacted from CommonOS persistence and responses.

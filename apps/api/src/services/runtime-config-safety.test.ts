@@ -22,6 +22,17 @@ describe("persistedRuntimeConfig", () => {
         modelId: "gpt-test",
         modelApiKey: "provider-secret",
         gatewayApiKey: "gateway-secret",
+        toolsets: ["safe"],
+        channels: {
+          telegram: {
+            botToken: "telegram-secret",
+            allowFrom: ["123"],
+          },
+          whatsapp: {
+            accessToken: "whatsapp-secret",
+            phoneNumberId: "safe-phone-id",
+          },
+        },
       },
     });
 
@@ -33,5 +44,9 @@ describe("persistedRuntimeConfig", () => {
     });
     expect(result.hermesConfig?.modelApiKey).toBeNull();
     expect(result.hermesConfig?.gatewayApiKey).toBeNull();
+    expect(result.hermesConfig?.channels).toEqual({
+      telegram: { botToken: null, allowFrom: ["123"] },
+      whatsapp: { accessToken: null, phoneNumberId: "safe-phone-id" },
+    });
   });
 });

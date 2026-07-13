@@ -191,6 +191,7 @@ export interface AgentDoc {
       modelApiKey: string | null;
       gatewayApiKey: string | null;
       toolsets?: string[] | null;
+      channels?: Record<string, Record<string, unknown>> | null;
     } | null;
     tools: string[];
   };

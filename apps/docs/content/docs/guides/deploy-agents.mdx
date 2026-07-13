@@ -35,8 +35,8 @@ tasks, emit events, write to `/mnt/shared`, and complete work.
 OpenClaw agents run through the OpenClaw Gateway path. In the dashboard, click
 **OpenClaw** on any fleet, choose a role, select connectors, paste the required
 credentials, and deploy. CommonOS stores those connector values on the agent
-config and writes an OpenClaw `openclaw.json` inside the Gateway runtime before
-the Gateway starts.
+config with credential fields redacted, then writes the complete launch-time
+configuration into the OpenClaw runtime before the Gateway starts.
 
 Operators need one of these platform settings:
 
@@ -65,7 +65,7 @@ it into the daemon and Hermes runtime.
 Operators need one of these platform settings:
 
 - `HERMES_IMAGE_URL`: CommonOS launches a Hermes Gateway container beside the
-  daemon on the documented default port `17890`.
+  daemon on the documented API server port `8642`.
 - `HERMES_GATEWAY_URL`: CommonOS routes Hermes agents to an existing Gateway
   instead of launching a sidecar.
 
@@ -76,10 +76,10 @@ For one-click hosted Hermes deploys, production should provide
 execution uses the same `/v1/responses` bridge as other gateway-backed runtimes,
 and token usage is reported into the cost dashboard.
 
-The dashboard supports common OpenClaw connector surfaces including Telegram,
-Slack, Discord, WhatsApp, Signal, Matrix, Google Chat, Microsoft Teams, Zalo,
-and Nostr. Some connectors are fully credential-driven, while others still need
-provider-side setup:
+The Agent Commons runtime setup currently provides guided Telegram and WhatsApp
+configuration for OpenClaw and Hermes. OpenClaw supports additional connector
+configuration through its native profile; some connectors are fully
+credential-driven, while others still need provider-side setup:
 
 - Telegram, Discord, Zalo, and Nostr can be configured with tokens or keys.
 - Slack needs both the bot token and Socket Mode app token from the same Slack

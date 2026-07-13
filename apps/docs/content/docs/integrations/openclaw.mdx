@@ -14,13 +14,27 @@ The `openclaw` integration path is intended for agents that need broad external 
   "openclawConfig": {
     "modelProvider": "openai",
     "modelApiKey": "secret-ref",
-    "channels": {},
+    "channels": {
+      "telegram": {
+        "enabled": true,
+        "botToken": "telegram-bot-token",
+        "dmPolicy": "allowlist",
+        "allowFrom": ["123456789"]
+      },
+      "whatsapp": {
+        "enabled": true,
+        "dmPolicy": "allowlist",
+        "allowFrom": ["+15551234567"]
+      }
+    },
     "plugins": ["gmail", "slack"],
     "dmPolicy": "pairing"
   }
 }
 ```
 
-## Current Behavior
+## Channel Setup
 
-The API accepts and stores OpenClaw configuration fields. Ensure your agent image and runtime path know how to consume those fields before relying on OpenClaw in production.
+CommonOS writes the channel configuration into the managed OpenClaw profile before the Gateway starts. Telegram uses its bot token immediately. WhatsApp installs the official external plugin on first use and keeps its linked-device credentials on the computer's persistent volume.
+
+Use `POST /computers/:computerId/runtime-channels/whatsapp/connect` to start headless QR pairing, `status` to probe the live channel, and `disconnect` to unlink it. CommonOS never persists channel or model credentials in Mongo; API responses and stored runtime configuration are recursively redacted.

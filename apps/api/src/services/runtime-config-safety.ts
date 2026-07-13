@@ -34,7 +34,14 @@ export function persistedRuntimeConfig(config: {
         }
       : null,
     hermesConfig: config.hermesConfig
-      ? { ...config.hermesConfig, modelApiKey: null, gatewayApiKey: null }
+      ? {
+          ...config.hermesConfig,
+          modelApiKey: null,
+          gatewayApiKey: null,
+          channels: redactObject(config.hermesConfig.channels) as NonNullable<
+            AgentDoc["config"]["hermesConfig"]
+          >["channels"],
+        }
       : null,
   };
 }
