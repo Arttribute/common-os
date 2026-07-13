@@ -189,8 +189,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/event-schema
       '@common-os/sdk':
-        specifier: ^0.3.3
-        version: 0.3.3
+        specifier: ^0.3.5
+        version: 0.3.5
       '@privy-io/react-auth':
         specifier: ^2.12.0
         version: 2.25.0(@solana/kit@5.5.1(bufferutil@4.1.0)(typescript@5.9.3))(@solana/web3.js@1.98.4(bufferutil@4.1.0)(encoding@0.1.13)(typescript@5.9.3))(@types/react@19.2.14)(bs58@6.0.0)(bufferutil@4.1.0)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(typescript@5.9.3)(use-sync-external-store@1.6.0(react@19.2.5))(zod@3.25.76)
@@ -871,8 +871,8 @@ packages:
     resolution: {integrity: sha512-j0ISFyRmKpWU6f8Ta9TXEy05CdEK3XZSfF84jOE0zzNp3kpnTc7vA9GRYMyBrouXt93alvJCxZQ/1z2/xtsrCg==}
     engines: {node: '>=22'}
 
-  '@common-os/sdk@0.3.3':
-    resolution: {integrity: sha512-zBBVt07Cfal3bjLAcdwOxlKgyfO24vDE+nT8R5xOgpjqSlK/Na9JxQxT57lGGjLQzPVP2yRThOrmi3ATJabtrg==}
+  '@common-os/sdk@0.3.5':
+    resolution: {integrity: sha512-5QaVCDo8a9wnW2R57OdIbX3HR4Ud3hUmjyr1x45VnEWYALcHQVO62H04UePacYpp97CYju1MpsIsl/0OaAMjOg==}
     engines: {node: '>=22'}
 
   '@emnapi/runtime@1.10.0':
@@ -8637,7 +8637,7 @@ snapshots:
     dependencies:
       zod: 3.25.76
 
-  '@common-os/sdk@0.3.3':
+  '@common-os/sdk@0.3.5':
     dependencies:
       '@common-os/events': 0.2.0
       zod: 3.25.76
