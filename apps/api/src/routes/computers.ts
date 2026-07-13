@@ -731,6 +731,25 @@ router.post("/:computerId/runtime-channels/:channel/:action", async (c) => {
       409
     );
   }
+  const whatsapp = computer.config.openclawConfig?.channels?.whatsapp as
+    | { enabled?: boolean }
+    | undefined;
+  if (!whatsapp?.enabled) {
+    if (action === "connect") {
+      return c.json(
+        { error: "Enable WhatsApp and apply the runtime settings first" },
+        409
+      );
+    }
+    return c.json({
+      output: {
+        configured: false,
+        connected: false,
+        status: "not-configured",
+      },
+      raw: "",
+    });
+  }
   const namespace = computer.compute?.namespace ?? computer.pod.namespaceId;
   const podName = computer.compute?.podName;
   if (

@@ -1992,12 +1992,17 @@ export async function runRuntimeChannelCommand(opts: {
   if (opts.runtime !== "openclaw") {
     throw new Error("QR channel setup is not available for this runtime");
   }
+  // OPENCLAW_GATEWAY_URL is useful to the companion runtime but makes the
+  // OpenClaw CLI treat this loopback gateway as remote and require explicit
+  // credentials. Let the CLI discover the local auth-free gateway from its
+  // config for channel administration commands.
+  const openclaw = "env -u OPENCLAW_GATEWAY_URL openclaw";
   const commandByAction = {
     connect:
-      "openclaw gateway call web.login.start --params '{\"force\":true}' --json --timeout 30000 --no-color",
+      `${openclaw} gateway call web.login.start --params '{"force":true}' --json --timeout 30000 --no-color`,
     status:
-      "openclaw channels status --channel whatsapp --probe --json --timeout 15000 --no-color",
-    disconnect: "openclaw channels logout --channel whatsapp --json --no-color",
+      `${openclaw} channels status --channel whatsapp --probe --json --timeout 15000 --no-color`,
+    disconnect: `${openclaw} channels logout --channel whatsapp --json --no-color`,
   } as const;
   const kc = await kubeConfigForProvider(opts.provider, opts.region);
   const exec = new k8s.Exec(kc);
@@ -2022,7 +2027,7 @@ export async function runRuntimeChannelCommand(opts: {
     };
     const timer = setTimeout(
       () => finish(new Error("runtime channel command timed out")),
-      opts.action === "connect" ? 45_000 : 25_000
+      opts.action === "connect" ? 60_000 : 40_000
     );
     try {
       const socket = await exec.exec(
