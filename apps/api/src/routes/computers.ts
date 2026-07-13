@@ -40,6 +40,8 @@ const AGC_URL = (
 
 type ComputerRequestBody = {
   agentCommonsId?: string;
+  ownerUserId?: string | null;
+  workspaceId?: string | null;
   computerId?: string;
   name?: string;
   role?: string;
@@ -100,8 +102,16 @@ function serviceBinding(c: any): string | null {
 
 async function verifyAgentCommonsOwner(
   c: any,
-  agentCommonsId: string
+  agentCommonsId: string,
+  claimedOwner?: CanonicalComputerOwner | null
 ): Promise<{ owner: CanonicalComputerOwner } | { response: Response }> {
+  // Agent Commons authenticates with a dedicated service credential and
+  // supplies the canonical owner in the same bound provisioning request. Use
+  // that claim directly so staging and production can share CommonOS without
+  // CommonOS having to call back to one hard-coded Agent Commons environment.
+  if (c.get("authType") === "service" && claimedOwner?.ownerUserId) {
+    return { owner: claimedOwner };
+  }
   const token = await agentCommonsServiceToken();
   if (!token) {
     return {
@@ -401,7 +411,17 @@ router.post("/", async (c) => {
       403
     );
   }
-  const verified = await verifyAgentCommonsOwner(c, agentCommonsId);
+  const claimedOwner = body.ownerUserId?.trim()
+    ? {
+        ownerUserId: body.ownerUserId.trim(),
+        workspaceId: body.workspaceId?.trim() || null,
+      }
+    : null;
+  const verified = await verifyAgentCommonsOwner(
+    c,
+    agentCommonsId,
+    claimedOwner
+  );
   if ("response" in verified) return verified.response;
 
   try {
