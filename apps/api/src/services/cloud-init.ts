@@ -373,7 +373,11 @@ function buildOpenClawGatewayConfig(
   const configuredPlugins = stringList(config?.plugins);
   const whatsappEnabled = Boolean(config?.channels?.whatsapp?.enabled);
   const pluginIds = Array.from(
-    new Set([...configuredPlugins, ...(whatsappEnabled ? ["whatsapp"] : [])])
+    new Set([
+      ...configuredPlugins,
+      "admin-http-rpc",
+      ...(whatsappEnabled ? ["whatsapp"] : []),
+    ])
   );
 
   return {
@@ -2029,6 +2033,25 @@ export async function inspectAgentPodEks(
   };
 }
 
+export function parseOpenClawAdminRpcResponse(raw: string): unknown {
+  let response: {
+    ok?: boolean;
+    payload?: unknown;
+    error?: { message?: string };
+  };
+  try {
+    response = JSON.parse(raw) as typeof response;
+  } catch {
+    return raw;
+  }
+  if (response.ok === false) {
+    throw new Error(
+      response.error?.message ?? "runtime channel command failed"
+    );
+  }
+  return response.payload ?? response;
+}
+
 export async function runRuntimeChannelCommand(opts: {
   provider: "gcp" | "aws";
   region?: string | null;
@@ -2041,18 +2064,21 @@ export async function runRuntimeChannelCommand(opts: {
   if (opts.runtime !== "openclaw") {
     throw new Error("QR channel setup is not available for this runtime");
   }
-  // OPENCLAW_GATEWAY_URL is useful to the companion runtime but makes the
-  // OpenClaw CLI treat this loopback gateway as remote and require explicit
-  // credentials. Let the CLI discover the local auth-free gateway from its
-  // config for channel administration commands.
-  const openclaw = "env -u OPENCLAW_GATEWAY_URL openclaw";
-  const commandByAction = {
-    connect:
-      `${openclaw} gateway call web.login.start --params '{"force":true}' --json --timeout 30000 --no-color`,
-    status:
-      `${openclaw} channels status --channel whatsapp --probe --json --timeout 15000 --no-color`,
-    disconnect: `${openclaw} channels logout --channel whatsapp --json --no-color`,
+  // Starting the OpenClaw CLI reloads its full plugin graph and provider auth,
+  // which adds tens of seconds to every UI poll. The bundled admin HTTP RPC
+  // plugin dispatches these same methods inside the already-running gateway.
+  const requestByAction = {
+    connect: { method: "web.login.start", params: { force: true } },
+    status: {
+      method: "channels.status",
+      params: { channel: "whatsapp", probe: false, timeoutMs: 5_000 },
+    },
+    disconnect: {
+      method: "channels.logout",
+      params: { channel: "whatsapp" },
+    },
   } as const;
+  const rpcRequest = JSON.stringify(requestByAction[opts.action]);
   const kc = await kubeConfigForProvider(opts.provider, opts.region);
   const exec = new k8s.Exec(kc);
   let stdout = "";
@@ -2064,7 +2090,14 @@ export async function runRuntimeChannelCommand(opts: {
         callback();
       },
     });
-  const command = ["/bin/sh", "-lc", commandByAction[opts.action]];
+  const command = [
+    "/bin/sh",
+    "-lc",
+    `curl --silent --show-error --fail-with-body --max-time 30 \
+      --request POST http://127.0.0.1:18789/api/v1/admin/rpc \
+      --header 'content-type: application/json' \
+      --data '${rpcRequest}'`,
+  ];
   await new Promise<void>(async (resolve, reject) => {
     let settled = false;
     const finish = (error?: Error) => {
@@ -2107,19 +2140,7 @@ export async function runRuntimeChannelCommand(opts: {
     }
   });
   const raw = stdout.trim();
-  let output: unknown = raw;
-  try {
-    output = JSON.parse(raw);
-  } catch {
-    const jsonStart = raw.lastIndexOf("\n{");
-    if (jsonStart >= 0) {
-      try {
-        output = JSON.parse(raw.slice(jsonStart + 1));
-      } catch {
-        // Keep the bounded raw output for diagnostics.
-      }
-    }
-  }
+  const output = parseOpenClawAdminRpcResponse(raw);
   return { output, raw };
 }
 

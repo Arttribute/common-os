@@ -3,6 +3,7 @@ jest.mock("uuid", () => ({ v4: () => "test-session-id" }));
 
 import {
   commonRuntimeEnv,
+  parseOpenClawAdminRpcResponse,
   runtimeStorageInitContainer,
   type LaunchOptions,
 } from "./cloud-init";
@@ -69,9 +70,25 @@ describe("managed runtime environment isolation", () => {
       load: {
         paths: ["/home/node/.commonos-openclaw/extensions/whatsapp"],
       },
-      entries: { whatsapp: { enabled: true } },
+      entries: {
+        "admin-http-rpc": { enabled: true },
+        whatsapp: { enabled: true },
+      },
     });
     expect(config.plugins).not.toHaveProperty("allow");
+  });
+
+  it("unwraps OpenClaw admin RPC responses and preserves errors", () => {
+    expect(
+      parseOpenClawAdminRpcResponse(
+        JSON.stringify({ ok: true, payload: { connected: false } }),
+      ),
+    ).toEqual({ connected: false });
+    expect(() =>
+      parseOpenClawAdminRpcResponse(
+        JSON.stringify({ ok: false, error: { message: "not linked" } }),
+      ),
+    ).toThrow("not linked");
   });
 
   it("puts only Hermes configuration in Hermes computers", () => {
