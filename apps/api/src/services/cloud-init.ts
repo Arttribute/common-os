@@ -517,7 +517,7 @@ if [ -n "\${OPENCLAW_CONFIG_JSON:-}" ]; then
   printf '%s' "$OPENCLAW_CONFIG_JSON" > "$HOME/.openclaw/openclaw.json"
 fi
 if command -v openclaw >/dev/null 2>&1; then
-  if printf '%s' "\${OPENCLAW_CHANNELS_JSON:-}" | grep -q '"whatsapp"'; then
+  if node -e 'const channels = JSON.parse(process.env.OPENCLAW_CHANNELS_JSON || "{}"); process.exit(channels.whatsapp?.enabled === true ? 0 : 1)'; then
     plugin_state=/home/node/.commonos-openclaw
     plugin_cache="$HOME/.openclaw/commonos-plugin-cache/whatsapp"
     legacy_plugin_cache="$HOME/.openclaw/extensions/whatsapp"
