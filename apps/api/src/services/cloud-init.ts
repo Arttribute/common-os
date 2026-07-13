@@ -514,7 +514,18 @@ set -eu
 export HOME=/mnt/shared/openclaw
 mkdir -p "$HOME/.openclaw" "$HOME/logs"
 if [ -n "\${OPENCLAW_CONFIG_JSON:-}" ]; then
-  printf '%s' "$OPENCLAW_CONFIG_JSON" > "$HOME/.openclaw/openclaw.json"
+  node <<'NODE'
+const fs = require("fs");
+const configPath = process.env.HOME + "/.openclaw/openclaw.json";
+const desired = JSON.parse(process.env.OPENCLAW_CONFIG_JSON);
+let existing = {};
+try {
+  existing = JSON.parse(fs.readFileSync(configPath, "utf8"));
+} catch {}
+const next = { ...existing, ...desired };
+if (!desired.plugins) delete next.plugins;
+fs.writeFileSync(configPath, JSON.stringify(next));
+NODE
 fi
 if command -v openclaw >/dev/null 2>&1; then
   if node -e 'const channels = JSON.parse(process.env.OPENCLAW_CHANNELS_JSON || "{}"); process.exit(channels.whatsapp?.enabled === true ? 0 : 1)'; then
