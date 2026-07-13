@@ -421,7 +421,6 @@ function buildOpenClawGatewayConfig(
       ? {
           plugins: {
             enabled: true,
-            allow: pluginIds,
             ...(whatsappEnabled
               ? {
                   load: {

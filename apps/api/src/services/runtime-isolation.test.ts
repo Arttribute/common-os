@@ -66,12 +66,12 @@ describe("managed runtime environment isolation", () => {
     );
 
     expect(config.plugins).toMatchObject({
-      allow: ["whatsapp"],
       load: {
         paths: ["/home/node/.commonos-openclaw/extensions/whatsapp"],
       },
       entries: { whatsapp: { enabled: true } },
     });
+    expect(config.plugins).not.toHaveProperty("allow");
   });
 
   it("puts only Hermes configuration in Hermes computers", () => {
