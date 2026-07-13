@@ -760,6 +760,26 @@ router.post("/:computerId/runtime-channels/:channel/:action", async (c) => {
     return c.json({ error: "runtime must be ready before channel setup" }, 409);
   }
   try {
+    if (computer.pod.provider === "aws") {
+      const diagnostics = await inspectAgentPodEks(
+        namespace,
+        computer._id,
+        podName,
+        computer.compute?.pvcName
+      );
+      const runtimeContainer = diagnostics.containers.find(
+        (container) => container.name === "openclaw-runtime"
+      );
+      if (!runtimeContainer?.ready) {
+        return c.json(
+          {
+            status: "starting",
+            runtimeStatus: runtimeContainer?.state ?? diagnostics.phase,
+          },
+          202
+        );
+      }
+    }
     return c.json(
       await runRuntimeChannelCommand({
         provider: computer.pod.provider,

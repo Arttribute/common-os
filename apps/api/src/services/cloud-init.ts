@@ -370,6 +370,11 @@ function buildOpenClawGatewayConfig(
       return [name, common];
     })
   );
+  const configuredPlugins = stringList(config?.plugins);
+  const whatsappEnabled = Boolean(config?.channels?.whatsapp?.enabled);
+  const pluginIds = Array.from(
+    new Set([...configuredPlugins, ...(whatsappEnabled ? ["whatsapp"] : [])])
+  );
 
   return {
     gateway: {
@@ -412,6 +417,26 @@ function buildOpenClawGatewayConfig(
         ],
       },
     },
+    ...(pluginIds.length
+      ? {
+          plugins: {
+            enabled: true,
+            allow: pluginIds,
+            ...(whatsappEnabled
+              ? {
+                  load: {
+                    paths: [
+                      "/home/node/.commonos-openclaw/extensions/whatsapp",
+                    ],
+                  },
+                }
+              : {}),
+            entries: Object.fromEntries(
+              pluginIds.map((pluginId) => [pluginId, { enabled: true }])
+            ),
+          },
+        }
+      : {}),
   };
 }
 
@@ -493,9 +518,23 @@ if [ -n "\${OPENCLAW_CONFIG_JSON:-}" ]; then
 fi
 if command -v openclaw >/dev/null 2>&1; then
   if printf '%s' "\${OPENCLAW_CHANNELS_JSON:-}" | grep -q '"whatsapp"'; then
-    marker="$HOME/.openclaw/.commonos-whatsapp-plugin"
-    if [ ! -f "$marker" ]; then
-      openclaw plugins install clawhub:@openclaw/whatsapp && touch "$marker"
+    plugin_state=/home/node/.commonos-openclaw
+    plugin_cache="$HOME/.openclaw/commonos-plugin-cache/whatsapp"
+    legacy_plugin_cache="$HOME/.openclaw/extensions/whatsapp"
+    if [ ! -d "$plugin_cache" ] && [ -d "$legacy_plugin_cache" ]; then
+      mkdir -p "$(dirname "$plugin_cache")"
+      mv "$legacy_plugin_cache" "$plugin_cache"
+    fi
+    rm -rf "$plugin_state"
+    install -d -m 700 "$plugin_state/extensions"
+    if [ -d "$plugin_cache" ]; then
+      cp -R "$plugin_cache" "$plugin_state/extensions/whatsapp"
+    else
+      OPENCLAW_STATE_DIR="$plugin_state" \
+        OPENCLAW_CONFIG_PATH="$plugin_state/openclaw.json" \
+        openclaw plugins install clawhub:@openclaw/whatsapp
+      mkdir -p "$(dirname "$plugin_cache")"
+      cp -R "$plugin_state/extensions/whatsapp" "$plugin_cache"
     fi
   fi
   exec openclaw gateway run --auth none --bind loopback --port "\${OPENCLAW_GATEWAY_PORT:-18789}"

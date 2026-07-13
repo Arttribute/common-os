@@ -49,6 +49,31 @@ describe("managed runtime environment isolation", () => {
     expect(environment.some((name) => name.startsWith("HERMES_"))).toBe(false);
   });
 
+  it("loads the WhatsApp connector from the process-owned plugin cache", () => {
+    const opts = options("openclaw");
+    opts.openclawConfig = {
+      modelProvider: "openai",
+      modelId: "gpt-5.4-mini",
+      modelApiKey: null,
+      channels: { whatsapp: { enabled: true } },
+      plugins: [],
+      dmPolicy: "allowlist",
+    };
+    const config = JSON.parse(
+      commonRuntimeEnv(opts, "example.test/agent:latest").find(
+        (entry) => entry.name === "OPENCLAW_CONFIG_JSON",
+      )?.value ?? "{}",
+    );
+
+    expect(config.plugins).toMatchObject({
+      allow: ["whatsapp"],
+      load: {
+        paths: ["/home/node/.commonos-openclaw/extensions/whatsapp"],
+      },
+      entries: { whatsapp: { enabled: true } },
+    });
+  });
+
   it("puts only Hermes configuration in Hermes computers", () => {
     const environment = names("hermes");
     expect(environment).toEqual(expect.arrayContaining(["HERMES_CONFIG_JSON"]));
