@@ -1,6 +1,6 @@
 {
 	"name": "@common-os/cli",
-	"version": "0.3.4",
+	"version": "0.3.5",
 	"description": "CLI for managing CommonOS agent fleets — the `cos` binary",
 	"main": "./dist/index.cjs",
 	"module": "./dist/index.mjs",
