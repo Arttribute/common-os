@@ -102,6 +102,16 @@ describe("managed runtime environment isolation", () => {
       "clawhub:@openclaw/$plugin@$OPENCLAW_PLUGIN_VERSION"
     );
     expect(command).toContain('HOME="$plugin_state"');
+    expect(command).toContain(
+      "DELETE FROM installed_plugin_index WHERE index_key = ?"
+    );
+    expect(command).toContain(
+      'record.installPath.startsWith(process.env.HOME + "/.openclaw/extensions/")'
+    );
+    expect(command.indexOf("DELETE FROM installed_plugin_index")).toBeLessThan(
+      command.indexOf('fs.renameSync(tempPath, configPath)')
+    );
+    expect(command).not.toContain("const externalChannels = new Set");
     expect(command).toContain("touch /tmp/commonos-openclaw-configured");
     const environment = openClawRuntimeContainer(opts, [])?.env ?? [];
     expect(environment).toEqual(

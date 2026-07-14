@@ -547,35 +547,6 @@ export function openClawRuntimeContainer(
 set -eu
 export HOME=/mnt/shared/openclaw
 mkdir -p "$HOME/.openclaw" "$HOME/logs"
-if [ -n "\${OPENCLAW_CONFIG_JSON:-}" ]; then
-  node <<'NODE'
-const fs = require("fs");
-const configPath = process.env.HOME + "/.openclaw/openclaw.json";
-const desired = JSON.parse(process.env.OPENCLAW_CONFIG_JSON);
-const externalChannels = new Set(["whatsapp", "slack", "discord"]);
-let existing = {};
-try {
-  existing = JSON.parse(fs.readFileSync(configPath, "utf8"));
-} catch {}
-const next = { ...existing, ...desired };
-if (!desired.plugins) delete next.plugins;
-// OpenClaw's startup doctor installs any configured external channel before
-// custom load paths are discovered. Start with those channels withheld, then
-// apply the full config as soon as the gateway has loaded our cached plugins.
-if (next.channels) {
-  next.channels = { ...next.channels };
-  for (const id of externalChannels) delete next.channels[id];
-}
-if (next.plugins?.entries) {
-  next.plugins = {
-    ...next.plugins,
-    entries: { ...next.plugins.entries },
-  };
-  for (const id of externalChannels) delete next.plugins.entries[id];
-}
-fs.writeFileSync(configPath, JSON.stringify(next));
-NODE
-fi
 if command -v openclaw >/dev/null 2>&1; then
   channel_plugins="$(node -e 'const channels = JSON.parse(process.env.OPENCLAW_CHANNELS_JSON || "{}"); console.log(["whatsapp", "slack", "discord"].filter((id) => channels[id]?.enabled === true).join(" "))')"
   if [ -n "$channel_plugins" ]; then
@@ -605,14 +576,50 @@ if command -v openclaw >/dev/null 2>&1; then
       fi
     done
   fi
-  rm -f /tmp/commonos-openclaw-configured
-  (
-    for attempt in $(seq 1 120); do
-      if node -e "fetch('http://127.0.0.1:18789/health',{signal:AbortSignal.timeout(1000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
-        node <<'NODE'
+  # OpenClaw 2026.7.x persists a generated plugin index in SQLite. Older
+  # runtimes can leave an install record pointing at the deleted EFS extension
+  # tree, causing the new gateway to fail its startup smoke check before it can
+  # discover the process-owned plugin path. Invalidate only that generated
+  # index row; channel credentials and plugin state are stored separately.
+  node <<'NODE'
+const fs = require("fs");
+const statePath = process.env.HOME + "/.openclaw/state/openclaw.sqlite";
+if (fs.existsSync(statePath)) {
+  try {
+    const { DatabaseSync } = require("node:sqlite");
+    const db = new DatabaseSync(statePath);
+    const rows = db
+      .prepare("SELECT index_key, host_contract_version, install_records_json FROM installed_plugin_index")
+      .all();
+    for (const row of rows) {
+      let records = {};
+      try { records = JSON.parse(row.install_records_json || "{}"); } catch {}
+      const hasLegacyPath = Object.values(records).some(
+        (record) =>
+          record &&
+          typeof record === "object" &&
+          typeof record.installPath === "string" &&
+          record.installPath.startsWith(process.env.HOME + "/.openclaw/extensions/")
+      );
+      if (row.host_contract_version !== process.env.OPENCLAW_PLUGIN_VERSION || hasLegacyPath) {
+        db.prepare("DELETE FROM installed_plugin_index WHERE index_key = ?").run(row.index_key);
+      }
+    }
+    db.close();
+  } catch (error) {
+    console.warn("[commonos] could not invalidate stale OpenClaw plugin index:", error.message);
+  }
+}
+NODE
+  # Apply the complete configuration only after the version-matched channel
+  # plugins are present and stale discovery metadata is gone. The gateway can
+  # then load channels on its first boot instead of becoming ready and
+  # immediately spending another shutdown/startup cycle applying them.
+  if [ -n "\${OPENCLAW_CONFIG_JSON:-}" ]; then
+    node <<'NODE'
 const fs = require("fs");
 const configPath = process.env.HOME + "/.openclaw/openclaw.json";
-const desired = JSON.parse(process.env.OPENCLAW_CONFIG_JSON || "{}");
+const desired = JSON.parse(process.env.OPENCLAW_CONFIG_JSON);
 let existing = {};
 try {
   existing = JSON.parse(fs.readFileSync(configPath, "utf8"));
@@ -623,7 +630,11 @@ const tempPath = configPath + ".commonos-next";
 fs.writeFileSync(tempPath, JSON.stringify(next));
 fs.renameSync(tempPath, configPath);
 NODE
-        sleep 2
+  fi
+  rm -f /tmp/commonos-openclaw-configured
+  (
+    for attempt in $(seq 1 120); do
+      if node -e "fetch('http://127.0.0.1:18789/health',{signal:AbortSignal.timeout(1000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
         touch /tmp/commonos-openclaw-configured
         exit 0
       fi
