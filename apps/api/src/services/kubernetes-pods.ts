@@ -48,40 +48,41 @@ export async function createKubernetesPodIdempotently<TPod extends PodLike>(
   const name = body.metadata?.name;
   if (!name) throw new Error("Kubernetes pod metadata.name is required");
 
-  try {
-    await coreApi.createNamespacedPod({ namespace, body });
-    return "created";
-  } catch (error) {
-    if (kubernetesStatusCode(error) !== 409) throw error;
-  }
-
-  let current: PodLike;
-  try {
-    current = responsePod(
-      await coreApi.readNamespacedPod({ namespace, name }),
-    );
-  } catch (error) {
-    if (kubernetesStatusCode(error) === 404) {
-      await coreApi.createNamespacedPod({ namespace, body });
-      return "created";
-    }
-    throw error;
-  }
-  if (!current.metadata?.deletionTimestamp) return "existing";
-
-  const timeoutMs = options.deletionTimeoutMs ?? 45_000;
+  const timeoutMs = options.deletionTimeoutMs ?? 180_000;
   const intervalMs = options.pollIntervalMs ?? 250;
   const deadline = Date.now() + timeoutMs;
+
   while (Date.now() < deadline) {
-    await wait(intervalMs);
     try {
-      await coreApi.readNamespacedPod({ namespace, name });
+      await coreApi.createNamespacedPod({ namespace, body });
+      return "created";
     } catch (error) {
-      if (kubernetesStatusCode(error) === 404) {
-        await coreApi.createNamespacedPod({ namespace, body });
-        return "created";
+      if (kubernetesStatusCode(error) !== 409) throw error;
+    }
+
+    let current: PodLike;
+    try {
+      current = responsePod(
+        await coreApi.readNamespacedPod({ namespace, name }),
+      );
+    } catch (error) {
+      if (kubernetesStatusCode(error) !== 404) throw error;
+      await wait(intervalMs);
+      continue;
+    }
+    if (!current.metadata?.deletionTimestamp) return "existing";
+
+    while (Date.now() < deadline) {
+      await wait(intervalMs);
+      try {
+        current = responsePod(
+          await coreApi.readNamespacedPod({ namespace, name }),
+        );
+        if (!current.metadata?.deletionTimestamp) return "existing";
+      } catch (error) {
+        if (kubernetesStatusCode(error) === 404) break;
+        throw error;
       }
-      throw error;
     }
   }
 

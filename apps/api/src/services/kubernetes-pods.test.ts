@@ -51,4 +51,62 @@ describe("idempotent Kubernetes pod creation", () => {
     ).resolves.toBe("created");
     expect(api.createNamespacedPod).toHaveBeenCalledTimes(2);
   });
+
+  it("retries when creation conflicts again after the old pod disappears", async () => {
+    const api = {
+      createNamespacedPod: jest
+        .fn()
+        .mockRejectedValueOnce(statusError(409))
+        .mockRejectedValueOnce(statusError(409))
+        .mockResolvedValueOnce({}),
+      readNamespacedPod: jest
+        .fn()
+        .mockResolvedValueOnce({
+          metadata: {
+            name: "computer-one",
+            deletionTimestamp: "2026-07-11T00:00:00Z",
+          },
+        })
+        .mockRejectedValueOnce(statusError(404))
+        .mockRejectedValueOnce(statusError(404)),
+    };
+
+    await expect(
+      createKubernetesPodIdempotently(
+        api,
+        "tenant-one",
+        { metadata: { name: "computer-one" } },
+        { deletionTimeoutMs: 100, pollIntervalMs: 0 },
+      ),
+    ).resolves.toBe("created");
+    expect(api.createNamespacedPod).toHaveBeenCalledTimes(3);
+  });
+
+  it("accepts a concurrently-created replacement after deletion", async () => {
+    const api = {
+      createNamespacedPod: jest
+        .fn()
+        .mockRejectedValueOnce(statusError(409))
+        .mockRejectedValueOnce(statusError(409)),
+      readNamespacedPod: jest
+        .fn()
+        .mockResolvedValueOnce({
+          metadata: {
+            name: "computer-one",
+            deletionTimestamp: "2026-07-11T00:00:00Z",
+          },
+        })
+        .mockRejectedValueOnce(statusError(404))
+        .mockResolvedValueOnce({ metadata: { name: "computer-one" } }),
+    };
+
+    await expect(
+      createKubernetesPodIdempotently(
+        api,
+        "tenant-one",
+        { metadata: { name: "computer-one" } },
+        { deletionTimeoutMs: 100, pollIntervalMs: 0 },
+      ),
+    ).resolves.toBe("existing");
+  });
 });
