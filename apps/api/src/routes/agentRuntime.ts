@@ -817,13 +817,17 @@ router.post("/:agentId/messages/:msgId/respond", async (c) => {
 
   try {
     const existing = await (await humanMessages())
-      .findOne({ _id: msgId, agentId }, { sessionId: 1 })
+      .findOne({ _id: msgId, agentId }, { sessionId: 1, status: 1 })
       .lean();
+    if (!existing) return c.json({ error: "message not found" }, 404);
+    if (existing.status === "responded") {
+      return c.json({ ok: true, duplicate: true });
+    }
     const msg = await (
       await humanMessages()
     )
       .findOneAndUpdate(
-        { _id: msgId, agentId },
+        { _id: msgId, agentId, status: { $ne: "responded" } },
         {
           $set: {
             status: "responded",
@@ -840,7 +844,15 @@ router.post("/:agentId/messages/:msgId/respond", async (c) => {
         { new: true }
       )
       .lean();
-    if (!msg) return c.json({ error: "message not found" }, 404);
+    if (!msg) {
+      const current = await (await humanMessages())
+        .findOne({ _id: msgId, agentId }, { status: 1 })
+        .lean();
+      if (current?.status === "responded") {
+        return c.json({ ok: true, duplicate: true });
+      }
+      return c.json({ error: "message response conflict" }, 409);
+    }
 
     broadcastToFleet(msg.fleetId, {
       type: "agent_response",

@@ -73,7 +73,7 @@ const AXL_LISTEN_PORT = process.env.AXL_LISTEN_PORT ?? "9001";
 const AXL_MODE = (process.env.AXL_MODE ?? "explicit").toLowerCase();
 const ETH_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 const DAEMON_RUNTIME =
-  "common-os-daemon/agc-direct-stream-v12-managed-process-segments";
+  "common-os-daemon/agc-direct-stream-v13-reliable-responses";
 const AGENT_IMAGE = process.env.COMMONOS_AGENT_IMAGE ?? "";
 const COMMIT_SHA = process.env.COMMONOS_COMMIT_SHA ?? "";
 
@@ -2294,24 +2294,13 @@ async function handleMessage(msg: {
       await streamFinalResponse(msg.id, response);
     }
 
-    await fetch(
-      `${config.apiUrl}/agents/${config.agentId}/messages/${msg.id}/respond`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${config.agentToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          response,
-          ...(typeof runResult === "object" && runResult.agcSessionId
-            ? { agcSessionId: runResult.agcSessionId }
-            : {}),
-          ...(messageUsage ? { usage: messageUsage } : {}),
-        }),
-        signal: AbortSignal.timeout(10_000),
-      }
-    );
+    await postMessageResponse(msg.id, {
+      response,
+      ...(typeof runResult === "object" && runResult.agcSessionId
+        ? { agcSessionId: runResult.agcSessionId }
+        : {}),
+      ...(messageUsage ? { usage: messageUsage } : {}),
+    });
 
     console.log(`[daemon] message ${msg.id} responded`);
 
@@ -2345,6 +2334,44 @@ async function handleMessage(msg: {
         );
       });
   }
+}
+
+async function postMessageResponse(
+  msgId: string,
+  payload: {
+    response: string;
+    agcSessionId?: string;
+    usage?: TokenUsagePayload;
+  }
+): Promise<void> {
+  const delays = [100, 250, 500, 1_000];
+  let lastError = "response delivery failed";
+  for (let attempt = 0; attempt < delays.length; attempt++) {
+    try {
+      const res = await fetch(
+        `${config.apiUrl}/agents/${config.agentId}/messages/${msgId}/respond`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${config.agentToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(10_000),
+        }
+      );
+      if (res.ok) return;
+      const detail = await res.text().catch(() => "");
+      lastError = `message response failed: ${res.status}${
+        detail ? ` ${truncate(detail, 200)}` : ""
+      }`;
+      if (res.status !== 429 && res.status < 500) throw new Error(lastError);
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+    await sleep(delays[attempt]!);
+  }
+  throw new Error(lastError);
 }
 
 async function markMessageFailed(msgId: string, error: string): Promise<void> {
