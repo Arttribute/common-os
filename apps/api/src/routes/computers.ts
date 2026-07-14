@@ -759,9 +759,17 @@ router.post("/:computerId/runtime-channels/:channel/:action", async (c) => {
   }
   const namespace = computer.compute?.namespace ?? computer.pod.namespaceId;
   const podName = computer.compute?.podName;
+  if (!namespace || !podName) {
+    if (computer.pod.provider === "aws") {
+      return c.json(
+        { status: "starting", runtimeStatus: computer.status },
+        202
+      );
+    }
+    return c.json({ error: "runtime must be ready before channel setup" }, 409);
+  }
   if (
-    !namespace ||
-    !podName ||
+    computer.pod.provider !== "aws" &&
     !["running", "idle"].includes(computer.status)
   ) {
     return c.json({ error: "runtime must be ready before channel setup" }, 409);
