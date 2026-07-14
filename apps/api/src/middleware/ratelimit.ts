@@ -1,4 +1,5 @@
 import { createMiddleware } from 'hono/factory'
+import { createHash } from 'node:crypto'
 
 const WINDOW_MS = 60_000
 const LIMIT = 200
@@ -15,10 +16,10 @@ setInterval(() => {
 }, 5 * 60_000).unref()
 
 export const rateLimitMiddleware = createMiddleware(async (c, next) => {
-  const key =
-    c.req.header('Authorization')?.slice(0, 20) ??
-    c.req.header('CF-Connecting-IP') ??
-    'unknown'
+  const authorization = c.req.header('Authorization')
+  const key = authorization
+    ? createHash('sha256').update(authorization).digest('hex')
+    : c.req.header('CF-Connecting-IP') ?? 'unknown'
 
   const now = Date.now()
   const entry = counts.get(key)

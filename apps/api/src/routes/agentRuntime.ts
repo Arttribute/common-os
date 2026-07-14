@@ -924,9 +924,7 @@ router.post("/:agentId/messages/:msgId/event", async (c) => {
     if (!msg) return c.json({ error: "message not found" }, 404);
 
     const now = new Date();
-    await (
-      await events()
-    ).create({
+    const runtimeEvent = {
       _id: `evt_${Date.now().toString(36)}${randomBytes(4).toString("hex")}`,
       agentId,
       fleetId: msg.fleetId,
@@ -941,8 +939,10 @@ router.post("/:agentId/messages/:msgId/event", async (c) => {
         ...(body.label ? { label: body.label } : {}),
       },
       createdAt: now,
-    } as never);
+    };
 
+    // Streaming is latency-sensitive. Broadcast before persistence so a slow
+    // database write cannot hold visible model output in the daemon.
     broadcastToFleet(msg.fleetId, {
       type: eventType,
       agentId,
@@ -954,6 +954,20 @@ router.post("/:agentId/messages/:msgId/event", async (c) => {
       ...(body.label ? { label: body.label } : {}),
       ts: now.toISOString(),
     });
+
+    if (eventType === "message_delta") {
+      void events()
+        .then((collection) => collection.create(runtimeEvent as never))
+        .catch((err) => {
+          console.warn(
+            `[runtime] message delta persistence failed: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+        });
+    } else {
+      await (await events()).create(runtimeEvent as never);
+    }
     return c.json({ ok: true });
   } catch {
     return c.json({ error: "database error" }, 503);

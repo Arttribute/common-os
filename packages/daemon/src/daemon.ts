@@ -12,6 +12,7 @@ import {
 import { join, dirname, resolve, relative } from "path";
 import { loadConfig } from "./config.js";
 import { buildManagedRuntimePrompt } from "./managed-runtime-prompt.js";
+import { createMessageDeltaStream } from "./message-delta-stream.js";
 import { CommonOSAgentClient } from "@common-os/sdk";
 
 const config = loadConfig();
@@ -622,14 +623,16 @@ function orchestrationContext(): string {
   return lines.join("\n");
 }
 
+let lastWorkspaceSnapshot: string | null = null;
+
 async function emitWorkspaceSnapshot(): Promise<void> {
   const snapshot = buildWorkspaceSnapshot(WORKSPACE_DIR);
-  await agent
-    .emit({
-      type: "workspace_snapshot",
-      payload: { snapshot, rootDir: WORKSPACE_DIR },
-    })
-    .catch(() => {});
+  if (snapshot === lastWorkspaceSnapshot) return;
+  await agent.emit({
+    type: "workspace_snapshot",
+    payload: { snapshot, rootDir: WORKSPACE_DIR },
+  });
+  lastWorkspaceSnapshot = snapshot;
   console.log(
     `[daemon] workspace snapshot emitted (${snapshot.split("\n").length} lines)`
   );
@@ -1456,7 +1459,14 @@ function startHealthMonitor() {
       if (!runtimeHealthy) {
         runtimeHealthy = true;
         console.log("[daemon] runtime healthy again");
-        await agent.emit({ type: "state_change", payload: { status: "idle" } });
+        agent
+          .emit({ type: "state_change", payload: { status: "idle" } })
+          .catch((err) => {
+            console.warn(
+              "[daemon] runtime recovery event failed:",
+              err instanceof Error ? err.message : String(err)
+            );
+          });
       }
     } catch (err) {
       if (runtimeHealthy) {
@@ -2113,7 +2123,14 @@ async function handleMessage(msg: {
 }): Promise<void> {
   console.log(`[daemon] message ${msg.id}: ${msg.content.slice(0, 80)}`);
 
-  await agent.emit({ type: "state_change", payload: { status: "working" } });
+  agent
+    .emit({ type: "state_change", payload: { status: "working" } })
+    .catch((err) => {
+      console.warn(
+        "[daemon] working state event failed:",
+        err instanceof Error ? err.message : String(err)
+      );
+    });
 
   try {
     let messageUsage: TokenUsagePayload | null = null;
@@ -2133,8 +2150,18 @@ async function handleMessage(msg: {
         requestCount: messageUsage.requestCount + usage.requestCount,
       };
     };
-    const deltaStream = createDeltaStream(msg.id);
-    await postMessageEvent(msg.id, {
+    const deltaStream = createMessageDeltaStream(
+      (delta) =>
+        postMessageEvent(msg.id, { type: "message_delta", delta }),
+      {
+        onError: (err) =>
+          console.warn(
+            "[daemon] message delta event failed:",
+            err instanceof Error ? err.message : err
+          ),
+      }
+    );
+    postMessageEvent(msg.id, {
       type: "message_status",
       status: "waiting_for_runtime",
     }).catch(() => {});
@@ -2219,7 +2246,14 @@ async function handleMessage(msg: {
       );
     });
   } finally {
-    await agent.emit({ type: "state_change", payload: { status: "idle" } });
+    agent
+      .emit({ type: "state_change", payload: { status: "idle" } })
+      .catch((err) => {
+        console.warn(
+          "[daemon] idle state event failed:",
+          err instanceof Error ? err.message : String(err)
+        );
+      });
   }
 }
 
@@ -2274,50 +2308,10 @@ async function postMessageEvent(
         "Content-Type": "application/json",
       },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(5_000),
+      signal: AbortSignal.timeout(2_500),
     }
   );
   if (!res.ok) throw new Error(`message event failed: ${res.status}`);
-}
-
-function createDeltaStream(msgId: string): {
-  emit: (delta: string) => Promise<void>;
-  flush: () => Promise<void>;
-  emittedLength: () => number;
-} {
-  let pending = "";
-  let lastFlush = 0;
-  let chain = Promise.resolve();
-  let emitted = 0;
-
-  async function flush(): Promise<void> {
-    if (!pending) return;
-    const chunk = pending;
-    pending = "";
-    lastFlush = Date.now();
-    emitted += chunk.length;
-    chain = chain
-      .then(() =>
-        postMessageEvent(msgId, { type: "message_delta", delta: chunk })
-      )
-      .catch((err) =>
-        console.warn(
-          "[daemon] message delta event failed:",
-          err instanceof Error ? err.message : err
-        )
-      );
-    await chain;
-  }
-
-  async function emit(delta: string): Promise<void> {
-    if (!delta) return;
-    pending += delta;
-    const now = Date.now();
-    if (now - lastFlush < 250 && pending.length < 240) return;
-    await flush();
-  }
-
-  return { emit, flush, emittedLength: () => emitted + pending.length };
 }
 
 async function streamFinalResponse(
@@ -2326,19 +2320,15 @@ async function streamFinalResponse(
 ): Promise<void> {
   const text = response.trim();
   if (!text) return;
-  const chunks = text.match(/[\s\S]{1,180}/g) ?? [text];
-  for (const chunk of chunks) {
-    await postMessageEvent(msgId, {
-      type: "message_delta",
-      delta: chunk,
-    }).catch((err) => {
-      console.warn(
-        "[daemon] final response stream failed:",
-        err instanceof Error ? err.message : err
-      );
-    });
-    await sleep(90);
-  }
+  await postMessageEvent(msgId, {
+    type: "message_delta",
+    delta: text,
+  }).catch((err) => {
+    console.warn(
+      "[daemon] final response stream failed:",
+      err instanceof Error ? err.message : err
+    );
+  });
 }
 
 // ─── Task polling loop ─────────────────────────────────────────────────────
