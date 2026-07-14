@@ -6,6 +6,7 @@ import {
   buildOpenClawGatewayConfig,
   openClawRuntimeContainer,
   parseOpenClawAdminRpcResponse,
+  isRuntimeContainerStartingError,
   runtimeStorageInitContainer,
   type LaunchOptions,
 } from "./cloud-init";
@@ -96,6 +97,21 @@ describe("managed runtime environment isolation", () => {
     expect(command).not.toContain(
       'ln -s "$plugin_cache" "$plugin_state/extensions/$plugin"'
     );
+    expect(command).toContain("$plugin-$OPENCLAW_PLUGIN_VERSION.tar.gz");
+    expect(command).toContain(
+      "clawhub:@openclaw/$plugin@$OPENCLAW_PLUGIN_VERSION"
+    );
+    expect(command).toContain('HOME="$plugin_state"');
+    expect(command).toContain("touch /tmp/commonos-openclaw-configured");
+    const environment = openClawRuntimeContainer(opts, [])?.env ?? [];
+    expect(environment).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "OPENCLAW_DISABLE_PLUGIN_REGISTRY_MIGRATION",
+          value: "1",
+        }),
+      ])
+    );
   });
 
   it("configures low-latency defaults and official Slack and Discord plugins", () => {
@@ -147,6 +163,19 @@ describe("managed runtime environment isolation", () => {
         JSON.stringify({ ok: false, error: { message: "not linked" } })
       )
     ).toThrow("not linked");
+  });
+
+  it("recognizes transient runtime container exec races", () => {
+    expect(
+      isRuntimeContainerStartingError(
+        new Error(
+          'unable to upgrade connection: container not found ("openclaw-runtime")'
+        )
+      )
+    ).toBe(true);
+    expect(
+      isRuntimeContainerStartingError(new Error("permission denied"))
+    ).toBe(false);
   });
 
   it("puts only Hermes configuration in Hermes computers", () => {

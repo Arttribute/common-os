@@ -10,6 +10,7 @@ import {
 import {
   destroyComputerRuntime,
   inspectAgentPodEks,
+  isRuntimeContainerStartingError,
   readAgentWorkspaceFile,
   runRuntimeChannelCommand,
   suspendComputerPod,
@@ -813,6 +814,15 @@ router.post("/:computerId/runtime-channels/:channel/:action", async (c) => {
       })
     );
   } catch (error) {
+    if (isRuntimeContainerStartingError(error)) {
+      return c.json(
+        {
+          status: "starting",
+          runtimeStatus: "container-starting",
+        },
+        202
+      );
+    }
     return c.json(
       {
         error: error instanceof Error ? error.message : "channel setup failed",

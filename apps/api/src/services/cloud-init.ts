@@ -532,6 +532,10 @@ export function openClawRuntimeContainer(
       "openclaw integration path requires OPENCLAW_IMAGE_URL, dockerImage, or OPENCLAW_GATEWAY_URL"
     );
   }
+  const openClawVersion =
+    process.env.OPENCLAW_PLUGIN_VERSION ??
+    image.match(/:(\d{4}\.\d+\.\d+)(?:@|$)/)?.[1] ??
+    "2026.7.1";
 
   return {
     name: "openclaw-runtime",
@@ -548,12 +552,27 @@ if [ -n "\${OPENCLAW_CONFIG_JSON:-}" ]; then
 const fs = require("fs");
 const configPath = process.env.HOME + "/.openclaw/openclaw.json";
 const desired = JSON.parse(process.env.OPENCLAW_CONFIG_JSON);
+const externalChannels = new Set(["whatsapp", "slack", "discord"]);
 let existing = {};
 try {
   existing = JSON.parse(fs.readFileSync(configPath, "utf8"));
 } catch {}
 const next = { ...existing, ...desired };
 if (!desired.plugins) delete next.plugins;
+// OpenClaw's startup doctor installs any configured external channel before
+// custom load paths are discovered. Start with those channels withheld, then
+// apply the full config as soon as the gateway has loaded our cached plugins.
+if (next.channels) {
+  next.channels = { ...next.channels };
+  for (const id of externalChannels) delete next.channels[id];
+}
+if (next.plugins?.entries) {
+  next.plugins = {
+    ...next.plugins,
+    entries: { ...next.plugins.entries },
+  };
+  for (const id of externalChannels) delete next.plugins.entries[id];
+}
 fs.writeFileSync(configPath, JSON.stringify(next));
 NODE
 fi
@@ -564,26 +583,20 @@ if command -v openclaw >/dev/null 2>&1; then
     rm -rf "$plugin_state"
     install -d -m 700 "$plugin_state/extensions"
     for plugin in $channel_plugins; do
-      plugin_cache="$HOME/.openclaw/commonos-plugin-cache/$plugin"
-      plugin_archive="$HOME/.openclaw/commonos-plugin-cache/$plugin.tar.gz"
+      plugin_archive="$HOME/.openclaw/commonos-plugin-cache/$plugin-$OPENCLAW_PLUGIN_VERSION.tar.gz"
       legacy_plugin_cache="$HOME/.openclaw/extensions/$plugin"
-      if [ ! -d "$plugin_cache" ] && [ -d "$legacy_plugin_cache" ]; then
-        mkdir -p "$(dirname "$plugin_cache")"
-        mv "$legacy_plugin_cache" "$plugin_cache"
-      fi
-      if [ ! -f "$plugin_archive" ] && [ -d "$plugin_cache" ]; then
-        archive_tmp="$plugin_archive.tmp"
-        rm -f "$archive_tmp"
-        tar -czf "$archive_tmp" -C "$plugin_cache" .
-        mv "$archive_tmp" "$plugin_archive"
-      fi
+      # External plugins on EFS inherit the access point uid and OpenClaw
+      # correctly rejects them. Keep only the portable archive there and
+      # load the plugin from process-owned storage on every boot.
+      rm -rf "$legacy_plugin_cache"
       if [ -f "$plugin_archive" ]; then
         install -d -m 700 "$plugin_state/extensions/$plugin"
         tar -xzf "$plugin_archive" -C "$plugin_state/extensions/$plugin"
       else
-        OPENCLAW_STATE_DIR="$plugin_state" \
+        HOME="$plugin_state" \
+          OPENCLAW_STATE_DIR="$plugin_state" \
           OPENCLAW_CONFIG_PATH="$plugin_state/openclaw.json" \
-          openclaw plugins install "clawhub:@openclaw/$plugin"
+          openclaw plugins install "clawhub:@openclaw/$plugin@$OPENCLAW_PLUGIN_VERSION" --pin
         mkdir -p "$(dirname "$plugin_archive")"
         archive_tmp="$plugin_archive.tmp"
         rm -f "$archive_tmp"
@@ -592,6 +605,31 @@ if command -v openclaw >/dev/null 2>&1; then
       fi
     done
   fi
+  rm -f /tmp/commonos-openclaw-configured
+  (
+    for attempt in $(seq 1 120); do
+      if node -e "fetch('http://127.0.0.1:18789/health',{signal:AbortSignal.timeout(1000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
+        node <<'NODE'
+const fs = require("fs");
+const configPath = process.env.HOME + "/.openclaw/openclaw.json";
+const desired = JSON.parse(process.env.OPENCLAW_CONFIG_JSON || "{}");
+let existing = {};
+try {
+  existing = JSON.parse(fs.readFileSync(configPath, "utf8"));
+} catch {}
+const next = { ...existing, ...desired };
+if (!desired.plugins) delete next.plugins;
+const tempPath = configPath + ".commonos-next";
+fs.writeFileSync(tempPath, JSON.stringify(next));
+fs.renameSync(tempPath, configPath);
+NODE
+        sleep 2
+        touch /tmp/commonos-openclaw-configured
+        exit 0
+      fi
+      sleep 0.5
+    done
+  ) &
   exec openclaw gateway run --auth none --bind loopback --port "\${OPENCLAW_GATEWAY_PORT:-18789}"
 fi
 echo "openclaw binary not found in image" >&2
@@ -602,6 +640,10 @@ exit 127
       ...envVars,
       { name: "COMMONOS_RUNTIME_ROLE", value: "openclaw" },
       { name: "OPENCLAW_HEADLESS", value: "true" },
+      { name: "OPENCLAW_PLUGIN_VERSION", value: openClawVersion },
+      // CommonOS supplies a version-matched process-owned plugin tree. The
+      // migration would otherwise install a duplicate into EFS at startup.
+      { name: "OPENCLAW_DISABLE_PLUGIN_REGISTRY_MIGRATION", value: "1" },
       { name: "OPENCLAW_GATEWAY_HOST", value: "0.0.0.0" },
       { name: "OPENCLAW_GATEWAY_PORT", value: "18789" },
       { name: "OPENCLAW_DATA_DIR", value: "/mnt/shared/openclaw" },
@@ -796,7 +838,7 @@ function openclawHealthProbe(): string[] {
   return [
     "node",
     "-e",
-    "fetch('http://127.0.0.1:18789/health',{signal:AbortSignal.timeout(3000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+    "require('fs').existsSync('/tmp/commonos-openclaw-configured')?fetch('http://127.0.0.1:18789/health',{signal:AbortSignal.timeout(3000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1)):process.exit(1)",
   ];
 }
 
@@ -2094,6 +2136,13 @@ export function parseOpenClawAdminRpcResponse(raw: string): unknown {
     );
   }
   return response.payload ?? response;
+}
+
+export function isRuntimeContainerStartingError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /(?:container not found|unable to upgrade connection|container.*(?:creating|waiting|terminated)|pod.*not found|websocket.*(?:closed|upgrade))/i.test(
+    message
+  );
 }
 
 export async function runRuntimeChannelCommand(opts: {

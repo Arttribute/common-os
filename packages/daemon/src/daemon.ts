@@ -52,6 +52,11 @@ const HERMES_RESPONSE_TIMEOUT_MS = Number(
 const HERMES_READY_TIMEOUT_MS = Number(
   process.env.HERMES_READY_TIMEOUT_MS ?? 240_000
 );
+// Once the daemon is online, the managed sidecar should already be warm.
+// A longer wait hides a crashed sidecar and leaves the session hanging.
+const MANAGED_RUNTIME_TURN_READY_TIMEOUT_MS = Number(
+  process.env.MANAGED_RUNTIME_TURN_READY_TIMEOUT_MS ?? 8_000
+);
 const MANAGED_RUNTIME_PREWARM_TIMEOUT_MS = Number(
   process.env.MANAGED_RUNTIME_PREWARM_TIMEOUT_MS ?? 120_000
 );
@@ -4489,8 +4494,9 @@ async function runViaOpenClaw(
     orchestrationContext: orchestrationContext(),
     workspaceDir: WORKSPACE_DIR,
   });
-  await waitForOpenClawGateway(() =>
-    hooks?.onStatus?.("waiting_for_openclaw").catch(() => {})
+  await waitForOpenClawGateway(
+    () => hooks?.onStatus?.("waiting_for_openclaw").catch(() => {}),
+    MANAGED_RUNTIME_TURN_READY_TIMEOUT_MS
   );
 
   return await runResponsesConversation({
@@ -4525,8 +4531,9 @@ async function runViaHermes(
     orchestrationContext: orchestrationContext(),
     workspaceDir: WORKSPACE_DIR,
   });
-  await waitForHermesGateway(() =>
-    hooks?.onStatus?.("waiting_for_hermes").catch(() => {})
+  await waitForHermesGateway(
+    () => hooks?.onStatus?.("waiting_for_hermes").catch(() => {}),
+    MANAGED_RUNTIME_TURN_READY_TIMEOUT_MS
   );
 
   const headers: Record<string, string> = {
@@ -4558,9 +4565,10 @@ async function runViaHermes(
 }
 
 async function waitForOpenClawGateway(
-  onWaiting?: () => Promise<void> | void
+  onWaiting?: () => Promise<void> | void,
+  timeoutMs = OPENCLAW_READY_TIMEOUT_MS
 ): Promise<void> {
-  const deadline = Date.now() + OPENCLAW_READY_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
   let lastError = "not ready";
   let waitingAnnounced = false;
   while (Date.now() < deadline) {
@@ -4581,15 +4589,16 @@ async function waitForOpenClawGateway(
   }
   throw new Error(
     `OpenClaw gateway unavailable after ${Math.round(
-      OPENCLAW_READY_TIMEOUT_MS / 1000
+      timeoutMs / 1000
     )}s: ${lastError}`
   );
 }
 
 async function waitForHermesGateway(
-  onWaiting?: () => Promise<void> | void
+  onWaiting?: () => Promise<void> | void,
+  timeoutMs = HERMES_READY_TIMEOUT_MS
 ): Promise<void> {
-  const deadline = Date.now() + HERMES_READY_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
   let lastError = "not ready";
   let waitingAnnounced = false;
   while (Date.now() < deadline) {
@@ -4614,7 +4623,7 @@ async function waitForHermesGateway(
   }
   throw new Error(
     `Hermes gateway unavailable after ${Math.round(
-      HERMES_READY_TIMEOUT_MS / 1000
+      timeoutMs / 1000
     )}s: ${lastError}`
   );
 }
