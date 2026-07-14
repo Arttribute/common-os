@@ -489,6 +489,10 @@ async function main() {
   );
 
   await firstTimeSetup();
+  // The model provider can take over a minute to complete its first inference.
+  // Expose the liveness endpoint before prewarming so Kubernetes does not
+  // restart an otherwise healthy daemon while that request is in flight.
+  startAgentToolsServer();
   await prewarmManagedRuntime();
   await agent
     .emit({ type: "state_change", payload: { status: "online" } })
@@ -517,7 +521,6 @@ async function main() {
     refreshFleetOrchestration().catch(() => {});
   }, 60_000);
   startBrowserPolling();
-  startAgentToolsServer();
 
   startFileWatcher();
   startHealthMonitor();
