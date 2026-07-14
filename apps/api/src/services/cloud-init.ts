@@ -565,19 +565,30 @@ if command -v openclaw >/dev/null 2>&1; then
     install -d -m 700 "$plugin_state/extensions"
     for plugin in $channel_plugins; do
       plugin_cache="$HOME/.openclaw/commonos-plugin-cache/$plugin"
+      plugin_archive="$HOME/.openclaw/commonos-plugin-cache/$plugin.tar.gz"
       legacy_plugin_cache="$HOME/.openclaw/extensions/$plugin"
       if [ ! -d "$plugin_cache" ] && [ -d "$legacy_plugin_cache" ]; then
         mkdir -p "$(dirname "$plugin_cache")"
         mv "$legacy_plugin_cache" "$plugin_cache"
       fi
-      if [ -d "$plugin_cache" ]; then
-        ln -s "$plugin_cache" "$plugin_state/extensions/$plugin"
+      if [ ! -f "$plugin_archive" ] && [ -d "$plugin_cache" ]; then
+        archive_tmp="$plugin_archive.tmp"
+        rm -f "$archive_tmp"
+        tar -czf "$archive_tmp" -C "$plugin_cache" .
+        mv "$archive_tmp" "$plugin_archive"
+      fi
+      if [ -f "$plugin_archive" ]; then
+        install -d -m 700 "$plugin_state/extensions/$plugin"
+        tar -xzf "$plugin_archive" -C "$plugin_state/extensions/$plugin"
       else
         OPENCLAW_STATE_DIR="$plugin_state" \
           OPENCLAW_CONFIG_PATH="$plugin_state/openclaw.json" \
           openclaw plugins install "clawhub:@openclaw/$plugin"
-        mkdir -p "$(dirname "$plugin_cache")"
-        cp -R "$plugin_state/extensions/$plugin" "$plugin_cache"
+        mkdir -p "$(dirname "$plugin_archive")"
+        archive_tmp="$plugin_archive.tmp"
+        rm -f "$archive_tmp"
+        tar -czf "$archive_tmp" -C "$plugin_state/extensions/$plugin" .
+        mv "$archive_tmp" "$plugin_archive"
       fi
     done
   fi
