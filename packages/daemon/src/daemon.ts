@@ -11,6 +11,7 @@ import {
 } from "fs";
 import { join, dirname, resolve, relative } from "path";
 import { loadConfig } from "./config.js";
+import { buildManagedRuntimePrompt } from "./managed-runtime-prompt.js";
 import { CommonOSAgentClient } from "@common-os/sdk";
 
 const config = loadConfig();
@@ -4406,7 +4407,13 @@ async function runViaOpenClaw(
   messages?: AgcMessage[],
   hooks?: MessageRunHooks
 ): Promise<string> {
-  const message = buildRunPrompt(description, messages);
+  const message = buildManagedRuntimePrompt({
+    description,
+    messages,
+    systemPrompt: config.systemPrompt,
+    orchestrationContext: orchestrationContext(),
+    workspaceDir: WORKSPACE_DIR,
+  });
   await waitForOpenClawGateway(() =>
     hooks?.onStatus?.("waiting_for_openclaw").catch(() => {})
   );
@@ -4435,7 +4442,13 @@ async function runViaHermes(
   messages?: AgcMessage[],
   hooks?: MessageRunHooks
 ): Promise<string> {
-  const message = buildRunPrompt(description, messages);
+  const message = buildManagedRuntimePrompt({
+    description,
+    messages,
+    systemPrompt: config.systemPrompt,
+    orchestrationContext: orchestrationContext(),
+    workspaceDir: WORKSPACE_DIR,
+  });
   await waitForHermesGateway(() =>
     hooks?.onStatus?.("waiting_for_hermes").catch(() => {})
   );
