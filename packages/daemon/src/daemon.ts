@@ -12,6 +12,7 @@ import {
 import { join, dirname, resolve, relative } from "path";
 import { loadConfig } from "./config.js";
 import { buildManagedRuntimePrompt } from "./managed-runtime-prompt.js";
+import { selectManagedRuntimeToolNames } from "./managed-runtime-tools.js";
 import { createMessageDeltaStream } from "./message-delta-stream.js";
 import { CommonOSAgentClient } from "@common-os/sdk";
 
@@ -4503,6 +4504,7 @@ async function runViaOpenClaw(
       model: process.env.OPENCLAW_MODEL_ID,
       source: "openclaw-stream",
     },
+    toolDefs: managedRuntimeToolDefs(description),
     timeoutMs: OPENCLAW_RESPONSE_TIMEOUT_MS,
     gatewayLabel: "OpenClaw gateway",
   });
@@ -4546,6 +4548,7 @@ async function runViaHermes(
       model: process.env.HERMES_MODEL_ID,
       source: "hermes-stream",
     },
+    toolDefs: managedRuntimeToolDefs(description),
     timeoutMs: HERMES_RESPONSE_TIMEOUT_MS,
     gatewayLabel: "Hermes gateway",
   });
@@ -4630,6 +4633,15 @@ function responsesToolDefs(): Array<Record<string, unknown>> {
     description: def.description,
     parameters: def.parameters,
   }));
+}
+
+function managedRuntimeToolDefs(
+  description: string
+): Array<Record<string, unknown>> {
+  const selected = new Set(selectManagedRuntimeToolNames(description));
+  return responsesToolDefs().filter((definition) =>
+    selected.has(String(definition.name ?? ""))
+  );
 }
 
 type ResponsesToolCall = { callId: string; name: string; arguments: string };
@@ -4753,14 +4765,16 @@ async function runResponsesConversation(opts: {
   body: Record<string, unknown>;
   hooks?: MessageRunHooks;
   usageDefaults: { provider: string; model?: string; source: string };
+  toolDefs?: Array<Record<string, unknown>>;
   timeoutMs: number;
   gatewayLabel: string;
 }): Promise<string> {
   const MAX_TOOL_ROUNDS = Number(process.env.RESPONSES_TOOL_ROUNDS ?? 12);
-  let includeTools = true;
+  const toolDefs = opts.toolDefs ?? responsesToolDefs();
+  let includeTools = toolDefs.length > 0;
   let body: Record<string, unknown> = {
     ...opts.body,
-    tools: responsesToolDefs(),
+    ...(includeTools ? { tools: toolDefs } : {}),
     stream: true,
   };
   let finalOutput = "";
@@ -4877,7 +4891,7 @@ async function runResponsesConversation(opts: {
       previous_response_id: result.responseId,
       input: toolOutputs,
       user: body.user,
-      ...(includeTools ? { tools: responsesToolDefs() } : {}),
+      ...(includeTools ? { tools: toolDefs } : {}),
       stream: true,
     };
   }
