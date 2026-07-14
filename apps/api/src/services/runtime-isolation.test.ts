@@ -4,6 +4,7 @@ jest.mock("uuid", () => ({ v4: () => "test-session-id" }));
 import {
   commonRuntimeEnv,
   buildOpenClawGatewayConfig,
+  openClawRuntimeContainer,
   parseOpenClawAdminRpcResponse,
   runtimeStorageInitContainer,
   type LaunchOptions,
@@ -79,6 +80,19 @@ describe("managed runtime environment isolation", () => {
       },
     });
     expect(config.plugins).not.toHaveProperty("allow");
+  });
+
+  it("links persisted channel plugins instead of copying them on every boot", () => {
+    const opts = options("openclaw");
+    opts.dockerImage = "example.test/openclaw:latest";
+    const command = openClawRuntimeContainer(opts, [])?.args?.join("\n") ?? "";
+
+    expect(command).toContain(
+      'ln -s "$plugin_cache" "$plugin_state/extensions/$plugin"'
+    );
+    expect(command).not.toContain(
+      'cp -R "$plugin_cache" "$plugin_state/extensions/$plugin"'
+    );
   });
 
   it("configures low-latency defaults and official Slack and Discord plugins", () => {

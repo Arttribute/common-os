@@ -513,7 +513,7 @@ function providerEnvKeyFor(provider: string): string {
   );
 }
 
-function openClawRuntimeContainer(
+export function openClawRuntimeContainer(
   opts: LaunchOptions,
   envVars: k8s.V1EnvVar[]
 ): k8s.V1Container | null {
@@ -571,7 +571,7 @@ if command -v openclaw >/dev/null 2>&1; then
         mv "$legacy_plugin_cache" "$plugin_cache"
       fi
       if [ -d "$plugin_cache" ]; then
-        cp -R "$plugin_cache" "$plugin_state/extensions/$plugin"
+        ln -s "$plugin_cache" "$plugin_state/extensions/$plugin"
       else
         OPENCLAW_STATE_DIR="$plugin_state" \
           OPENCLAW_CONFIG_PATH="$plugin_state/openclaw.json" \
