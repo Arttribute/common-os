@@ -3,13 +3,14 @@ jest.mock("uuid", () => ({ v4: () => "test-session-id" }));
 
 import {
   commonRuntimeEnv,
+  buildOpenClawGatewayConfig,
   parseOpenClawAdminRpcResponse,
   runtimeStorageInitContainer,
   type LaunchOptions,
 } from "./cloud-init";
 
 function options(
-  integrationPath: LaunchOptions["integrationPath"],
+  integrationPath: LaunchOptions["integrationPath"]
 ): LaunchOptions {
   return {
     agentId: "agent-test",
@@ -40,13 +41,15 @@ describe("managed runtime environment isolation", () => {
         "HERMES_MODEL_ID",
         "OPENCLAW_CONFIG_JSON",
         "OPENCLAW_MODEL_ID",
-      ]),
+      ])
     );
   });
 
   it("puts only OpenClaw configuration in OpenClaw computers", () => {
     const environment = names("openclaw");
-    expect(environment).toEqual(expect.arrayContaining(["OPENCLAW_CONFIG_JSON"]));
+    expect(environment).toEqual(
+      expect.arrayContaining(["OPENCLAW_CONFIG_JSON"])
+    );
     expect(environment.some((name) => name.startsWith("HERMES_"))).toBe(false);
   });
 
@@ -62,8 +65,8 @@ describe("managed runtime environment isolation", () => {
     };
     const config = JSON.parse(
       commonRuntimeEnv(opts, "example.test/agent:latest").find(
-        (entry) => entry.name === "OPENCLAW_CONFIG_JSON",
-      )?.value ?? "{}",
+        (entry) => entry.name === "OPENCLAW_CONFIG_JSON"
+      )?.value ?? "{}"
     );
 
     expect(config.plugins).toMatchObject({
@@ -78,23 +81,63 @@ describe("managed runtime environment isolation", () => {
     expect(config.plugins).not.toHaveProperty("allow");
   });
 
+  it("configures low-latency defaults and official Slack and Discord plugins", () => {
+    const opts = options("openclaw");
+    opts.openclawConfig = {
+      modelProvider: "openai",
+      modelId: "gpt-5.4-mini",
+      modelApiKey: null,
+      channels: {
+        slack: {
+          enabled: true,
+          botToken: "xoxb-secret",
+          appToken: "xapp-secret",
+        },
+        discord: { enabled: true, botToken: "discord-secret" },
+      },
+      plugins: [],
+      dmPolicy: "allowlist",
+    };
+
+    const config = buildOpenClawGatewayConfig(opts) as any;
+    expect(config.agents.defaults).toMatchObject({
+      thinkingDefault: "low",
+      contextInjection: "continuation-skip",
+    });
+    expect(config.agents.list[0].fastModeDefault).toBe("auto");
+    expect(config.channels.slack).toMatchObject({
+      mode: "socket",
+      botToken: "xoxb-secret",
+      appToken: "xapp-secret",
+    });
+    expect(config.channels.discord).toMatchObject({
+      token: "discord-secret",
+    });
+    expect(config.plugins.load.paths).toEqual([
+      "/home/node/.commonos-openclaw/extensions/slack",
+      "/home/node/.commonos-openclaw/extensions/discord",
+    ]);
+  });
+
   it("unwraps OpenClaw admin RPC responses and preserves errors", () => {
     expect(
       parseOpenClawAdminRpcResponse(
-        JSON.stringify({ ok: true, payload: { connected: false } }),
-      ),
+        JSON.stringify({ ok: true, payload: { connected: false } })
+      )
     ).toEqual({ connected: false });
     expect(() =>
       parseOpenClawAdminRpcResponse(
-        JSON.stringify({ ok: false, error: { message: "not linked" } }),
-      ),
+        JSON.stringify({ ok: false, error: { message: "not linked" } })
+      )
     ).toThrow("not linked");
   });
 
   it("puts only Hermes configuration in Hermes computers", () => {
     const environment = names("hermes");
     expect(environment).toEqual(expect.arrayContaining(["HERMES_CONFIG_JSON"]));
-    expect(environment.some((name) => name.startsWith("OPENCLAW_"))).toBe(false);
+    expect(environment.some((name) => name.startsWith("OPENCLAW_"))).toBe(
+      false
+    );
   });
 
   it("initializes only the selected managed runtime's storage", () => {
@@ -122,15 +165,13 @@ describe("managed runtime environment isolation", () => {
         gatewayApiKey: null,
         toolsets: null,
       };
-      const environment = commonRuntimeEnv(
-        opts,
-        "example.test/agent:latest",
-      );
+      const environment = commonRuntimeEnv(opts, "example.test/agent:latest");
       expect(
-        environment.find((entry) => entry.name === "OPENROUTER_API_KEY")?.value,
+        environment.find((entry) => entry.name === "OPENROUTER_API_KEY")?.value
       ).toBe("");
     } finally {
-      if (previousProvider === undefined) delete process.env.HERMES_MODEL_PROVIDER;
+      if (previousProvider === undefined)
+        delete process.env.HERMES_MODEL_PROVIDER;
       else process.env.HERMES_MODEL_PROVIDER = previousProvider;
       if (previousKey === undefined) delete process.env.HERMES_MODEL_API_KEY;
       else process.env.HERMES_MODEL_API_KEY = previousKey;

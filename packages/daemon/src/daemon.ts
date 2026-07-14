@@ -4407,8 +4407,9 @@ async function runViaOpenClaw(
   hooks?: MessageRunHooks
 ): Promise<string> {
   const message = buildRunPrompt(description, messages);
-  await hooks?.onStatus?.("waiting_for_openclaw").catch(() => {});
-  await waitForOpenClawGateway();
+  await waitForOpenClawGateway(() =>
+    hooks?.onStatus?.("waiting_for_openclaw").catch(() => {})
+  );
 
   return await runResponsesConversation({
     gatewayUrl: `${config.openclawGatewayUrl}/v1/responses`,
@@ -4435,8 +4436,9 @@ async function runViaHermes(
   hooks?: MessageRunHooks
 ): Promise<string> {
   const message = buildRunPrompt(description, messages);
-  await hooks?.onStatus?.("waiting_for_hermes").catch(() => {});
-  await waitForHermesGateway();
+  await waitForHermesGateway(() =>
+    hooks?.onStatus?.("waiting_for_hermes").catch(() => {})
+  );
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -4465,9 +4467,12 @@ async function runViaHermes(
   });
 }
 
-async function waitForOpenClawGateway(): Promise<void> {
+async function waitForOpenClawGateway(
+  onWaiting?: () => Promise<void> | void
+): Promise<void> {
   const deadline = Date.now() + OPENCLAW_READY_TIMEOUT_MS;
   let lastError = "not ready";
+  let waitingAnnounced = false;
   while (Date.now() < deadline) {
     try {
       const res = await fetch(`${config.openclawGatewayUrl}/health`, {
@@ -4478,6 +4483,10 @@ async function waitForOpenClawGateway(): Promise<void> {
     } catch (err) {
       lastError = err instanceof Error ? err.message : String(err);
     }
+    if (!waitingAnnounced) {
+      waitingAnnounced = true;
+      await onWaiting?.();
+    }
     await sleep(1_000);
   }
   throw new Error(
@@ -4487,9 +4496,12 @@ async function waitForOpenClawGateway(): Promise<void> {
   );
 }
 
-async function waitForHermesGateway(): Promise<void> {
+async function waitForHermesGateway(
+  onWaiting?: () => Promise<void> | void
+): Promise<void> {
   const deadline = Date.now() + HERMES_READY_TIMEOUT_MS;
   let lastError = "not ready";
+  let waitingAnnounced = false;
   while (Date.now() < deadline) {
     // hermes-agent serves /healthz (documented, unauthenticated) with
     // /health kept for older releases — accept either.
@@ -4503,6 +4515,10 @@ async function waitForHermesGateway(): Promise<void> {
       } catch (err) {
         lastError = err instanceof Error ? err.message : String(err);
       }
+    }
+    if (!waitingAnnounced) {
+      waitingAnnounced = true;
+      await onWaiting?.();
     }
     await sleep(1_000);
   }

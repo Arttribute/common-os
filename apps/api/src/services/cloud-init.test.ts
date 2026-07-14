@@ -1,8 +1,12 @@
+jest.mock("@kubernetes/client-node", () => ({}));
+jest.mock("uuid", () => ({ v4: () => "test-session-id" }));
+
 import {
   buildHermesGatewayConfig,
   hermesChannelEnvironment,
   type HermesGatewayConfigOptions,
 } from "./hermes-config";
+import { hermesWhatsAppCommand } from "./cloud-init";
 
 function launchOptions(toolsets: string[] | null): HermesGatewayConfigOptions {
   return {
@@ -19,6 +23,7 @@ describe("Hermes managed configuration", () => {
   it("uses Hermes' direct OpenAI provider instead of auto-routing through OpenRouter", () => {
     expect(buildHermesGatewayConfig(launchOptions(null))).toMatchObject({
       model: { default: "gpt-5.4-mini", provider: "openai-api" },
+      agent: { reasoning_effort: "low" },
     });
   });
 
@@ -80,6 +85,8 @@ describe("Hermes managed configuration", () => {
       channels: {
         telegram: { enabled: true },
         whatsapp: { enabled: true, mode: "cloud" },
+        slack: { enabled: true },
+        discord: { enabled: true },
       },
     };
 
@@ -88,6 +95,8 @@ describe("Hermes managed configuration", () => {
         cli: ["safe"],
         telegram: ["hermes-telegram"],
         whatsapp_cloud: ["hermes-whatsapp"],
+        slack: ["hermes-slack"],
+        discord: ["hermes-discord"],
       },
     });
   });
@@ -108,6 +117,17 @@ describe("Hermes managed configuration", () => {
         verifyToken: "verify-secret",
         allowFrom: ["+254700000000"],
       },
+      slack: {
+        enabled: true,
+        botToken: "xoxb-secret",
+        appToken: "xapp-secret",
+        allowFrom: ["U01ABC2DEF3"],
+      },
+      discord: {
+        enabled: true,
+        botToken: "discord-secret",
+        allowFrom: ["284102345871466496"],
+      },
     });
 
     expect(env).toMatchObject({
@@ -116,6 +136,31 @@ describe("Hermes managed configuration", () => {
       WHATSAPP_CLOUD_PHONE_NUMBER_ID: "phone-id",
       WHATSAPP_CLOUD_ACCESS_TOKEN: "whatsapp-secret",
       WHATSAPP_CLOUD_ALLOWED_USERS: "254700000000",
+      SLACK_BOT_TOKEN: "xoxb-secret",
+      SLACK_APP_TOKEN: "xapp-secret",
+      SLACK_ALLOWED_USERS: "U01ABC2DEF3",
+      DISCORD_BOT_TOKEN: "discord-secret",
+      DISCORD_ALLOWED_USERS: "284102345871466496",
     });
+    expect(env).not.toHaveProperty("WHATSAPP_ENABLED");
+  });
+
+  it("builds persistent Hermes WhatsApp QR commands", () => {
+    const connect = hermesWhatsAppCommand({
+      action: "connect",
+      mode: "self-chat",
+      allowedUsersBase64: Buffer.from("254700000000").toString("base64"),
+    }).join("\n");
+    const status = hermesWhatsAppCommand({
+      action: "status",
+      mode: "self-chat",
+      allowedUsersBase64: "",
+    }).join("\n");
+
+    expect(connect).toContain("--pair-only --pair-json");
+    expect(connect).toContain("data:image/png;base64,");
+    expect(connect).toContain('WHATSAPP_MODE="%s"');
+    expect(status).toContain("session/creds.json");
+    expect(status).toContain('"status":"connected"');
   });
 });

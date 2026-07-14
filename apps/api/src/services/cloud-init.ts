@@ -336,7 +336,7 @@ function stringList(value: unknown): string[] {
     : [];
 }
 
-function buildOpenClawGatewayConfig(
+export function buildOpenClawGatewayConfig(
   opts: LaunchOptions
 ): Record<string, unknown> {
   const config = opts.openclawConfig;
@@ -351,10 +351,18 @@ function buildOpenClawGatewayConfig(
         enabled: channel.enabled !== false,
         dmPolicy: channel.dmPolicy ?? config?.dmPolicy ?? "pairing",
         allowFrom,
-        groups: { "*": { requireMention: channel.requireMention !== false } },
       };
       if (name === "telegram") {
-        return [name, { ...common, botToken: channel.botToken }];
+        return [
+          name,
+          {
+            ...common,
+            botToken: channel.botToken,
+            groups: {
+              "*": { requireMention: channel.requireMention !== false },
+            },
+          },
+        ];
       }
       if (name === "whatsapp") {
         return [
@@ -364,20 +372,35 @@ function buildOpenClawGatewayConfig(
             selfChatMode: channel.mode === "self-chat",
             groupPolicy: "allowlist",
             groupAllowFrom: allowFrom,
+            groups: {
+              "*": { requireMention: channel.requireMention !== false },
+            },
           },
         ];
+      }
+      if (name === "slack") {
+        return [
+          name,
+          {
+            ...common,
+            mode: "socket",
+            botToken: channel.botToken,
+            appToken: channel.appToken,
+          },
+        ];
+      }
+      if (name === "discord") {
+        return [name, { ...common, token: channel.botToken }];
       }
       return [name, common];
     })
   );
   const configuredPlugins = stringList(config?.plugins);
-  const whatsappEnabled = Boolean(config?.channels?.whatsapp?.enabled);
+  const externalChannelPlugins = ["whatsapp", "slack", "discord"].filter(
+    (channel) => Boolean(config?.channels?.[channel]?.enabled)
+  );
   const pluginIds = Array.from(
-    new Set([
-      ...configuredPlugins,
-      "admin-http-rpc",
-      ...(whatsappEnabled ? ["whatsapp"] : []),
-    ])
+    new Set([...configuredPlugins, "admin-http-rpc", ...externalChannelPlugins])
   );
 
   return {
@@ -400,11 +423,14 @@ function buildOpenClawGatewayConfig(
     agents: {
       defaults: {
         model: { primary: model },
+        thinkingDefault: "low",
+        contextInjection: "continuation-skip",
       },
       list: [
         {
           id: agentRuntimeId,
           default: true,
+          fastModeDefault: "auto",
           // OpenClaw bootstraps AGENTS.md and other runtime-owned state in
           // its workspace. Keep that inside its writable subdirectory; pod
           // tools still operate on the canonical /mnt/shared workspace via
@@ -425,12 +451,13 @@ function buildOpenClawGatewayConfig(
       ? {
           plugins: {
             enabled: true,
-            ...(whatsappEnabled
+            ...(externalChannelPlugins.length
               ? {
                   load: {
-                    paths: [
-                      "/home/node/.commonos-openclaw/extensions/whatsapp",
-                    ],
+                    paths: externalChannelPlugins.map(
+                      (channel) =>
+                        `/home/node/.commonos-openclaw/extensions/${channel}`
+                    ),
                   },
                 }
               : {}),
@@ -531,25 +558,28 @@ fs.writeFileSync(configPath, JSON.stringify(next));
 NODE
 fi
 if command -v openclaw >/dev/null 2>&1; then
-  if node -e 'const channels = JSON.parse(process.env.OPENCLAW_CHANNELS_JSON || "{}"); process.exit(channels.whatsapp?.enabled === true ? 0 : 1)'; then
+  channel_plugins="$(node -e 'const channels = JSON.parse(process.env.OPENCLAW_CHANNELS_JSON || "{}"); console.log(["whatsapp", "slack", "discord"].filter((id) => channels[id]?.enabled === true).join(" "))')"
+  if [ -n "$channel_plugins" ]; then
     plugin_state=/home/node/.commonos-openclaw
-    plugin_cache="$HOME/.openclaw/commonos-plugin-cache/whatsapp"
-    legacy_plugin_cache="$HOME/.openclaw/extensions/whatsapp"
-    if [ ! -d "$plugin_cache" ] && [ -d "$legacy_plugin_cache" ]; then
-      mkdir -p "$(dirname "$plugin_cache")"
-      mv "$legacy_plugin_cache" "$plugin_cache"
-    fi
     rm -rf "$plugin_state"
     install -d -m 700 "$plugin_state/extensions"
-    if [ -d "$plugin_cache" ]; then
-      cp -R "$plugin_cache" "$plugin_state/extensions/whatsapp"
-    else
-      OPENCLAW_STATE_DIR="$plugin_state" \
-        OPENCLAW_CONFIG_PATH="$plugin_state/openclaw.json" \
-        openclaw plugins install clawhub:@openclaw/whatsapp
-      mkdir -p "$(dirname "$plugin_cache")"
-      cp -R "$plugin_state/extensions/whatsapp" "$plugin_cache"
-    fi
+    for plugin in $channel_plugins; do
+      plugin_cache="$HOME/.openclaw/commonos-plugin-cache/$plugin"
+      legacy_plugin_cache="$HOME/.openclaw/extensions/$plugin"
+      if [ ! -d "$plugin_cache" ] && [ -d "$legacy_plugin_cache" ]; then
+        mkdir -p "$(dirname "$plugin_cache")"
+        mv "$legacy_plugin_cache" "$plugin_cache"
+      fi
+      if [ -d "$plugin_cache" ]; then
+        cp -R "$plugin_cache" "$plugin_state/extensions/$plugin"
+      else
+        OPENCLAW_STATE_DIR="$plugin_state" \
+          OPENCLAW_CONFIG_PATH="$plugin_state/openclaw.json" \
+          openclaw plugins install "clawhub:@openclaw/$plugin"
+        mkdir -p "$(dirname "$plugin_cache")"
+        cp -R "$plugin_state/extensions/$plugin" "$plugin_cache"
+      fi
+    done
   fi
   exec openclaw gateway run --auth none --bind loopback --port "\${OPENCLAW_GATEWAY_PORT:-18789}"
 fi
@@ -725,6 +755,9 @@ fi
 printf 'API_SERVER_ENABLED="true"\\nAPI_SERVER_HOST="0.0.0.0"\\nAPI_SERVER_PORT="8642"\\n' >> /opt/data/.env.next
 if [ -n "\${HERMES_GATEWAY_API_KEY:-}" ]; then
   printf 'API_SERVER_KEY="%s"\\n' "$HERMES_GATEWAY_API_KEY" >> /opt/data/.env.next
+fi
+if [ -f /opt/data/platforms/whatsapp/session/creds.json ]; then
+  printf 'WHATSAPP_ENABLED="true"\n' >> /opt/data/.env.next
 fi
 mv /opt/data/.env.next /opt/data/.env
 chmod 600 /opt/data/.env
@@ -2060,10 +2093,9 @@ export async function runRuntimeChannelCommand(opts: {
   runtime: "openclaw" | "hermes";
   channel: "whatsapp";
   action: "connect" | "status" | "disconnect";
+  mode?: "bot" | "self-chat";
+  allowFrom?: string[];
 }): Promise<{ output: unknown; raw: string }> {
-  if (opts.runtime !== "openclaw") {
-    throw new Error("QR channel setup is not available for this runtime");
-  }
   // Starting the OpenClaw CLI reloads its full plugin graph and provider auth,
   // which adds tens of seconds to every UI poll. The bundled admin HTTP RPC
   // plugin dispatches these same methods inside the already-running gateway.
@@ -2079,6 +2111,12 @@ export async function runRuntimeChannelCommand(opts: {
     },
   } as const;
   const rpcRequest = JSON.stringify(requestByAction[opts.action]);
+  const allowedUsersBase64 = Buffer.from(
+    (opts.allowFrom ?? [])
+      .map((value) => value.replace(/^\+/, "").trim())
+      .filter(Boolean)
+      .join(",")
+  ).toString("base64");
   const kc = await kubeConfigForProvider(opts.provider, opts.region);
   const exec = new k8s.Exec(kc);
   let stdout = "";
@@ -2090,14 +2128,21 @@ export async function runRuntimeChannelCommand(opts: {
         callback();
       },
     });
-  const command = [
-    "/bin/sh",
-    "-lc",
-    `curl --silent --show-error --fail-with-body --max-time 30 \
+  const command =
+    opts.runtime === "openclaw"
+      ? [
+          "/bin/sh",
+          "-lc",
+          `curl --silent --show-error --fail-with-body --max-time 30 \
       --request POST http://127.0.0.1:18789/api/v1/admin/rpc \
       --header 'content-type: application/json' \
       --data '${rpcRequest}'`,
-  ];
+        ]
+      : hermesWhatsAppCommand({
+          action: opts.action,
+          mode: opts.mode === "self-chat" ? "self-chat" : "bot",
+          allowedUsersBase64,
+        });
   await new Promise<void>(async (resolve, reject) => {
     let settled = false;
     const finish = (error?: Error) => {
@@ -2109,13 +2154,13 @@ export async function runRuntimeChannelCommand(opts: {
     };
     const timer = setTimeout(
       () => finish(new Error("runtime channel command timed out")),
-      opts.action === "connect" ? 60_000 : 40_000
+      opts.action === "connect" ? 120_000 : 40_000
     );
     try {
       const socket = await exec.exec(
         opts.namespace,
         opts.podName,
-        "openclaw-runtime",
+        opts.runtime === "openclaw" ? "openclaw-runtime" : "hermes-runtime",
         command,
         capture((chunk) => (stdout += chunk)),
         capture((chunk) => (stderr += chunk)),
@@ -2140,8 +2185,120 @@ export async function runRuntimeChannelCommand(opts: {
     }
   });
   const raw = stdout.trim();
-  const output = parseOpenClawAdminRpcResponse(raw);
+  const output =
+    opts.runtime === "openclaw"
+      ? parseOpenClawAdminRpcResponse(raw)
+      : JSON.parse(raw || "{}");
   return { output, raw };
+}
+
+export function hermesWhatsAppCommand(opts: {
+  action: "connect" | "status" | "disconnect";
+  mode: "bot" | "self-chat";
+  allowedUsersBase64: string;
+}): string[] {
+  const renderPairing = [
+    "import base64,io,json,os",
+    "import qrcode",
+    'path=os.environ.get("PAIR_LOG","")',
+    'result={"status":"starting","connected":False}',
+    "lines=[]",
+    '\ntry:\n lines=open(path,encoding="utf-8",errors="replace").read().splitlines()\nexcept Exception:\n pass',
+    '\nfor line in lines:\n try:\n  event=json.loads(line)\n except Exception:\n  continue\n kind=str(event.get("event") or "")\n if kind=="qr" and event.get("qr"):\n  result.update(status="waiting",qr_payload=event["qr"])\n elif kind=="connected":\n  result.update(status="connected",connected=True,user=event.get("user"))\n elif kind=="error":\n  result.update(status="error",error=event.get("error"))',
+    'qr=result.get("qr_payload")',
+    "img=qrcode.make(qr) if qr else None",
+    "buf=io.BytesIO()",
+    'img.save(buf,format="PNG") if img else None',
+    'result.update({"qrDataUrl":"data:image/png;base64,"+base64.b64encode(buf.getvalue()).decode()}) if img else None',
+    "print(json.dumps(result))",
+  ].join("\n");
+  const common = `
+set -eu
+state=/opt/data/platforms/whatsapp
+session="$state/session"
+pair_log="$state/commonos-pairing.jsonl"
+pid_file="$state/commonos-pairing.pid"
+mkdir -p "$state" "$session"
+export PAIR_LOG="$pair_log"
+render_pairing() { /opt/hermes/.venv/bin/python -c '${renderPairing}'; }
+restart_gateway() {
+  gateway_pid="$(ps -eo pid,args | awk '/[/]opt\\/hermes\\/\\.venv\\/bin\\/hermes gateway run/{print $1; exit}')"
+  [ -z "$gateway_pid" ] || kill "$gateway_pid" || true
+}
+activate_pairing() {
+  [ -f "$session/creds.json" ] || return 0
+  if [ ! -f "$state/commonos-active" ]; then
+    allowed_users="$(printf '%s' '${opts.allowedUsersBase64}' | base64 -d)"
+    touch /opt/data/.env
+    sed -i '/^WHATSAPP_/d' /opt/data/.env
+    printf 'WHATSAPP_ENABLED="true"\\nWHATSAPP_MODE="%s"\\nWHATSAPP_DM_POLICY="pairing"\\n' '${opts.mode}' >> /opt/data/.env
+    if [ -n "$allowed_users" ]; then
+      printf 'WHATSAPP_ALLOWED_USERS="%s"\\n' "$allowed_users" >> /opt/data/.env
+    fi
+    touch "$state/commonos-active"
+    restart_gateway
+  fi
+}
+`;
+
+  if (opts.action === "disconnect") {
+    return [
+      "/bin/sh",
+      "-lc",
+      `${common}
+if [ -f "$pid_file" ]; then kill "$(cat "$pid_file")" 2>/dev/null || true; fi
+rm -rf "$session" "$pair_log" "$pid_file" "$state/commonos-active"
+mkdir -p "$session"
+sed -i '/^WHATSAPP_/d' /opt/data/.env 2>/dev/null || true
+restart_gateway
+printf '{"status":"disconnected","connected":false}\\n'
+`,
+    ];
+  }
+
+  if (opts.action === "status") {
+    return [
+      "/bin/sh",
+      "-lc",
+      `${common}
+if [ -f "$session/creds.json" ]; then
+  activate_pairing
+  printf '{"status":"connected","connected":true}\\n'
+else
+  render_pairing
+fi
+`,
+    ];
+  }
+
+  return [
+    "/bin/sh",
+    "-lc",
+    `${common}
+if [ -f "$session/creds.json" ]; then
+  activate_pairing
+  printf '{"status":"connected","connected":true}\\n'
+  exit 0
+fi
+if [ -f "$pid_file" ]; then kill "$(cat "$pid_file")" 2>/dev/null || true; fi
+bridge=/opt/hermes/scripts/whatsapp-bridge
+if [ ! -d "$bridge/node_modules" ]; then
+  cd "$bridge"
+  npm install --silent
+fi
+: > "$pair_log"
+cd "$bridge"
+nohup env WHATSAPP_MODE='${opts.mode}' node bridge.js --pair-only --pair-json --session "$session" > "$pair_log" 2>&1 < /dev/null &
+echo $! > "$pid_file"
+for attempt in $(seq 1 90); do
+  if grep -Eq '"event"[[:space:]]*:[[:space:]]*"(qr|connected|error)"' "$pair_log"; then break; fi
+  kill -0 "$(cat "$pid_file")" 2>/dev/null || break
+  sleep 1
+done
+activate_pairing
+render_pairing
+`,
+  ];
 }
 
 // ─── AWS EC2 startup script ────────────────────────────────────────────────

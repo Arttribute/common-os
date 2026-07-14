@@ -725,14 +725,21 @@ router.post("/:computerId/runtime-channels/:channel/:action", async (c) => {
   if (!(["connect", "status", "disconnect"] as const).includes(action as any)) {
     return c.json({ error: "unsupported runtime channel action" }, 400);
   }
-  if (computer.config.integrationPath !== "openclaw") {
+  if (
+    computer.config.integrationPath !== "openclaw" &&
+    computer.config.integrationPath !== "hermes"
+  ) {
     return c.json(
-      { error: "QR channel setup is currently available for OpenClaw" },
+      { error: "QR channel setup is available for OpenClaw and Hermes" },
       409
     );
   }
-  const whatsapp = computer.config.openclawConfig?.channels?.whatsapp as
-    | { enabled?: boolean }
+  const whatsapp = (
+    computer.config.integrationPath === "openclaw"
+      ? computer.config.openclawConfig?.channels?.whatsapp
+      : computer.config.hermesConfig?.channels?.whatsapp
+  ) as
+    | { enabled?: boolean; mode?: "bot" | "self-chat"; allowFrom?: string[] }
     | undefined;
   if (!whatsapp?.enabled) {
     if (action === "connect") {
@@ -767,8 +774,12 @@ router.post("/:computerId/runtime-channels/:channel/:action", async (c) => {
         podName,
         computer.compute?.pvcName
       );
+      const runtimeContainerName =
+        computer.config.integrationPath === "openclaw"
+          ? "openclaw-runtime"
+          : "hermes-runtime";
       const runtimeContainer = diagnostics.containers.find(
-        (container) => container.name === "openclaw-runtime"
+        (container) => container.name === runtimeContainerName
       );
       if (!runtimeContainer?.ready) {
         return c.json(
@@ -786,9 +797,11 @@ router.post("/:computerId/runtime-channels/:channel/:action", async (c) => {
         region: computer.pod.region,
         namespace,
         podName,
-        runtime: "openclaw",
+        runtime: computer.config.integrationPath,
         channel,
         action: action as "connect" | "status" | "disconnect",
+        mode: whatsapp.mode,
+        allowFrom: whatsapp.allowFrom,
       })
     );
   } catch (error) {

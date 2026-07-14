@@ -3,6 +3,10 @@ import { suspendComputerPod } from "./cloud-init.js";
 
 let timer: ReturnType<typeof setInterval> | null = null;
 
+export function keepsMessagingRuntimeWarm(integrationPath?: string | null) {
+  return integrationPath === "openclaw" || integrationPath === "hermes";
+}
+
 export async function reconcileIdleComputers(now = new Date()) {
   const candidates = await (
     await agents()
@@ -16,6 +20,12 @@ export async function reconcileIdleComputers(now = new Date()) {
     .lean();
   let suspended = 0;
   for (const computer of candidates) {
+    // Managed messaging runtimes keep persistent outbound connections to
+    // Telegram, WhatsApp, Slack, and Discord. Suspending their pod breaks
+    // inbound delivery and makes the next web turn pay the full cold boot.
+    if (keepsMessagingRuntimeWarm(computer.config?.integrationPath)) {
+      continue;
+    }
     const ttlMinutes = Math.max(
       5,
       Math.min(Number(computer.compute?.idleTtlMinutes) || 60, 1440)

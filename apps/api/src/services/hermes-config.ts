@@ -13,6 +13,8 @@ export function hermesChannelEnvironment(
 ): Record<string, string> {
   const telegram = channels?.telegram;
   const whatsapp = channels?.whatsapp;
+  const slack = channels?.slack;
+  const discord = channels?.discord;
   const env: Record<string, string> = {};
   if (telegram?.enabled) {
     env.TELEGRAM_BOT_TOKEN = String(telegram.botToken ?? "");
@@ -30,11 +32,25 @@ export function hermesChannelEnvironment(
       .map((value) => value.replace(/^\+/, ""))
       .join(",");
   } else if (whatsapp?.enabled) {
-    env.WHATSAPP_ENABLED = "true";
     env.WHATSAPP_MODE = whatsapp.mode === "self-chat" ? "self-chat" : "bot";
     env.WHATSAPP_ALLOWED_USERS = stringList(whatsapp.allowFrom)
       .map((value) => value.replace(/^\+/, ""))
       .join(",");
+  }
+  if (slack?.enabled) {
+    env.SLACK_BOT_TOKEN = String(slack.botToken ?? "");
+    env.SLACK_APP_TOKEN = String(slack.appToken ?? "");
+    env.SLACK_ALLOWED_USERS = stringList(slack.allowFrom).join(",");
+    if (slack.homeTarget) {
+      env.SLACK_HOME_CHANNEL = String(slack.homeTarget);
+    }
+  }
+  if (discord?.enabled) {
+    env.DISCORD_BOT_TOKEN = String(discord.botToken ?? "");
+    env.DISCORD_ALLOWED_USERS = stringList(discord.allowFrom).join(",");
+    if (discord.homeTarget) {
+      env.DISCORD_HOME_CHANNEL = String(discord.homeTarget);
+    }
   }
   return env;
 }
@@ -56,12 +72,18 @@ export function buildHermesGatewayConfig(
     if (channel.enabled === false) continue;
     const platform =
       name === "whatsapp" && channel.mode === "cloud" ? "whatsapp_cloud" : name;
-    platformToolsets[platform] = [
-      name === "telegram" ? "hermes-telegram" : "hermes-whatsapp",
-    ];
+    const toolsetByChannel: Record<string, string> = {
+      telegram: "hermes-telegram",
+      whatsapp: "hermes-whatsapp",
+      slack: "hermes-slack",
+      discord: "hermes-discord",
+    };
+    const toolset = toolsetByChannel[name];
+    if (toolset) platformToolsets[platform] = [toolset];
   }
   return {
     model: { default: hermesModelId(opts), provider },
+    agent: { reasoning_effort: "low" },
     ...(customProvider ? { custom_providers: [customProvider] } : {}),
     display: { branding: { agent_name: opts.role } },
     // Hermes 0.18+ ignores the deprecated top-level `toolsets` key. The
