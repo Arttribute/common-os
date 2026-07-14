@@ -11,6 +11,14 @@ export type ManagedRuntimePromptOptions = {
   workspaceDir: string;
 };
 
+const ENRICHED_CONTEXT_START =
+  /\n+## (?:Relevant Memories|Shared Team Memory|Agent skills|Uploaded Files)\b/i;
+
+function historicalMessageContent(message: ManagedRuntimeMessage): string {
+  if (message.role === "assistant") return message.content;
+  return message.content.split(ENRICHED_CONTEXT_START, 1)[0].trim();
+}
+
 /**
  * OpenClaw and Hermes already provide their own tool instructions and runtime
  * operating context. Keep the CommonOS handoff focused on the assignment so
@@ -30,19 +38,23 @@ export function buildManagedRuntimePrompt({
     "Answer the latest user request only; keep prior turns as context.",
   ].join(" ");
 
-  const conversation =
-    messages && messages.length > 1
-      ? [
-          "## Recent conversation",
-          messages
-            .slice(-8)
-            .map(
-              (message) =>
-                `${message.role === "assistant" ? "Assistant" : "User"}: ${message.content}`
-            )
-            .join("\n\n"),
-        ].join("\n\n")
-      : ["## Current assignment", description].join("\n\n");
+  const priorConversation = (messages ?? [])
+    // CommonOS history includes the current enriched instruction as its last
+    // item. The current description below is the canonical copy.
+    .slice(0, -1)
+    .slice(-7)
+    .map(
+      (message) =>
+        `${message.role === "assistant" ? "Assistant" : "User"}: ${historicalMessageContent(message)}`
+    )
+    .join("\n\n");
+
+  const conversation = [
+    priorConversation ? `## Recent conversation\n\n${priorConversation}` : "",
+    `## Current assignment\n\n${description}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 
   return [
     systemPrompt?.trim()
