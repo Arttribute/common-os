@@ -51,6 +51,9 @@ const HERMES_RESPONSE_TIMEOUT_MS = Number(
 const HERMES_READY_TIMEOUT_MS = Number(
   process.env.HERMES_READY_TIMEOUT_MS ?? 240_000
 );
+const MANAGED_RUNTIME_PREWARM_TIMEOUT_MS = Number(
+  process.env.MANAGED_RUNTIME_PREWARM_TIMEOUT_MS ?? 120_000
+);
 const AGENT_TOOLS_PORT = Number(process.env.AGENT_TOOLS_PORT ?? 4100);
 const BROWSER_STATUS_MS = Number(process.env.BROWSER_STATUS_MS ?? 7_500);
 const BROWSER_SCREENSHOT_QUALITY = Number(
@@ -485,6 +488,7 @@ async function main() {
   );
 
   await firstTimeSetup();
+  await prewarmManagedRuntime();
   await agent
     .emit({ type: "state_change", payload: { status: "online" } })
     .catch((err) => {
@@ -531,6 +535,83 @@ async function main() {
   }
   void pollMessages();
   await pollTasks();
+}
+
+async function prewarmManagedRuntime(): Promise<void> {
+  if (
+    process.env.MANAGED_RUNTIME_PREWARM === "false" ||
+    (config.integrationPath !== "openclaw" &&
+      config.integrationPath !== "hermes")
+  ) {
+    return;
+  }
+
+  const startedAt = Date.now();
+  const isOpenClaw = config.integrationPath === "openclaw";
+  const label = isOpenClaw ? "OpenClaw" : "Hermes";
+  try {
+    if (isOpenClaw) await waitForOpenClawGateway();
+    else await waitForHermesGateway();
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (!isOpenClaw && process.env.HERMES_GATEWAY_API_KEY) {
+      headers.Authorization = `Bearer ${process.env.HERMES_GATEWAY_API_KEY}`;
+    }
+    const model = isOpenClaw
+      ? `openclaw/${config.agentId.replace(/[^a-zA-Z0-9_-]/g, "-")}`
+      : process.env.HERMES_MODEL_ID ??
+        `hermes/${config.agentId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+    const gatewayUrl = isOpenClaw
+      ? `${config.openclawGatewayUrl}/v1/responses`
+      : `${config.hermesGatewayUrl}/v1/responses`;
+    const baseBody = {
+      model,
+      input:
+        "Reply with exactly COMMONOS_READY. Do not call any tools for this readiness check.",
+      user: `commonos:${config.fleetId}:${config.agentId}`,
+      stream: true,
+    };
+
+    let response = await fetch(gatewayUrl, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ ...baseBody, tools: responsesToolDefs() }),
+      signal: AbortSignal.timeout(MANAGED_RUNTIME_PREWARM_TIMEOUT_MS),
+    });
+    if (response.status === 400) {
+      response = await fetch(gatewayUrl, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(baseBody),
+        signal: AbortSignal.timeout(MANAGED_RUNTIME_PREWARM_TIMEOUT_MS),
+      });
+    }
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      throw new Error(
+        `${response.status} ${truncate(detail || response.statusText, 300)}`
+      );
+    }
+
+    // Drain the same streaming path used by real turns. Warm-up usage is an
+    // infrastructure cost and intentionally is not emitted as user usage.
+    if (response.body) {
+      const reader = response.body.getReader();
+      while (!(await reader.read()).done) {
+        // The payload is immaterial; consuming it initializes the full path.
+      }
+    }
+    console.log(
+      `[daemon] ${label} pre-warmed in ${Date.now() - startedAt}ms`
+    );
+  } catch (err) {
+    console.warn(
+      `[daemon] ${label} pre-warm failed after ${Date.now() - startedAt}ms:`,
+      err instanceof Error ? err.message : String(err)
+    );
+  }
 }
 
 // ─── Workspace snapshot ────────────────────────────────────────────────────
