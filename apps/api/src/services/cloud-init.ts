@@ -554,27 +554,27 @@ if command -v openclaw >/dev/null 2>&1; then
     rm -rf "$plugin_state"
     install -d -m 700 "$plugin_state/extensions"
     for plugin in $channel_plugins; do
-      plugin_archive="$HOME/.openclaw/commonos-plugin-cache/$plugin-$OPENCLAW_PLUGIN_VERSION.tar.gz"
       legacy_plugin_cache="$HOME/.openclaw/extensions/$plugin"
       # External plugins on EFS inherit the access point uid and OpenClaw
-      # correctly rejects them. Keep only the portable archive there and
-      # load the plugin from process-owned storage on every boot.
+      # correctly rejects them. Install through the official catalog into
+      # process-owned storage so privileged plugin contracts retain their
+      # trusted install provenance.
       rm -rf "$legacy_plugin_cache"
-      if [ -f "$plugin_archive" ]; then
-        install -d -m 700 "$plugin_state/extensions/$plugin"
-        tar -xzf "$plugin_archive" -C "$plugin_state/extensions/$plugin"
-      else
-        HOME="$plugin_state" \
-          OPENCLAW_STATE_DIR="$plugin_state" \
-          OPENCLAW_CONFIG_PATH="$plugin_state/openclaw.json" \
-          openclaw plugins install "clawhub:@openclaw/$plugin@$OPENCLAW_PLUGIN_VERSION" --pin
-        mkdir -p "$(dirname "$plugin_archive")"
-        archive_tmp="$plugin_archive.tmp"
-        rm -f "$archive_tmp"
-        tar -czf "$archive_tmp" -C "$plugin_state/extensions/$plugin" .
-        mv "$archive_tmp" "$plugin_archive"
-      fi
+      HOME="$plugin_state" \
+        OPENCLAW_STATE_DIR="$plugin_state" \
+        OPENCLAW_CONFIG_PATH="$plugin_state/openclaw.json" \
+        openclaw plugins install "clawhub:@openclaw/$plugin@$OPENCLAW_PLUGIN_VERSION" --pin
     done
+    # plugins/installs.json is OpenClaw's machine-managed source of install
+    # provenance. Persist that metadata (never credentials) so the gateway
+    # recognizes the process-owned official plugins as trusted.
+    if [ -f "$plugin_state/plugins/installs.json" ]; then
+      install -d -m 700 "$HOME/.openclaw/plugins"
+      install -m 600 "$plugin_state/plugins/installs.json" \
+        "$HOME/.openclaw/plugins/installs.json.commonos-next"
+      mv "$HOME/.openclaw/plugins/installs.json.commonos-next" \
+        "$HOME/.openclaw/plugins/installs.json"
+    fi
   fi
   # OpenClaw 2026.7.x persists a generated plugin index in SQLite. Older
   # runtimes can leave an install record pointing at the deleted EFS extension
@@ -588,23 +588,7 @@ if (fs.existsSync(statePath)) {
   try {
     const { DatabaseSync } = require("node:sqlite");
     const db = new DatabaseSync(statePath);
-    const rows = db
-      .prepare("SELECT index_key, host_contract_version, install_records_json FROM installed_plugin_index")
-      .all();
-    for (const row of rows) {
-      let records = {};
-      try { records = JSON.parse(row.install_records_json || "{}"); } catch {}
-      const hasLegacyPath = Object.values(records).some(
-        (record) =>
-          record &&
-          typeof record === "object" &&
-          typeof record.installPath === "string" &&
-          record.installPath.startsWith(process.env.HOME + "/.openclaw/extensions/")
-      );
-      if (row.host_contract_version !== process.env.OPENCLAW_PLUGIN_VERSION || hasLegacyPath) {
-        db.prepare("DELETE FROM installed_plugin_index WHERE index_key = ?").run(row.index_key);
-      }
-    }
+    db.exec("DELETE FROM installed_plugin_index");
     db.close();
   } catch (error) {
     console.warn("[commonos] could not invalidate stale OpenClaw plugin index:", error.message);

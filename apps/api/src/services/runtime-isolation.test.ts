@@ -58,7 +58,7 @@ describe("managed runtime environment isolation", () => {
     expect(environment.some((name) => name.startsWith("HERMES_"))).toBe(false);
   });
 
-  it("loads the WhatsApp connector from the process-owned plugin cache", () => {
+  it("loads the WhatsApp connector from process-owned plugin storage", () => {
     const opts = options("openclaw");
     opts.openclawConfig = {
       modelProvider: "openai",
@@ -86,31 +86,23 @@ describe("managed runtime environment isolation", () => {
     expect(config.plugins).not.toHaveProperty("allow");
   });
 
-  it("extracts persisted channel plugins instead of copying them on every boot", () => {
+  it("installs official channel plugins with trusted provenance on every boot", () => {
     const opts = options("openclaw");
     opts.dockerImage = "example.test/openclaw:latest";
     const command = openClawRuntimeContainer(opts, [])?.args?.join("\n") ?? "";
 
-    expect(command).toContain(
-      'tar -xzf "$plugin_archive" -C "$plugin_state/extensions/$plugin"'
-    );
     expect(command).not.toContain(
       'cp -R "$plugin_cache" "$plugin_state/extensions/$plugin"'
     );
     expect(command).not.toContain(
       'ln -s "$plugin_cache" "$plugin_state/extensions/$plugin"'
     );
-    expect(command).toContain("$plugin-$OPENCLAW_PLUGIN_VERSION.tar.gz");
     expect(command).toContain(
       "clawhub:@openclaw/$plugin@$OPENCLAW_PLUGIN_VERSION"
     );
     expect(command).toContain('HOME="$plugin_state"');
-    expect(command).toContain(
-      "DELETE FROM installed_plugin_index WHERE index_key = ?"
-    );
-    expect(command).toContain(
-      'record.installPath.startsWith(process.env.HOME + "/.openclaw/extensions/")'
-    );
+    expect(command).toContain("plugins/installs.json");
+    expect(command).toContain('db.exec("DELETE FROM installed_plugin_index")');
     expect(command.indexOf("DELETE FROM installed_plugin_index")).toBeLessThan(
       command.indexOf("fs.renameSync(tempPath, configPath)")
     );
