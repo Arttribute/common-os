@@ -44,4 +44,20 @@ describe("selectManagedRuntimeToolNames", () => {
       selectManagedRuntimeToolNames("Explain how Telegram bots work")
     ).toEqual([]);
   });
+
+  it("binds Agent Commons OAuth tools for X actions", () => {
+    expect(selectManagedRuntimeToolNames("Post hello on X")).toEqual([
+      "cli_agent_commons_list_tools",
+      "cli_agent_commons_call_tool",
+    ]);
+    expect(
+      selectManagedRuntimeToolNames("Search Twitter for Agent Commons")
+    ).toEqual([
+      "cli_agent_commons_list_tools",
+      "cli_agent_commons_call_tool",
+    ]);
+    expect(selectManagedRuntimeToolNames("Explain how X OAuth works")).toEqual(
+      []
+    );
+  });
 });

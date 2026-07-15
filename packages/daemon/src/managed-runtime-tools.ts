@@ -30,6 +30,17 @@ export function selectManagedRuntimeToolNames(description: string): string[] {
     AGENT_COMMONS_TOOLS.forEach((name) => selected.add(name));
   }
   if (
+    /\b(?:x|twitter|tweet|post|repost|retweet)\b/i.test(currentRequest) &&
+    /\b(?:read|search|find|publish|post|reply|quote|delete|remove|who\s+am\s+i|profile)\b/i.test(
+      currentRequest
+    )
+  ) {
+    // X is an Agent Commons OAuth connector rather than a runtime channel.
+    // Both OpenClaw and Hermes reach the same explicitly assigned tools via
+    // the managed bridge, so account tokens never need to enter their pods.
+    AGENT_COMMONS_TOOLS.forEach((name) => selected.add(name));
+  }
+  if (
     /\b(?:wallet|wallet address|balance|payment|transaction|crypto|eth|ethereum|wei)\b/i.test(
       currentRequest
     ) ||
