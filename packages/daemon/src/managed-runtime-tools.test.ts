@@ -4,9 +4,9 @@ import { selectManagedRuntimeToolNames } from "./managed-runtime-tools";
 
 describe("selectManagedRuntimeToolNames", () => {
   it("does not duplicate native runtime tools for conversation", () => {
-    expect(
-      selectManagedRuntimeToolNames("Reply with exactly: pong")
-    ).toEqual([]);
+    expect(selectManagedRuntimeToolNames("Reply with exactly: pong")).toEqual(
+      []
+    );
   });
 
   it("binds the Agent Commons bridge when skills are available", () => {
@@ -14,10 +14,7 @@ describe("selectManagedRuntimeToolNames", () => {
       selectManagedRuntimeToolNames(
         "Draft a reply\n\n## Agent skills\n- release-check"
       )
-    ).toEqual([
-      "cli_agent_commons_list_tools",
-      "cli_agent_commons_call_tool",
-    ]);
+    ).toEqual(["cli_agent_commons_list_tools", "cli_agent_commons_call_tool"]);
   });
 
   it("binds wallet tools only for a wallet request", () => {
@@ -33,6 +30,18 @@ describe("selectManagedRuntimeToolNames", () => {
       selectManagedRuntimeToolNames(
         "Say hello\n\n## Relevant Memories\nThe user sent ETH yesterday"
       )
+    ).toEqual([]);
+  });
+
+  it("binds outbound channel delivery only for explicit channel requests", () => {
+    expect(
+      selectManagedRuntimeToolNames("Send hi to 5061277280 on Telegram")
+    ).toEqual(["cli_send_channel_message"]);
+    expect(selectManagedRuntimeToolNames("Say hi to me on Telegram")).toEqual([
+      "cli_send_channel_message",
+    ]);
+    expect(
+      selectManagedRuntimeToolNames("Explain how Telegram bots work")
     ).toEqual([]);
   });
 });

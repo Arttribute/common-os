@@ -820,6 +820,20 @@ printf 'API_SERVER_ENABLED="true"\\nAPI_SERVER_HOST="0.0.0.0"\\nAPI_SERVER_PORT=
 if [ -n "\${HERMES_GATEWAY_API_KEY:-}" ]; then
   printf 'API_SERVER_KEY="%s"\\n' "$HERMES_GATEWAY_API_KEY" >> /opt/data/.env.next
 fi
+for name in \
+  TELEGRAM_BOT_TOKEN TELEGRAM_ALLOWED_USERS TELEGRAM_HOME_CHANNEL \
+  SLACK_BOT_TOKEN SLACK_APP_TOKEN SLACK_ALLOWED_USERS SLACK_HOME_CHANNEL \
+  DISCORD_BOT_TOKEN DISCORD_ALLOWED_USERS DISCORD_HOME_CHANNEL \
+  WHATSAPP_ENABLED WHATSAPP_MODE WHATSAPP_ALLOWED_USERS \
+  WHATSAPP_CLOUD_PHONE_NUMBER_ID WHATSAPP_CLOUD_ACCESS_TOKEN \
+  WHATSAPP_CLOUD_APP_SECRET WHATSAPP_CLOUD_VERIFY_TOKEN \
+  WHATSAPP_CLOUD_ALLOWED_USERS
+do
+  value="$(printenv "$name" 2>/dev/null || true)"
+  if [ -n "$value" ]; then
+    printf '%s="%s"\\n' "$name" "$value" >> /opt/data/.env.next
+  fi
+done
 if [ -f /opt/data/platforms/whatsapp/session/creds.json ]; then
   printf 'WHATSAPP_ENABLED="true"\n' >> /opt/data/.env.next
 fi
@@ -2156,32 +2170,31 @@ export function isRuntimeContainerStartingError(error: unknown): boolean {
   );
 }
 
+export type RuntimeChannelId = "telegram" | "whatsapp" | "slack" | "discord";
+export type RuntimeChannelAction =
+  | "connect"
+  | "status"
+  | "disconnect"
+  | "approve"
+  | "test";
+
 export async function runRuntimeChannelCommand(opts: {
   provider: "gcp" | "aws";
   region?: string | null;
   namespace: string;
   podName: string;
   runtime: "openclaw" | "hermes";
-  channel: "whatsapp";
-  action: "connect" | "status" | "disconnect";
-  mode?: "bot" | "self-chat";
+  channel: RuntimeChannelId;
+  action: RuntimeChannelAction;
+  mode?: "bot" | "self-chat" | "cloud";
   allowFrom?: string[];
+  pairingCode?: string;
+  target?: string;
+  message?: string;
 }): Promise<{ output: unknown; raw: string }> {
   // Starting the OpenClaw CLI reloads its full plugin graph and provider auth,
   // which adds tens of seconds to every UI poll. The bundled admin HTTP RPC
   // plugin dispatches these same methods inside the already-running gateway.
-  const requestByAction = {
-    connect: { method: "web.login.start", params: { force: true } },
-    status: {
-      method: "channels.status",
-      params: { channel: "whatsapp", probe: false, timeoutMs: 5_000 },
-    },
-    disconnect: {
-      method: "channels.logout",
-      params: { channel: "whatsapp" },
-    },
-  } as const;
-  const rpcRequest = JSON.stringify(requestByAction[opts.action]);
   const allowedUsersBase64 = Buffer.from(
     (opts.allowFrom ?? [])
       .map((value) => value.replace(/^\+/, "").trim())
@@ -2201,19 +2214,16 @@ export async function runRuntimeChannelCommand(opts: {
     });
   const command =
     opts.runtime === "openclaw"
-      ? [
-          "/bin/sh",
-          "-lc",
-          `curl --silent --show-error --fail-with-body --max-time 30 \
-      --request POST http://127.0.0.1:18789/api/v1/admin/rpc \
-      --header 'content-type: application/json' \
-      --data '${rpcRequest}'`,
-        ]
-      : hermesWhatsAppCommand({
-          action: opts.action,
+      ? openClawChannelCommand(opts)
+      : opts.channel === "whatsapp" &&
+        opts.mode !== "cloud" &&
+        ["connect", "status", "disconnect"].includes(opts.action)
+      ? hermesWhatsAppCommand({
+          action: opts.action as "connect" | "status" | "disconnect",
           mode: opts.mode === "self-chat" ? "self-chat" : "bot",
           allowedUsersBase64,
-        });
+        })
+      : hermesChannelCommand(opts);
   await new Promise<void>(async (resolve, reject) => {
     let settled = false;
     const finish = (error?: Error) => {
@@ -2225,7 +2235,9 @@ export async function runRuntimeChannelCommand(opts: {
     };
     const timer = setTimeout(
       () => finish(new Error("runtime channel command timed out")),
-      opts.action === "connect" ? 120_000 : 40_000
+      opts.channel === "whatsapp" && opts.action === "connect"
+        ? 120_000
+        : 40_000
     );
     try {
       const socket = await exec.exec(
@@ -2256,11 +2268,175 @@ export async function runRuntimeChannelCommand(opts: {
     }
   });
   const raw = stdout.trim();
-  const output =
-    opts.runtime === "openclaw"
-      ? parseOpenClawAdminRpcResponse(raw)
-      : JSON.parse(raw || "{}");
+  let output: unknown;
+  if (
+    opts.runtime === "openclaw" &&
+    ["connect", "status", "disconnect"].includes(opts.action)
+  ) {
+    output = parseOpenClawAdminRpcResponse(raw);
+  } else {
+    try {
+      output = JSON.parse(raw || "{}");
+    } catch {
+      output = {
+        status: opts.action === "approve" ? "approved" : "completed",
+        detail: raw,
+      };
+    }
+  }
   return { output, raw };
+}
+
+export function openClawChannelCommand(opts: {
+  channel: RuntimeChannelId;
+  action: RuntimeChannelAction;
+  pairingCode?: string;
+  target?: string;
+  message?: string;
+}): string[] {
+  if (opts.action === "approve") {
+    return encodedCliCommand(
+      "openclaw",
+      ["pairing", "approve", opts.channel, opts.pairingCode ?? "", "--notify"],
+      "approved"
+    );
+  }
+  if (opts.action === "test") {
+    const rawTarget = opts.target ?? "";
+    const target =
+      opts.channel === "slack" && !/^(?:user|channel):/i.test(rawTarget)
+        ? /^[UDW]/i.test(rawTarget)
+          ? `user:${rawTarget}`
+          : `channel:${rawTarget}`
+        : opts.channel === "discord" && /^\d+$/.test(rawTarget)
+        ? `user:${rawTarget}`
+        : rawTarget;
+    return encodedCliCommand(
+      "openclaw",
+      [
+        "message",
+        "send",
+        "--channel",
+        opts.channel,
+        "--target",
+        target,
+        "--message",
+        opts.message ?? "Agent Commons channel connection verified.",
+        "--json",
+      ],
+      "sent"
+    );
+  }
+  const request =
+    opts.channel === "whatsapp" && opts.action === "connect"
+      ? { method: "web.login.start", params: { force: true } }
+      : opts.channel === "whatsapp" && opts.action === "disconnect"
+      ? { method: "channels.logout", params: { channel: opts.channel } }
+      : {
+          method: "channels.status",
+          params: { channel: opts.channel, probe: true, timeoutMs: 10_000 },
+        };
+  const rpcRequest = JSON.stringify(request);
+  return [
+    "/bin/sh",
+    "-lc",
+    `curl --silent --show-error --fail-with-body --max-time 30 \
+      --request POST http://127.0.0.1:18789/api/v1/admin/rpc \
+      --header 'content-type: application/json' \
+      --data '${rpcRequest}'`,
+  ];
+}
+
+export function hermesChannelCommand(opts: {
+  channel: RuntimeChannelId;
+  action: RuntimeChannelAction;
+  mode?: "bot" | "self-chat" | "cloud";
+  pairingCode?: string;
+  target?: string;
+  message?: string;
+}): string[] {
+  if (opts.action === "approve") {
+    return encodedCliCommand(
+      "/opt/hermes/.venv/bin/hermes",
+      ["pairing", "approve", opts.channel, opts.pairingCode ?? ""],
+      "approved"
+    );
+  }
+  if (opts.action === "test") {
+    const platform =
+      opts.channel === "whatsapp" && opts.mode === "cloud"
+        ? "whatsapp_cloud"
+        : opts.channel;
+    const target = (opts.target ?? "").startsWith(`${platform}:`)
+      ? opts.target ?? ""
+      : `${platform}:${opts.target ?? ""}`;
+    return encodedCliCommand(
+      "/opt/hermes/.venv/bin/hermes",
+      [
+        "send",
+        "--to",
+        target,
+        opts.message ?? "Agent Commons channel connection verified.",
+        "--json",
+      ],
+      "sent"
+    );
+  }
+  return hermesChannelProbe(opts.channel, opts.mode);
+}
+
+function encodedCliCommand(
+  executable: string,
+  args: string[],
+  successStatus: string
+): string[] {
+  const encoded = Buffer.from(JSON.stringify({ executable, args })).toString(
+    "base64"
+  );
+  const program = [
+    "import base64,json,subprocess,sys",
+    `spec=json.loads(base64.b64decode('${encoded}'))`,
+    "result=subprocess.run([spec['executable'],*spec['args']],capture_output=True,text=True,timeout=35)",
+    "raw=(result.stdout or result.stderr).strip()",
+    "if result.returncode != 0: print(raw,file=sys.stderr);sys.exit(result.returncode)",
+    "try: payload=json.loads(raw) if raw else {}",
+    "except Exception: payload={'detail':raw}",
+    `payload.setdefault('status','${successStatus}')`,
+    "print(json.dumps(payload))",
+  ].join("\n");
+  return ["python3", "-c", program];
+}
+
+function hermesChannelProbe(
+  channel: RuntimeChannelId,
+  mode?: "bot" | "self-chat" | "cloud"
+): string[] {
+  const program = [
+    "import json,os,urllib.parse,urllib.request",
+    `channel='${channel}'`,
+    `mode='${mode ?? "bot"}'`,
+    "required={'telegram':['TELEGRAM_BOT_TOKEN'],'slack':['SLACK_BOT_TOKEN','SLACK_APP_TOKEN'],'discord':['DISCORD_BOT_TOKEN'],'whatsapp':['WHATSAPP_CLOUD_PHONE_NUMBER_ID','WHATSAPP_CLOUD_ACCESS_TOKEN','WHATSAPP_CLOUD_APP_SECRET','WHATSAPP_CLOUD_VERIFY_TOKEN']}[channel]",
+    "configured=all(os.environ.get(name,'').strip() for name in required)",
+    "gateway=False",
+    "try:",
+    " urllib.request.urlopen('http://127.0.0.1:8642/healthz',timeout=3);gateway=True",
+    "except Exception: pass",
+    "detail=''",
+    "provider=False",
+    "try:",
+    " if channel=='telegram':",
+    "  token=os.environ['TELEGRAM_BOT_TOKEN'];url='https://api.telegram.org/bot'+token+'/getMe';data=json.load(urllib.request.urlopen(url,timeout=8));provider=bool(data.get('ok'))",
+    " elif channel=='discord':",
+    "  req=urllib.request.Request('https://discord.com/api/v10/users/@me',headers={'Authorization':'Bot '+os.environ['DISCORD_BOT_TOKEN'],'User-Agent':'AgentCommons/1.0'});data=json.load(urllib.request.urlopen(req,timeout=8));provider=bool(data.get('id'))",
+    " elif channel=='slack':",
+    "  body=urllib.parse.urlencode({}).encode();bot_req=urllib.request.Request('https://slack.com/api/auth.test',data=body,headers={'Authorization':'Bearer '+os.environ['SLACK_BOT_TOKEN']});bot=json.load(urllib.request.urlopen(bot_req,timeout=8));app_req=urllib.request.Request('https://slack.com/api/apps.connections.open',data=body,headers={'Authorization':'Bearer '+os.environ['SLACK_APP_TOKEN']});app=json.load(urllib.request.urlopen(app_req,timeout=8));provider=bool(bot.get('ok') and app.get('ok'))",
+    " else:",
+    "  phone=os.environ['WHATSAPP_CLOUD_PHONE_NUMBER_ID'];token=os.environ['WHATSAPP_CLOUD_ACCESS_TOKEN'];req=urllib.request.Request('https://graph.facebook.com/'+phone+'?fields=id,display_phone_number',headers={'Authorization':'Bearer '+token});data=json.load(urllib.request.urlopen(req,timeout=8));provider=bool(data.get('id'))",
+    "except Exception as exc: detail=str(exc)",
+    "connected=bool(configured and gateway and provider)",
+    "print(json.dumps({'status':'connected' if connected else ('error' if configured else 'not-configured'),'configured':configured,'connected':connected,'gateway':gateway,'provider':provider,'detail':detail}))",
+  ].join("\n");
+  return ["python3", "-c", program];
 }
 
 export function hermesWhatsAppCommand(opts: {

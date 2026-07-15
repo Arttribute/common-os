@@ -7,6 +7,8 @@ import {
   openClawRuntimeContainer,
   parseOpenClawAdminRpcResponse,
   isRuntimeContainerStartingError,
+  hermesChannelCommand,
+  openClawChannelCommand,
   runtimeStorageInitContainer,
   type LaunchOptions,
 } from "./cloud-init";
@@ -109,7 +111,7 @@ describe("managed runtime environment isolation", () => {
       'record.installPath.startsWith(process.env.HOME + "/.openclaw/extensions/")'
     );
     expect(command.indexOf("DELETE FROM installed_plugin_index")).toBeLessThan(
-      command.indexOf('fs.renameSync(tempPath, configPath)')
+      command.indexOf("fs.renameSync(tempPath, configPath)")
     );
     expect(command).not.toContain("const externalChannels = new Set");
     expect(command).toContain("touch /tmp/commonos-openclaw-configured");
@@ -186,6 +188,44 @@ describe("managed runtime environment isolation", () => {
     expect(
       isRuntimeContainerStartingError(new Error("permission denied"))
     ).toBe(false);
+  });
+
+  it("builds OpenClaw probe, approval, and test-send commands", () => {
+    expect(
+      openClawChannelCommand({ channel: "telegram", action: "status" }).join(
+        " "
+      )
+    ).toContain('"channels.status"');
+
+    const approval = openClawChannelCommand({
+      channel: "telegram",
+      action: "approve",
+      pairingCode: "ABC12DEF",
+    }).join(" ");
+    expect(approval).toContain("python3");
+    expect(approval).not.toContain("ABC12DEF");
+
+    const testSend = openClawChannelCommand({
+      channel: "discord",
+      action: "test",
+      target: "user:123",
+      message: "connection verified",
+    }).join(" ");
+    expect(testSend).toContain("python3");
+    expect(testSend).not.toContain("connection verified");
+  });
+
+  it("builds Hermes provider probes and pairing commands", () => {
+    expect(
+      hermesChannelCommand({ channel: "slack", action: "status" }).join(" ")
+    ).toContain("https://slack.com/api/auth.test");
+    expect(
+      hermesChannelCommand({
+        channel: "telegram",
+        action: "approve",
+        pairingCode: "ABC12DEF",
+      }).join(" ")
+    ).not.toContain("ABC12DEF");
   });
 
   it("puts only Hermes configuration in Hermes computers", () => {

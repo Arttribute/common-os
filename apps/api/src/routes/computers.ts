@@ -174,8 +174,15 @@ async function verifyAgentCommonsOwner(
   };
 }
 
-async function getBoundComputer(c: any): Promise<AgentDoc | Response> {
-  const denied = rejectAgentPrincipal(c);
+async function getBoundComputer(
+  c: any,
+  options: { allowSelfAgent?: boolean } = {}
+): Promise<AgentDoc | Response> {
+  const isSelfAgent =
+    options.allowSelfAgent === true &&
+    c.get("authType") === "agent" &&
+    c.get("agentId") === c.req.param("computerId");
+  const denied = isSelfAgent ? null : rejectAgentPrincipal(c);
   if (denied) return denied;
   const id = c.req.param("computerId");
   const binding = serviceBinding(c);
@@ -716,14 +723,28 @@ router.get("/:computerId/runtime-status", async (c) => {
 });
 
 router.post("/:computerId/runtime-channels/:channel/:action", async (c) => {
-  const computer = await getBoundComputer(c);
+  // The managed-runtime daemon may send through its own configured channel,
+  // but agent credentials remain scoped to the exact computer id encoded in
+  // that token. All other computer administration still requires tenant or
+  // Agent Commons service authorization.
+  const computer = await getBoundComputer(c, {
+    allowSelfAgent: c.req.param("action") === "test",
+  });
   if (isResponse(computer)) return computer;
   const channel = c.req.param("channel");
   const action = c.req.param("action");
-  if (channel !== "whatsapp") {
+  if (
+    !(["telegram", "whatsapp", "slack", "discord"] as const).includes(
+      channel as any
+    )
+  ) {
     return c.json({ error: "unsupported runtime channel" }, 400);
   }
-  if (!(["connect", "status", "disconnect"] as const).includes(action as any)) {
+  if (
+    !(["connect", "status", "disconnect", "approve", "test"] as const).includes(
+      action as any
+    )
+  ) {
     return c.json({ error: "unsupported runtime channel action" }, 400);
   }
   if (
@@ -731,21 +752,26 @@ router.post("/:computerId/runtime-channels/:channel/:action", async (c) => {
     computer.config.integrationPath !== "hermes"
   ) {
     return c.json(
-      { error: "QR channel setup is available for OpenClaw and Hermes" },
+      { error: "Managed channel setup is available for OpenClaw and Hermes" },
       409
     );
   }
-  const whatsapp = (
+  const channelConfig = (
     computer.config.integrationPath === "openclaw"
-      ? computer.config.openclawConfig?.channels?.whatsapp
-      : computer.config.hermesConfig?.channels?.whatsapp
+      ? computer.config.openclawConfig?.channels?.[channel]
+      : computer.config.hermesConfig?.channels?.[channel]
   ) as
-    | { enabled?: boolean; mode?: "bot" | "self-chat"; allowFrom?: string[] }
+    | {
+        enabled?: boolean;
+        mode?: "bot" | "self-chat" | "cloud";
+        allowFrom?: string[];
+        homeTarget?: string;
+      }
     | undefined;
-  if (!whatsapp?.enabled) {
+  if (!channelConfig?.enabled) {
     if (action === "connect") {
       return c.json(
-        { error: "Enable WhatsApp and apply the runtime settings first" },
+        { error: `Enable ${channel} and apply the runtime settings first` },
         409
       );
     }
@@ -757,6 +783,41 @@ router.post("/:computerId/runtime-channels/:channel/:action", async (c) => {
       },
       raw: "",
     });
+  }
+  if (action === "disconnect" && channel !== "whatsapp") {
+    return c.json(
+      { error: `Disable ${channel} in runtime settings to disconnect it` },
+      400
+    );
+  }
+  const body = await c.req
+    .json<{ pairingCode?: string; target?: string; message?: string }>()
+    .catch(() => ({}));
+  const pairingCode = String(body.pairingCode ?? "")
+    .trim()
+    .toUpperCase();
+  const requestedTarget = String(body.target ?? "").trim();
+  const savedTarget = String(
+    channelConfig.homeTarget ?? channelConfig.allowFrom?.[0] ?? ""
+  ).trim();
+  const target =
+    c.get("authType") === "agent" &&
+    (!requestedTarget ||
+      (channel === "telegram" && requestedTarget.startsWith("@")))
+      ? savedTarget
+      : requestedTarget;
+  const message = String(body.message ?? "").trim();
+  if (action === "approve" && !/^[A-Z0-9]{6,12}$/.test(pairingCode)) {
+    return c.json({ error: "a valid pairing code is required" }, 400);
+  }
+  if (
+    action === "test" &&
+    (!target || target.length > 256 || /[\r\n\0]/.test(target))
+  ) {
+    return c.json({ error: "a valid test message target is required" }, 400);
+  }
+  if (message.length > 1_000) {
+    return c.json({ error: "test message is too long" }, 400);
   }
   const namespace = computer.compute?.namespace ?? computer.pod.namespaceId;
   const podName = computer.compute?.podName;
@@ -807,10 +868,18 @@ router.post("/:computerId/runtime-channels/:channel/:action", async (c) => {
         namespace,
         podName,
         runtime: computer.config.integrationPath,
-        channel,
-        action: action as "connect" | "status" | "disconnect",
-        mode: whatsapp.mode,
-        allowFrom: whatsapp.allowFrom,
+        channel: channel as "telegram" | "whatsapp" | "slack" | "discord",
+        action: action as
+          | "connect"
+          | "status"
+          | "disconnect"
+          | "approve"
+          | "test",
+        mode: channelConfig.mode,
+        allowFrom: channelConfig.allowFrom,
+        pairingCode,
+        target,
+        message,
       })
     );
   } catch (error) {

@@ -612,9 +612,7 @@ async function prewarmManagedRuntime(): Promise<void> {
         // The payload is immaterial; consuming it initializes the full path.
       }
     }
-    console.log(
-      `[daemon] ${label} pre-warmed in ${Date.now() - startedAt}ms`
-    );
+    console.log(`[daemon] ${label} pre-warmed in ${Date.now() - startedAt}ms`);
   } catch (err) {
     console.warn(
       `[daemon] ${label} pre-warm failed after ${Date.now() - startedAt}ms:`,
@@ -2241,8 +2239,7 @@ async function handleMessage(msg: {
       };
     };
     const deltaStream = createMessageDeltaStream(
-      (delta) =>
-        postMessageEvent(msg.id, { type: "message_delta", delta }),
+      (delta) => postMessageEvent(msg.id, { type: "message_delta", delta }),
       {
         onError: (err) =>
           console.warn(
@@ -3319,6 +3316,28 @@ const TOOL_CATALOG: ToolCatalogEntry[] = [
     },
   },
   {
+    name: "send_channel_message",
+    description:
+      "Send a message through this agent's configured Telegram, WhatsApp, Slack, or Discord connector. Use the platform-specific numeric chat/user/channel id or configured home target; never request or expose provider credentials.",
+    parameters: {
+      type: "object",
+      properties: {
+        channel: {
+          type: "string",
+          enum: ["telegram", "whatsapp", "slack", "discord"],
+          description: "Configured communication channel",
+        },
+        target: {
+          type: "string",
+          description:
+            "Optional destination id, phone number, or channel id. Omit this when the user says me/myself or gives only a Telegram @username so the connector uses its saved destination.",
+        },
+        content: { type: "string", description: "Message text to send" },
+      },
+      required: ["channel", "content"],
+    },
+  },
+  {
     name: "agent_commons_list_tools",
     description:
       "List the Agent Commons tools connected to this agent, including MCP and user-configured tools. Use this before agent_commons_call_tool when you need a platform capability that is not already a direct cli_* tool.",
@@ -3978,6 +3997,48 @@ async function executeLocalTool(
   if (tool === "browser_close") {
     await closeBrowser();
     return "Browser closed.";
+  }
+
+  if (tool === "send_channel_message") {
+    const channel = String(args.channel ?? "").toLowerCase();
+    const target = String(args.target ?? "").trim();
+    const content = String(args.content ?? args.message ?? "").trim();
+    if (!["telegram", "whatsapp", "slack", "discord"].includes(channel)) {
+      throw new Error(
+        'send_channel_message requires channel "telegram", "whatsapp", "slack", or "discord"'
+      );
+    }
+    if (target.length > 256 || /[\r\n\0]/.test(target)) {
+      throw new Error('send_channel_message requires a valid "target"');
+    }
+    if (!content) throw new Error('send_channel_message requires "content"');
+    if (content.length > 1_000) {
+      throw new Error(
+        "send_channel_message content must be 1,000 characters or less"
+      );
+    }
+
+    const res = await fetch(
+      `${config.apiUrl}/computers/${encodeURIComponent(
+        config.agentId
+      )}/runtime-channels/${channel}/test`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${config.agentToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ target, message: content }),
+        signal: AbortSignal.timeout(50_000),
+      }
+    );
+    const body = await res.text();
+    if (!res.ok) {
+      throw new Error(
+        `Channel delivery failed (${res.status}): ${truncate(body, 500)}`
+      );
+    }
+    return body || `Sent via ${channel} to ${target}.`;
   }
 
   if (tool === "send_axl_message") {

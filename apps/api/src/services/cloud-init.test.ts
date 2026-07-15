@@ -145,6 +145,22 @@ describe("Hermes managed configuration", () => {
     expect(env).not.toHaveProperty("WHATSAPP_ENABLED");
   });
 
+  it("enables the persistent Hermes adapter before linked-device pairing", () => {
+    expect(
+      hermesChannelEnvironment({
+        whatsapp: {
+          enabled: true,
+          mode: "self-chat",
+          allowFrom: ["+254700000000"],
+        },
+      })
+    ).toMatchObject({
+      WHATSAPP_ENABLED: "true",
+      WHATSAPP_MODE: "self-chat",
+      WHATSAPP_ALLOWED_USERS: "254700000000",
+    });
+  });
+
   it("builds persistent Hermes WhatsApp QR commands", () => {
     const connect = hermesWhatsAppCommand({
       action: "connect",

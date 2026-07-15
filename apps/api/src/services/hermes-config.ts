@@ -32,6 +32,7 @@ export function hermesChannelEnvironment(
       .map((value) => value.replace(/^\+/, ""))
       .join(",");
   } else if (whatsapp?.enabled) {
+    env.WHATSAPP_ENABLED = "true";
     env.WHATSAPP_MODE = whatsapp.mode === "self-chat" ? "self-chat" : "bot";
     env.WHATSAPP_ALLOWED_USERS = stringList(whatsapp.allowFrom)
       .map((value) => value.replace(/^\+/, ""))

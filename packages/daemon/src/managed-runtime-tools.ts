@@ -7,6 +7,7 @@ const WALLET_TOOLS = [
   "cli_wallet_balance",
   "cli_wallet_send_transaction",
 ];
+const CHANNEL_TOOLS = ["cli_send_channel_message"];
 
 export function selectManagedRuntimeToolNames(description: string): string[] {
   const currentRequest = description
@@ -44,6 +45,12 @@ export function selectManagedRuntimeToolNames(description: string): string[] {
     )
   ) {
     selected.add("cli_send_axl_message");
+  }
+  if (
+    /\b(?:telegram|whats ?app|discord|slack)\b/i.test(currentRequest) &&
+    /\b(?:send|say|message|text|notify|post|ping|dm)\b/i.test(currentRequest)
+  ) {
+    CHANNEL_TOOLS.forEach((name) => selected.add(name));
   }
 
   return [...selected];
