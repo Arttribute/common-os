@@ -2286,7 +2286,7 @@ export async function runRuntimeChannelCommand(opts: {
   let output: unknown;
   if (
     opts.runtime === "openclaw" &&
-    ["connect", "status", "disconnect"].includes(opts.action)
+    opts.action !== "approve"
   ) {
     output = parseOpenClawAdminRpcResponse(raw);
   } else {
@@ -2326,21 +2326,16 @@ export function openClawChannelCommand(opts: {
         : opts.channel === "discord" && /^\d+$/.test(rawTarget)
         ? `user:${rawTarget}`
         : rawTarget;
-    return encodedCliCommand(
-      "openclaw",
-      [
-        "message",
-        "send",
-        "--channel",
-        opts.channel,
-        "--target",
-        target,
-        "--message",
-        opts.message ?? "Agent Commons channel connection verified.",
-        "--json",
-      ],
-      "sent"
-    );
+    return openClawAdminRpcCommand({
+      method: "send",
+      params: {
+        channel: opts.channel,
+        to: target,
+        message:
+          opts.message ?? "Agent Commons channel connection verified.",
+        idempotencyKey: uuidv4(),
+      },
+    });
   }
   const request =
     opts.channel === "whatsapp" && opts.action === "connect"
@@ -2351,14 +2346,21 @@ export function openClawChannelCommand(opts: {
           method: "channels.status",
           params: { channel: opts.channel, probe: true, timeoutMs: 10_000 },
         };
-  const rpcRequest = JSON.stringify(request);
+  return openClawAdminRpcCommand(request);
+}
+
+function openClawAdminRpcCommand(request: Record<string, unknown>): string[] {
+  const encodedRequest = Buffer.from(JSON.stringify(request)).toString(
+    "base64"
+  );
   return [
     "/bin/sh",
     "-lc",
-    `curl --silent --show-error --fail-with-body --max-time 30 \
+    `printf %s '${encodedRequest}' | base64 -d | \
+      curl --silent --show-error --fail-with-body --max-time 30 \
       --request POST http://127.0.0.1:18789/api/v1/admin/rpc \
       --header 'content-type: application/json' \
-      --data '${rpcRequest}'`,
+      --data-binary @-`,
   ];
 }
 

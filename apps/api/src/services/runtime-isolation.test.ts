@@ -205,11 +205,15 @@ describe("managed runtime environment isolation", () => {
   });
 
   it("builds OpenClaw probe, approval, and test-send commands", () => {
+    const probe = openClawChannelCommand({
+      channel: "telegram",
+      action: "status",
+    }).join(" ");
+    const encodedProbe = probe.match(/printf %s '([^']+)'/)?.[1];
+    expect(encodedProbe).toBeDefined();
     expect(
-      openClawChannelCommand({ channel: "telegram", action: "status" }).join(
-        " "
-      )
-    ).toContain('"channels.status"');
+      JSON.parse(Buffer.from(encodedProbe!, "base64").toString("utf8"))
+    ).toMatchObject({ method: "channels.status" });
 
     const approval = openClawChannelCommand({
       channel: "telegram",
@@ -225,8 +229,20 @@ describe("managed runtime environment isolation", () => {
       target: "user:123",
       message: "connection verified",
     }).join(" ");
-    expect(testSend).toContain("python3");
+    expect(testSend).toContain("/api/v1/admin/rpc");
     expect(testSend).not.toContain("connection verified");
+    const encodedRequest = testSend.match(/printf %s '([^']+)'/)?.[1];
+    expect(encodedRequest).toBeDefined();
+    expect(
+      JSON.parse(Buffer.from(encodedRequest!, "base64").toString("utf8"))
+    ).toMatchObject({
+      method: "send",
+      params: {
+        channel: "discord",
+        to: "user:123",
+        message: "connection verified",
+      },
+    });
   });
 
   it("builds Hermes provider probes and pairing commands", () => {
