@@ -70,6 +70,7 @@ export interface ProvisionAgentOptions {
   userId?: string;
   workspaceId?: string;
   existingCommonsAgentId?: string;
+  agentCommonsApiUrl?: string | null;
   fleet: FleetDoc;
   role: string;
   systemPrompt: string;
@@ -136,6 +137,7 @@ export async function provisionAgent(
   const commons = opts.existingCommonsAgentId
     ? {
         agentId: opts.existingCommonsAgentId,
+        apiUrl: opts.agentCommonsApiUrl ?? AGC_BASE_URL,
         ownerUserId: opts.userId ?? null,
         workspaceId: opts.workspaceId ?? null,
         apiKey: null,
@@ -145,6 +147,7 @@ export async function provisionAgent(
     : opts.integrationPath === "openclaw" || opts.integrationPath === "hermes"
     ? {
         agentId: null,
+        apiUrl: null,
         apiKey: null,
         walletAddress: null,
         registryAgentId: null,

@@ -41,6 +41,7 @@ const AGC_URL = (
 
 type ComputerRequestBody = {
   agentCommonsId?: string;
+  agentCommonsApiUrl?: string | null;
   ownerUserId?: string | null;
   workspaceId?: string | null;
   computerId?: string;
@@ -64,6 +65,21 @@ type ComputerRequestBody = {
     networkAccess?: "standard" | "restricted" | "disabled";
   };
 };
+
+function agentCommonsApiUrl(c: any, value: string | null | undefined): string {
+  if (c.get("authType") !== "service" || !value?.trim()) return AGC_URL;
+  const url = new URL(value.trim());
+  if (
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error("agentCommonsApiUrl must be an HTTPS API origin");
+  }
+  return url.origin;
+}
 
 function runtimeRequest(body: ComputerRequestBody) {
   const integrationPath = body.integrationPath ?? "native";
@@ -433,6 +449,7 @@ router.post("/", async (c) => {
   if ("response" in verified) return verified.response;
 
   try {
+    const commonsApiUrl = agentCommonsApiUrl(c, body.agentCommonsApiUrl);
     const runtime = runtimeRequest(body);
     const tenant = await ensureCanonicalComputerTenant(verified.owner);
     const fleet = await ensureTenantComputerFleet({
@@ -462,12 +479,14 @@ router.post("/", async (c) => {
             fleetId: fleet._id,
             "compute.ownerUserId": verified.owner.ownerUserId,
             "compute.workspaceId": verified.owner.workspaceId,
+            "commons.apiUrl": commonsApiUrl,
             updatedAt: new Date(),
           },
         }
       );
       existing = {
         ...existing,
+        commons: { ...existing.commons, apiUrl: commonsApiUrl },
         tenantId: tenant._id,
         fleetId: fleet._id,
         compute: existing.compute
@@ -567,6 +586,7 @@ router.post("/", async (c) => {
             "config.nativeConfig": updated.config.nativeConfig,
             "config.openclawConfig": updated.config.openclawConfig,
             "config.hermesConfig": updated.config.hermesConfig,
+            "commons.apiUrl": commonsApiUrl,
             resourceProfile: updated.resourceProfile,
             resourceMode: updated.resourceMode,
             resourceSpec: updated.resourceSpec,
@@ -621,6 +641,7 @@ router.post("/", async (c) => {
       userId: verified.owner.ownerUserId,
       workspaceId: verified.owner.workspaceId ?? undefined,
       existingCommonsAgentId: agentCommonsId,
+      agentCommonsApiUrl: commonsApiUrl,
       fleet,
       role,
       systemPrompt:

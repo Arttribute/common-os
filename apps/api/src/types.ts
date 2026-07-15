@@ -107,6 +107,8 @@ export interface AgentDoc {
   tenantId: string;
   commons: {
     agentId: string | null;
+    /** Agent Commons API origin that owns this identity (staging or production). */
+    apiUrl?: string | null;
     ownerUserId?: string | null;
     workspaceId?: string | null;
     apiKey: string | null;

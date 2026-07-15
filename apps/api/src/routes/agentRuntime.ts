@@ -47,8 +47,10 @@ async function proxyAgentCommonsTools(
       body: { error: "Agent Commons service authorization is unavailable" },
     };
   }
+  const targetBaseUrl =
+    agent.commons.apiUrl?.replace(/\/$/, "") || AGC_BASE_URL;
   const response = await fetch(
-    `${AGC_BASE_URL}/v1/runtime/agents/${encodeURIComponent(
+    `${targetBaseUrl}/v1/runtime/agents/${encodeURIComponent(
       commons.agentId
     )}/tools${suffix}`,
     {

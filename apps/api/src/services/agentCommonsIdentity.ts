@@ -24,6 +24,7 @@ export function normalizeCommonsIdentity(
 
 	return {
 		agentId: runtimeId,
+		apiUrl: commons.apiUrl ?? null,
 		apiKey: null,
 		walletAddress: commons.walletAddress ?? null,
 		registryAgentId,
@@ -38,6 +39,7 @@ export async function persistNormalizedCommonsIdentity(agent: AgentDoc): Promise
 		{
 			$set: {
 				"commons.agentId": commons.agentId,
+				"commons.apiUrl": commons.apiUrl ?? null,
 				"commons.apiKey": null,
 				"commons.walletAddress": commons.walletAddress,
 				"commons.registryAgentId": commons.registryAgentId ?? null,
