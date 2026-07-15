@@ -14,7 +14,10 @@ import {
   enqueueHumanMessage,
   broadcastToFleet,
 } from "../db/memory.js";
-import { registerWithAgentCommons } from "../services/provisioner.js";
+import {
+  agentCommonsServiceToken,
+  registerWithAgentCommons,
+} from "../services/provisioner.js";
 import { persistNormalizedCommonsIdentity } from "../services/agentCommonsIdentity.js";
 import { sendAgentTransaction } from "../services/agentWallet.js";
 import type { AgentDoc, Env, HumanMessageDoc } from "../types.js";
@@ -24,6 +27,50 @@ const AGC_BASE_URL = (
 ).replace(/\/$/, "");
 const AGC_INITIATOR =
   process.env.AGC_INITIATOR ?? process.env.AGENTCOMMONS_INITIATOR ?? null;
+
+async function proxyAgentCommonsTools(
+  agent: AgentDoc,
+  suffix: "" | "/invoke",
+  request?: { method: "POST"; body: unknown }
+) {
+  const commons = await persistNormalizedCommonsIdentity(agent);
+  if (!commons.agentId) {
+    return {
+      status: 409,
+      body: { error: "agent is not linked to Agent Commons" },
+    };
+  }
+  const token = await agentCommonsServiceToken();
+  if (!token) {
+    return {
+      status: 503,
+      body: { error: "Agent Commons service authorization is unavailable" },
+    };
+  }
+  const response = await fetch(
+    `${AGC_BASE_URL}/v1/runtime/agents/${encodeURIComponent(
+      commons.agentId
+    )}/tools${suffix}`,
+    {
+      method: request?.method ?? "GET",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "x-agent-commons-agent-id": commons.agentId,
+      },
+      ...(request ? { body: JSON.stringify(request.body) } : {}),
+      signal: AbortSignal.timeout(suffix ? 120_000 : 30_000),
+    }
+  );
+  const text = await response.text();
+  let body: unknown = text;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    // Preserve a non-JSON upstream error without losing its status.
+  }
+  return { status: response.status, body };
+}
 // A replacement daemon must reclaim work promptly after kubelet restarts a
 // wedged runtime. The active daemon processes one message at a time, so this
 // only affects processing claims left behind by a dead container.
@@ -1025,6 +1072,70 @@ router.post("/:agentId/messages/:msgId/fail", async (c) => {
     return c.json({ ok: true });
   } catch {
     return c.json({ error: "database error" }, 503);
+  }
+});
+
+// GET /agents/:agentId/commons-tools — refreshable server-side bridge to the
+// Agent Commons tool catalog. Runtime pods authenticate only to CommonOS;
+// platform OAuth/service credentials never enter the pod.
+router.get("/:agentId/commons-tools", async (c) => {
+  if (c.get("authType") !== "agent") {
+    return c.json({ error: "agent authorization required" }, 403);
+  }
+  const agentId = c.req.param("agentId");
+  if (c.get("agentId") !== agentId) {
+    return c.json({ error: "forbidden" }, 403);
+  }
+  const agent = await (await agents()).findOne({ _id: agentId }).lean();
+  if (!agent) return c.json({ error: "agent not found" }, 404);
+  try {
+    const result = await proxyAgentCommonsTools(agent, "");
+    return c.json(result.body as any, result.status as any);
+  } catch (error) {
+    return c.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Agent Commons tool discovery failed",
+      },
+      502
+    );
+  }
+});
+
+// POST /agents/:agentId/commons-tools/invoke — execute one explicitly assigned
+// Agent Commons tool through the same refreshable service boundary.
+router.post("/:agentId/commons-tools/invoke", async (c) => {
+  if (c.get("authType") !== "agent") {
+    return c.json({ error: "agent authorization required" }, 403);
+  }
+  const agentId = c.req.param("agentId");
+  if (c.get("agentId") !== agentId) {
+    return c.json({ error: "forbidden" }, 403);
+  }
+  const agent = await (await agents()).findOne({ _id: agentId }).lean();
+  if (!agent) return c.json({ error: "agent not found" }, 404);
+  const body = await c.req.json<Record<string, unknown>>().catch(() => null);
+  if (!body || typeof body.name !== "string" || !body.name.trim()) {
+    return c.json({ error: "tool name is required" }, 400);
+  }
+  try {
+    const result = await proxyAgentCommonsTools(agent, "/invoke", {
+      method: "POST",
+      body,
+    });
+    return c.json(result.body as any, result.status as any);
+  } catch (error) {
+    return c.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Agent Commons tool execution failed",
+      },
+      502
+    );
   }
 });
 

@@ -4062,13 +4062,12 @@ async function executeLocalTool(
   }
 
   if (tool === "agent_commons_list_tools") {
-    assertAgentCommonsRuntimeBinding();
     const res = await fetch(
-      `${AGC_BASE_URL}/v1/runtime/agents/${encodeURIComponent(
-        config.commonsAgentId!
-      )}/tools`,
+      `${config.apiUrl}/agents/${encodeURIComponent(
+        config.agentId
+      )}/commons-tools`,
       {
-        headers: agentCommonsRuntimeHeaders(),
+        headers: commonOsAgentHeaders(),
         signal: AbortSignal.timeout(30_000),
       }
     );
@@ -4084,7 +4083,6 @@ async function executeLocalTool(
   }
 
   if (tool === "agent_commons_call_tool") {
-    assertAgentCommonsRuntimeBinding();
     const requestedName = String(args.name ?? "");
     if (!requestedName)
       throw new Error('agent_commons_call_tool requires "name"');
@@ -4095,12 +4093,12 @@ async function executeLocalTool(
     const sessionId =
       args.sessionId !== undefined ? String(args.sessionId) : undefined;
     const res = await fetch(
-      `${AGC_BASE_URL}/v1/runtime/agents/${encodeURIComponent(
-        config.commonsAgentId!
-      )}/tools/invoke`,
+      `${config.apiUrl}/agents/${encodeURIComponent(
+        config.agentId
+      )}/commons-tools/invoke`,
       {
         method: "POST",
-        headers: agentCommonsRuntimeHeaders(),
+        headers: commonOsAgentHeaders(),
         body: JSON.stringify({
           name: requestedName,
           args: requestedArgs,
@@ -4212,17 +4210,13 @@ async function executeLocalTool(
   return `Unsupported local tool: ${name}`;
 }
 
-function assertAgentCommonsRuntimeBinding(): void {
-  if (!config.commonsAgentId || !config.commonsApiKey) {
-    throw new Error("This runtime is not bound to an Agent Commons agent");
+function commonOsAgentHeaders(): Record<string, string> {
+  if (!config.agentToken) {
+    throw new Error("This runtime is not authenticated to CommonOS");
   }
-}
-
-function agentCommonsRuntimeHeaders(): Record<string, string> {
-  assertAgentCommonsRuntimeBinding();
   return {
-    ...agcHeaders(),
-    "x-agent-commons-agent-id": config.commonsAgentId!,
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${config.agentToken}`,
   };
 }
 
