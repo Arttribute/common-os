@@ -6,6 +6,7 @@ import {
   buildOpenClawGatewayConfig,
   openClawRuntimeContainer,
   parseOpenClawAdminRpcResponse,
+  runtimeChannelCommandError,
   isRuntimeContainerStartingError,
   hermesChannelCommand,
   openClawChannelCommand,
@@ -188,6 +189,19 @@ describe("managed runtime environment isolation", () => {
     expect(
       isRuntimeContainerStartingError(new Error("permission denied"))
     ).toBe(false);
+  });
+
+  it("preserves provider command errors instead of hiding them behind an exit code", () => {
+    expect(
+      runtimeChannelCommandError(
+        "Telegram rejected the target",
+        "",
+        "command terminated with exit code 1"
+      )
+    ).toBe("Telegram rejected the target");
+    expect(runtimeChannelCommandError("", "", "exec failed")).toBe(
+      "exec failed"
+    );
   });
 
   it("builds OpenClaw probe, approval, and test-send commands", () => {

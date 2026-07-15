@@ -2178,6 +2178,18 @@ export type RuntimeChannelAction =
   | "approve"
   | "test";
 
+export function runtimeChannelCommandError(
+  stderr: string,
+  stdout: string,
+  statusMessage?: string
+): string {
+  return (
+    (stderr.trim() || stdout.trim()).slice(0, 2_000) ||
+    statusMessage ||
+    "runtime channel command failed"
+  );
+}
+
 export async function runRuntimeChannelCommand(opts: {
   provider: "gcp" | "aws";
   region?: string | null;
@@ -2251,10 +2263,13 @@ export async function runRuntimeChannelCommand(opts: {
         false,
         (status) => {
           if (status.status === "Success") finish();
-          else
+          else {
             finish(
-              new Error(status.message ?? "runtime channel command failed")
+              new Error(
+                runtimeChannelCommandError(stderr, stdout, status.message)
+              )
             );
+          }
         }
       );
       socket.on("error", (error: unknown) =>
