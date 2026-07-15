@@ -229,19 +229,24 @@ describe("managed runtime environment isolation", () => {
       target: "user:123",
       message: "connection verified",
     }).join(" ");
-    expect(testSend).toContain("/api/v1/admin/rpc");
+    expect(testSend).toContain("python3");
     expect(testSend).not.toContain("connection verified");
-    const encodedRequest = testSend.match(/printf %s '([^']+)'/)?.[1];
-    expect(encodedRequest).toBeDefined();
-    expect(
-      JSON.parse(Buffer.from(encodedRequest!, "base64").toString("utf8"))
-    ).toMatchObject({
-      method: "send",
-      params: {
-        channel: "discord",
-        to: "user:123",
-        message: "connection verified",
-      },
+    const encodedSpec = testSend.match(/b64decode\('([^']+)'\)/)?.[1];
+    expect(encodedSpec).toBeDefined();
+    const spec = JSON.parse(
+      Buffer.from(encodedSpec!, "base64").toString("utf8")
+    );
+    expect(spec).toMatchObject({
+      executable: "openclaw",
+      args: expect.arrayContaining([
+        "message",
+        "send",
+        "--channel",
+        "discord",
+        "--target",
+        "user:123",
+      ]),
+      envToUnset: ["OPENCLAW_GATEWAY_URL"],
     });
   });
 

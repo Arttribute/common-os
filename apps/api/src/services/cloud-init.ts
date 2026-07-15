@@ -2286,7 +2286,7 @@ export async function runRuntimeChannelCommand(opts: {
   let output: unknown;
   if (
     opts.runtime === "openclaw" &&
-    opts.action !== "approve"
+    ["connect", "status", "disconnect"].includes(opts.action)
   ) {
     output = parseOpenClawAdminRpcResponse(raw);
   } else {
@@ -2326,16 +2326,22 @@ export function openClawChannelCommand(opts: {
         : opts.channel === "discord" && /^\d+$/.test(rawTarget)
         ? `user:${rawTarget}`
         : rawTarget;
-    return openClawAdminRpcCommand({
-      method: "send",
-      params: {
-        channel: opts.channel,
-        to: target,
-        message:
-          opts.message ?? "Agent Commons channel connection verified.",
-        idempotencyKey: uuidv4(),
-      },
-    });
+    return encodedCliCommand(
+      "openclaw",
+      [
+        "message",
+        "send",
+        "--channel",
+        opts.channel,
+        "--target",
+        target,
+        "--message",
+        opts.message ?? "Agent Commons channel connection verified.",
+        "--json",
+      ],
+      "sent",
+      ["OPENCLAW_GATEWAY_URL"]
+    );
   }
   const request =
     opts.channel === "whatsapp" && opts.action === "connect"
@@ -2405,15 +2411,18 @@ export function hermesChannelCommand(opts: {
 function encodedCliCommand(
   executable: string,
   args: string[],
-  successStatus: string
+  successStatus: string,
+  envToUnset: string[] = []
 ): string[] {
-  const encoded = Buffer.from(JSON.stringify({ executable, args })).toString(
-    "base64"
-  );
+  const encoded = Buffer.from(
+    JSON.stringify({ executable, args, envToUnset })
+  ).toString("base64");
   const program = [
-    "import base64,json,subprocess,sys",
+    "import base64,json,os,subprocess,sys",
     `spec=json.loads(base64.b64decode('${encoded}'))`,
-    "result=subprocess.run([spec['executable'],*spec['args']],capture_output=True,text=True,timeout=35)",
+    "env=os.environ.copy()",
+    "[env.pop(name,None) for name in spec.get('envToUnset',[])]",
+    "result=subprocess.run([spec['executable'],*spec['args']],capture_output=True,text=True,timeout=35,env=env)",
     "raw=(result.stdout or result.stderr).strip()",
     "if result.returncode != 0: print(raw,file=sys.stderr);sys.exit(result.returncode)",
     "try: payload=json.loads(raw) if raw else {}",
