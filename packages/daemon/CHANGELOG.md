@@ -1,5 +1,11 @@
 # @common-os/daemon
 
+## 0.3.6
+
+### Patch Changes
+
+- Auto patch release
+
 ## 0.3.5
 
 ### Patch Changes
